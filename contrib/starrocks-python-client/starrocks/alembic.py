@@ -1,9 +1,5 @@
 from alembic.ddl.mysql import MySQLImpl
-from sqlalchemy import Column
-from sqlalchemy import BIGINT
-from sqlalchemy import MetaData
-from sqlalchemy import Table
-from sqlalchemy import VARCHAR
+from sqlalchemy import Column, BIGINT, MetaData, Table, VARCHAR
 from typing import Optional
 
 
@@ -26,4 +22,3 @@ class StarrocksImpl(MySQLImpl):
             schema=version_table_schema,
             starrocks_primary_key="id",
         )
-

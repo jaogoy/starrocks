@@ -33,6 +33,19 @@ from .datatype import (
 )
 
 from . import reflection as _reflection
+from .sql.ddl import CreateView, DropView, CreateMaterializedView, DropMaterializedView
+from sqlalchemy.ext.compiler import compiles
+from sqlalchemy import text
+
+# Register the compiler methods
+# The @compiles decorator is the public API for registering new SQL constructs.
+# However, we are now using the internal `__visit_name__` attribute on the
+# DDLElement classes themselves to hook into the visitor pattern, which is
+# consistent with how SQLAlchemy's own constructs are implemented.
+# compiles(CreateView)(StarRocksDDLCompiler.visit_create_view)
+# compiles(DropView)(StarRocksDDLCompiler.visit_drop_view)
+# compiles(CreateMaterializedView)(StarRocksDDLCompiler.visit_create_materialized_view)
+# compiles(DropMaterializedView)(StarRocksDDLCompiler.visit_drop_materialized_view)
 
 
 ##############################################################################################
@@ -176,6 +189,7 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
         if create_table_suffix:
             text += create_table_suffix + " "
 
+
         text += "("
 
         separator = "\n"
@@ -226,27 +240,39 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
         if table.comment is not None:
             opts["COMMENT"] = table.comment
 
-
         if 'ENGINE' in opts:
             table_opts.append(f'ENGINE={opts["ENGINE"]}')
 
+        # Key Types (Primary, Duplicate, Aggregate, Unique)
         if 'PRIMARY_KEY' in opts:
             table_opts.append(f'PRIMARY KEY({opts["PRIMARY_KEY"]})')
+        elif 'DUPLICATE_KEY' in opts:
+            table_opts.append(f'DUPLICATE KEY({opts["DUPLICATE_KEY"]})')
+        elif 'AGGREGATE_KEY' in opts:
+            table_opts.append(f'AGGREGATE KEY({opts["AGGREGATE_KEY"]})')
+        elif 'UNIQUE_KEY' in opts:
+            table_opts.append(f'UNIQUE KEY({opts["UNIQUE_KEY"]})')
 
+        # Partition
+        if 'PARTITION_BY' in opts:
+            table_opts.append(f'PARTITION BY {opts["PARTITION_BY"]}')
+
+        # Distribution
         if 'DISTRIBUTED_BY' in opts:
-            table_opts.append(f'DISTRIBUTED BY HASH({opts["DISTRIBUTED_BY"]})')
+            dist_str = f'DISTRIBUTED BY HASH({opts["DISTRIBUTED_BY"]})'
+            if 'BUCKETS' in opts:
+                dist_str += f' BUCKETS {opts["BUCKETS"]}'
+            table_opts.append(dist_str)
+        
+        # Order By
+        if 'ORDER_BY' in opts:
+            table_opts.append(f'ORDER BY({opts["ORDER_BY"]})')
 
         if "COMMENT" in opts:
             comment = self.sql_compiler.render_literal_value(
                 opts["COMMENT"], sqltypes.String()
             )
             table_opts.append(f"COMMENT {comment}")
-
-        # ToDo - Partition
-        # ToDo - Distribution
-
-        if "ORDER_BY" in opts:
-            table_opts.append(f"ORDER BY ({opts['ORDER_BY']})")
 
         if "PROPERTIES" in opts:
             props = ",\n".join([f'\t"{k}"="{v}"' for k, v in opts["PROPERTIES"]])
@@ -361,6 +387,30 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
             self.preparer.format_table(create.element)
         )
 
+    def visit_create_view(self, create, **kw):
+        view = create.element
+        return f"CREATE VIEW {self.preparer.format_table(view)} AS {view.definition}"
+
+    def visit_drop_view(self, drop, **kw):
+        view = drop.element
+        return f"DROP VIEW IF EXISTS {self.preparer.format_table(view)}"
+
+    def visit_create_materialized_view(self, create, **kw):
+        mv = create.element
+        properties = ""
+        if mv.properties:
+            prop_clauses = [f'"{k}" = "{v}"' for k, v in mv.properties.items()]
+            properties = f"PROPERTIES ({', '.join(prop_clauses)})"
+
+        return (
+            f"CREATE MATERIALIZED VIEW {self.preparer.format_table(mv)} "
+            f"{properties} AS {mv.definition}"
+        )
+
+    def visit_drop_materialized_view(self, drop, **kw):
+        mv = drop.element
+        return f"DROP MATERIALIZED VIEW IF EXISTS {self.preparer.format_table(mv)}"
+
 
 class StarRocksIdentifierPreparer(MySQLIdentifierPreparer):
     # reserved_words = RESERVED_WORDS
@@ -378,6 +428,7 @@ class StarRocksDialect(MySQLDialect_pymysql):
     supports_empty_insert = False
 
     ischema_names = ischema_names
+    # inspector = _reflection.StarRocksInspector
 
 
     statement_compiler = StarRocksSQLCompiler
@@ -574,3 +625,61 @@ class StarRocksDialect(MySQLDialect_pymysql):
             if self._extract_error_code(e.orig) in (5501, 5502):
                 return False
             raise
+
+    def get_view_names(self, connection, schema=None, **kw):
+        """Return all view names in a given schema."""
+        if schema is None:
+            schema = self.default_schema_name
+        try:
+            rows = self._read_from_information_schema(
+                connection,
+                "views",
+                table_schema=schema,
+            )
+            return [row.TABLE_NAME for row in rows]
+        except Exception:
+            return []
+
+    def get_view_definition(self, connection, view_name, schema=None, **kw):
+        """Return the definition of a view."""
+        if schema is None:
+            schema = self.default_schema_name
+        try:
+            rows = self._read_from_information_schema(
+                connection,
+                "views",
+                table_schema=schema,
+                table_name=view_name,
+            )
+            return rows[0].VIEW_DEFINITION
+        except Exception:
+            return None
+
+    def get_materialized_view_names(self, connection, schema=None, **kw):
+        """Return all materialized view names in a given schema."""
+        if schema is None:
+            schema = self.default_schema_name
+        try:
+            rows = self._read_from_information_schema(
+                connection,
+                "materialized_views",
+                table_schema=schema,
+            )
+            return [row.TABLE_NAME for row in rows]
+        except Exception:
+            return []
+
+    def get_materialized_view_definition(self, connection, view_name, schema=None, **kw):
+        """Return the definition of a materialized view."""
+        if schema is None:
+            schema = self.default_schema_name
+        try:
+            rows = self._read_from_information_schema(
+                connection,
+                "materialized_views",
+                table_schema=schema,
+                table_name=view_name,
+            )
+            return rows[0].VIEW_DEFINITION
+        except Exception:
+            return None
