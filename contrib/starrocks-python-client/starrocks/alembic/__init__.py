@@ -1,7 +1,5 @@
 # starrocks/alembic/__init__.py
+from . import compare, ops, render
 
-from . import ops
-from . import render
-from . import compare
+__all__ = ["compare", "ops", "render"]
 
-__all__ = ("ops", "render", "compare")

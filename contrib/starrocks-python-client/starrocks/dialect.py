@@ -36,6 +36,8 @@ from . import reflection as _reflection
 from .sql.ddl import CreateView, DropView, CreateMaterializedView, DropMaterializedView
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy import text
+from sqlalchemy.engine import Connection
+from typing import List, Optional, Any
 
 # Register the compiler methods
 # The @compiles decorator is the public API for registering new SQL constructs.
@@ -170,6 +172,9 @@ class StarRocksSQLCompiler(MySQLCompiler):
 
 
 class StarRocksDDLCompiler(MySQLDDLCompiler):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.logger = logging.getLogger(f"{__name__}.StarRocksDDLCompiler")
 
     def visit_create_table(self, create, **kw):
         table = create.element
@@ -387,9 +392,50 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
             self.preparer.format_table(create.element)
         )
 
-    def visit_create_view(self, create, **kw):
+    def visit_create_view(self, create: CreateView, **kw: Any) -> str:
         view = create.element
-        return f"CREATE VIEW {self.preparer.format_table(view)} AS {view.definition}"
+        text = "CREATE "
+        if create.or_replace:
+            text += "OR REPLACE "
+        text += "VIEW "
+        if create.if_not_exists:
+            text += "IF NOT EXISTS "
+        
+        text += self.preparer.format_table(view) + "\n"
+
+        if view.columns:
+            text += self._get_view_column_clauses(view)
+
+        if view.comment:
+            comment = self.sql_compiler.render_literal_value(
+                view.comment, sqltypes.String()
+            )
+            text += f"COMMENT {comment}\n"
+
+        if create.security:
+            text += f"SECURITY {create.security.upper()}\n"
+
+        text += f"AS\n{view.definition}"
+
+        self.dialect.logger.debug("Compiled SQL for CreateView: \n%s", text)
+        return text
+
+    def _get_view_column_clauses(self, view) -> str:
+        """Helper method to format the column clauses for a CREATE VIEW statement."""
+        column_clauses = []
+        for c in view.columns:
+            if isinstance(c, dict):
+                col_name = self.preparer.quote(c['name'])
+                if 'comment' in c:
+                    comment = self.sql_compiler.render_literal_value(
+                        c['comment'], sqltypes.String()
+                    )
+                    column_clauses.append(f'\t{col_name} COMMENT {comment}')
+                else:
+                    column_clauses.append(f'\t{col_name}')
+            else:
+                column_clauses.append(f'\t{self.preparer.quote(c)}')
+        return " (\n%s\n)" % ",\n".join(column_clauses)
 
     def visit_drop_view(self, drop, **kw):
         view = drop.element
@@ -438,6 +484,7 @@ class StarRocksDialect(MySQLDialect_pymysql):
 
     def __init__(self, *args, **kw):
         super(StarRocksDialect, self).__init__(*args, **kw)
+        self.logger = logging.getLogger(f"{__name__}.StarRocksDialect")
 
     def _get_server_version_info(self, connection):
         # get database server version info explicitly over the wire
@@ -626,7 +673,7 @@ class StarRocksDialect(MySQLDialect_pymysql):
                 return False
             raise
 
-    def get_view_names(self, connection, schema=None, **kw):
+    def get_view_names(self, connection: Connection, schema: Optional[str] = None, **kw: Any) -> List[str]:
         """Return all view names in a given schema."""
         if schema is None:
             schema = self.default_schema_name
@@ -640,7 +687,7 @@ class StarRocksDialect(MySQLDialect_pymysql):
         except Exception:
             return []
 
-    def get_view_definition(self, connection, view_name, schema=None, **kw):
+    def get_view_definition(self, connection: Connection, view_name: str, schema: Optional[str] = None, **kw: Any) -> Optional[str]:
         """Return the definition of a view."""
         if schema is None:
             schema = self.default_schema_name
@@ -655,7 +702,7 @@ class StarRocksDialect(MySQLDialect_pymysql):
         except Exception:
             return None
 
-    def get_materialized_view_names(self, connection, schema=None, **kw):
+    def get_materialized_view_names(self, connection: Connection, schema: Optional[str] = None, **kw: Any) -> List[str]:
         """Return all materialized view names in a given schema."""
         if schema is None:
             schema = self.default_schema_name
@@ -669,7 +716,7 @@ class StarRocksDialect(MySQLDialect_pymysql):
         except Exception:
             return []
 
-    def get_materialized_view_definition(self, connection, view_name, schema=None, **kw):
+    def get_materialized_view_definition(self, connection: Connection, view_name: str, schema: Optional[str] = None, **kw: Any) -> Optional[str]:
         """Return the definition of a materialized view."""
         if schema is None:
             schema = self.default_schema_name
