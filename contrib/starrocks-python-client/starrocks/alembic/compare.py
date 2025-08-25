@@ -1,4 +1,5 @@
 import re
+import logging
 from typing import Dict, List, Optional, Set, Tuple
 
 from alembic.autogenerate import api, comparators
@@ -9,19 +10,56 @@ from starrocks.sql.schema import MaterializedView, View
 from starrocks.reflection import ReflectionViewInfo
 
 from .ops import (
-    CreateMaterializedViewOp,
     CreateViewOp,
-    DropMaterializedViewOp,
+    AlterViewOp,
     DropViewOp,
+    CreateMaterializedViewOp,
+    DropMaterializedViewOp,
 )
+
+logger = logging.getLogger("starrocks.alembic.compare")
+
+
+def _strip_identifier_backticks(sql_text: str) -> str:
+    """Remove MySQL-style identifier quotes (`) while preserving string literals."""
+    in_single_quote = False
+    escaped = False
+    out: list[str] = []
+    for ch in sql_text:
+        if in_single_quote:
+            out.append(ch)
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == "'":
+                in_single_quote = False
+            continue
+        if ch == "'":
+            in_single_quote = True
+            out.append(ch)
+        elif ch == "`":
+            # drop identifier quote
+            continue
+        else:
+            out.append(ch)
+    return "".join(out)
 
 
 def normalize_sql(sql_text: Optional[str]) -> Optional[str]:
-    """A simple normalizer for SQL text."""
+    """A normalizer for SQL text for diffing.
+
+    - Strips single-line comments
+    - Removes identifier backticks outside string literals
+    - Collapses whitespace
+    - Lowercases
+    """
     if sql_text is None:
         return None
     # Remove comments
-    sql_text = re.sub(r"--.*?\n", "", sql_text)
+    sql_text = re.sub(r"--.*?(?:\n|$)", " ", sql_text)
+    # Remove identifier quotes but keep quotes inside strings
+    sql_text = _strip_identifier_backticks(sql_text)
     # Collapse whitespace and convert to lowercase
     sql_text = re.sub(r"\s+", " ", sql_text).strip().lower()
     return sql_text
@@ -43,8 +81,9 @@ def autogen_for_views(
 
     metadata_views_info = autogen_context.metadata.info.get("views", {})
     metadata_views: Dict[Tuple[Optional[str], str], View] = {
-        (view_obj.schema or autogen_context.dialect.default_schema_name, view_obj.name): view_obj
+        (view_obj.schema or schema, view_obj.name): view_obj
         for key, view_obj in metadata_views_info.items()
+        for schema in schemas
     }
 
     _compare_views(conn_views, metadata_views, autogen_context, upgrade_ops)
@@ -61,11 +100,22 @@ def _compare_views(
     # Find new views to create
     for schema, view_name in sorted(metadata_views.keys() - conn_views):
         view = metadata_views[(schema, view_name)]
-        upgrade_ops.ops.append(CreateViewOp(view.name, view.definition, schema=schema, security=view.security))
+        upgrade_ops.ops.append(CreateViewOp(view.name, view.definition, schema=schema, security=view.security, comment=view.comment))
 
     # Find old views to drop
     for schema, view_name in sorted(conn_views - metadata_views.keys()):
-        upgrade_ops.ops.append(DropViewOp(view_name, schema=schema))
+        view_info = inspector.get_view(view_name, schema=schema)
+        if not view_info:
+            continue
+        upgrade_ops.ops.append(
+            DropViewOp(
+                view_name,
+                schema=schema,
+                _reverse_view_definition=view_info.definition,
+                _reverse_view_comment=view_info.comment,
+                _reverse_view_security=view_info.security,
+            )
+        )
 
     # Find views that exist in both and compare their definitions
     for schema, view_name in sorted(conn_views.intersection(metadata_views.keys())):
@@ -101,22 +151,34 @@ def compare_view(
     metadata_view: View,
 ) -> None:
     """Compare a single view and generate operations if needed."""
-    if (
-        conn_view.definition != metadata_view.definition 
-        or conn_view.security != metadata_view.security
-        or conn_view.comment != metadata_view.comment
-    ):
+    definition_changed = normalize_sql(conn_view.definition) != normalize_sql(metadata_view.definition)
+    comment_changed = conn_view.comment != metadata_view.comment
+    security_changed = conn_view.security != metadata_view.security
+
+    if comment_changed:
+        logger.warning(
+            "StarRocks does not support altering view comments via ALTER VIEW; comment change detected for %s.%s and will be ignored",
+            schema or autogen_context.dialect.default_schema_name,
+            view_name,
+        )
+
+    if security_changed:
+        logger.warning(
+            "StarRocks does not support altering view security via ALTER VIEW; security change detected for %s.%s and will be ignored",
+            schema or autogen_context.dialect.default_schema_name,
+            view_name,
+        )
+
+    if definition_changed:
         upgrade_ops.ops.append(
-            (
-                DropViewOp(view_name, schema=schema),
-                CreateViewOp(
-                    metadata_view.name,
-                    metadata_view.definition,
-                    schema=schema,
-                    security=metadata_view.security,
-                ),
+            AlterViewOp(
+                metadata_view.name,
+                metadata_view.definition,
+                schema=schema,
+                reverse_view_definition=conn_view.definition,
             )
         )
+    # else: only comment/security changed -> no operation generated
 
 # ==============================================================================
 # Materialized View Comparison
@@ -169,9 +231,10 @@ def _compare_materialized_views(
 
     # Find modified MVs
     for schema, mv_name in sorted(conn_mvs.intersection(metadata_mvs.keys())):
+        view_info = inspector.get_materialized_view_definition(mv_name, schema=schema)
         conn_mv = MaterializedView(
             mv_name,
-            inspector.get_materialized_view_definition(mv_name, schema=schema),
+            view_info,
             schema=schema
         )
         metadata_mv = metadata_mvs[(schema, mv_name)]

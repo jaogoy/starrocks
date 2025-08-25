@@ -33,8 +33,8 @@ from .datatype import (
 )
 
 from . import reflection as _reflection
-from .sql.ddl import CreateView, DropView, CreateMaterializedView, DropMaterializedView
-from .reflection import ReflectionViewInfo
+from .sql.ddl import CreateView, DropView, AlterView, CreateMaterializedView, DropMaterializedView
+from .reflection import ReflectionViewInfo, StarRocksInspector
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
@@ -421,6 +421,21 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
         self.dialect.logger.debug("Compiled SQL for CreateView: \n%s", text)
         return text
 
+    def visit_alter_view(self, alter: AlterView, **kw: Any) -> str:
+        view = alter.element
+        text = f"ALTER VIEW {self.preparer.format_table(view)}\n"
+
+        if view.columns:
+            text += self._get_view_column_clauses(view)
+
+        # StarRocks does not support altering COMMENT or SECURITY via ALTER VIEW.
+        # TODO: we can optimize it when StarRocks supports it in the future
+        # Only redefine the SELECT statement.
+        text += f"AS\n{view.definition}"
+
+        self.dialect.logger.debug("Compiled SQL for AlterView: \n%s", text)
+        return text
+
     def _get_view_column_clauses(self, view) -> str:
         """Helper method to format the column clauses for a CREATE VIEW statement."""
         column_clauses = []
@@ -475,7 +490,7 @@ class StarRocksDialect(MySQLDialect_pymysql):
     supports_empty_insert = False
 
     ischema_names = ischema_names
-    # inspector = _reflection.StarRocksInspector
+    inspector = StarRocksInspector
 
 
     statement_compiler = StarRocksSQLCompiler
@@ -688,6 +703,63 @@ class StarRocksDialect(MySQLDialect_pymysql):
         except Exception:
             return []
 
+    @reflection.cache
+    def _get_view_info(self, connection: Connection, view_name: str, schema: Optional[str] = None, **kw: Any) -> Optional[Dict[str, Any]]:
+        """Gets all information about a view in a single query."""
+        if schema is None:
+            schema = self.default_schema_name
+        try:
+            view_details = self._read_from_information_schema(
+                connection,
+                "views",
+                table_schema=schema,
+                table_name=view_name,
+            )[0]
+            
+            table_details = self._read_from_information_schema(
+                connection,
+                "tables",
+                table_schema=schema,
+                table_name=view_name,
+            )[0]
+
+            return {
+                "name": view_details.TABLE_NAME,
+                "definition": view_details.VIEW_DEFINITION,
+                "comment": table_details.TABLE_COMMENT,  # TODO: currently, we use comments from IS.tables
+                "security": view_details.SECURITY_TYPE,
+            }
+        except Exception:
+            return None
+
+    def _strip_identifier_backticks(self, sql_text: str) -> str:
+        """Remove MySQL-style identifier quotes (`) while preserving those inside string literals.
+
+        This handles backslash-escaped characters within single-quoted strings.
+        """
+        in_single_quote = False
+        escaped = False
+        output_chars: list[str] = []
+        for ch in sql_text:
+            if in_single_quote:
+                output_chars.append(ch)
+                if escaped:
+                    escaped = False
+                elif ch == "\\":
+                    escaped = True
+                elif ch == "'":
+                    in_single_quote = False
+                continue
+            if ch == "'":
+                in_single_quote = True
+                output_chars.append(ch)
+            elif ch == "`":
+                # Skip identifier quote
+                continue
+            else:
+                output_chars.append(ch)
+        return "".join(output_chars)
+
     def get_view(self, connection: Connection, view_name: str, schema: Optional[str] = None, **kw: Any) -> Optional[ReflectionViewInfo]:
         """Return all information about a view."""
         view_info = self._get_view_info(connection, view_name, schema, **kw)
@@ -695,26 +767,11 @@ class StarRocksDialect(MySQLDialect_pymysql):
             return None
         
         return ReflectionViewInfo(
-            name=view_info.TABLE_NAME,
-            definition=view_info.VIEW_DEFINITION,
-            comment=view_info.TABLE_COMMENT,
-            security=view_info.SECURITY_TYPE,
+            name=view_info["name"],
+            definition=self._strip_identifier_backticks(view_info["definition"]),
+            comment=view_info["comment"],
+            security=view_info["security"],
         )
-
-    @reflection.cache
-    def _get_view_info(self, connection: Connection, view_name: str, schema: Optional[str] = None, **kw: Any) -> Optional[_DecodingRow]:
-        """Gets all information about a view in a single query."""
-        if schema is None:
-            schema = self.default_schema_name
-        try:
-            return self._read_from_information_schema(
-                connection,
-                "views",
-                table_schema=schema,
-                table_name=view_name,
-            )[0]
-        except Exception:
-            return None
 
     def get_view_definition(self, connection: Connection, view_name: str, schema: Optional[str] = None, **kw: Any) -> Optional[str]:
         """Return the definition of a view."""

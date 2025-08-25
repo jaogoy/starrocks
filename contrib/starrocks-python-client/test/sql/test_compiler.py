@@ -3,7 +3,7 @@ from sqlalchemy.dialects import registry
 import re
 import logging
 
-from starrocks.sql.ddl import CreateView, DropView, CreateMaterializedView, DropMaterializedView
+from starrocks.sql.ddl import CreateView, DropView, CreateMaterializedView, DropMaterializedView, AlterView
 from starrocks.sql.schema import View, MaterializedView
 
 
@@ -23,7 +23,6 @@ def _normalize_sql(sql: str) -> str:
 class TestCompiler:
     @classmethod
     def setup_class(cls):
-        registry.register("starrocks", "starrocks.dialect", "StarRocksDialect")
         cls.logger = logging.getLogger(__name__)
         cls.dialect = registry.load("starrocks")()
 
@@ -182,4 +181,16 @@ class TestCompiler:
         stmt = DropMaterializedView(mv)
         sql = str(stmt.compile(dialect=self.dialect))
         expected = "DROP MATERIALIZED VIEW IF EXISTS my_mv"
+        assert _normalize_sql(sql) == _normalize_sql(expected)
+
+    def test_compile_alter_view(self):
+        logging.info("Testing ALTER VIEW compilation")
+        ddl = AlterView(View('my_view', 'SELECT 2', comment='New Comment', security='DEFINER'))
+        sql = str(ddl.compile(dialect=self.dialect))
+        # COMMENT and SECURITY are not supported by ALTER VIEW
+        expected = """
+        ALTER VIEW my_view
+        AS
+        SELECT 2
+        """
         assert _normalize_sql(sql) == _normalize_sql(expected)

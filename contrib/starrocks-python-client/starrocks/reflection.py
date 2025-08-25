@@ -26,6 +26,7 @@ from sqlalchemy.dialects.mysql.reflection import _re_compile
 from sqlalchemy import log
 from sqlalchemy import types as sqltypes
 from sqlalchemy import util
+from sqlalchemy.engine.reflection import Inspector
 
 # kw_only is added in python 3.10
 # https://docs.python.org/3/library/dataclasses.html#dataclasses.dataclass
@@ -48,6 +49,14 @@ class ReflectionViewInfo:
     definition: str
     comment: str | None = None
     security: str | None = None
+
+
+class StarRocksInspector(Inspector):
+    def __init__(self, bind):
+        super().__init__(bind)
+
+    def get_view(self, view_name: str, schema: str | None = None) -> ReflectionViewInfo | None:
+        return self.dialect.get_view(self.bind, view_name, schema=schema)
 
 
 @log.class_logger

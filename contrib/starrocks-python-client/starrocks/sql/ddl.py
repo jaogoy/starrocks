@@ -15,6 +15,12 @@ class CreateView(DDLElement):
         self.if_not_exists = if_not_exists
         self.security = element.security
 
+class AlterView(DDLElement):
+    """Represents an ALTER VIEW DDL statement."""
+    __visit_name__ = "alter_view"
+    def __init__(self, element: View) -> None:
+        self.element = element
+
 class DropView(DDLElement):
     """Represents a DROP VIEW DDL statement."""
     __visit_name__ = "drop_view"

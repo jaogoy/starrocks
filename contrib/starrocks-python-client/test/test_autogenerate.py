@@ -7,7 +7,7 @@ from starrocks.sql.schema import View, MaterializedView
 from starrocks.alembic.compare import autogen_for_views, autogen_for_materialized_views
 from starrocks.reflection import ReflectionViewInfo
 from starrocks.alembic.ops import (
-    CreateViewOp, DropViewOp,
+    CreateViewOp, DropViewOp, AlterViewOp,
     CreateMaterializedViewOp, DropMaterializedViewOp
 )
 from starrocks.alembic.starrocks import StarrocksImpl
@@ -21,6 +21,7 @@ from alembic.autogenerate import api
 from alembic.operations import Operations
 from alembic.runtime.migration import MigrationContext
 from typing import Generator, Any
+from sqlalchemy import Engine
 
 class TestAutogenerate:
     def setup_method(self, method):
@@ -85,17 +86,10 @@ class TestAutogenerate:
         autogen_for_views(self.mock_autogen_context, upgrade_ops, [None])
         
         eq_(len(upgrade_ops.ops), 1)
-        op_tuple = upgrade_ops.ops[0]
-        eq_(len(op_tuple), 2)
-        
-        drop_op, create_op = op_tuple  # TODO: here is a tuple of two ops, need to change it to an ALTER VIEW stmt
-        
-        eq_(drop_op.__class__.__name__, 'DropViewOp')
-        eq_(drop_op.view_name, 'my_test_view')
-        
-        eq_(create_op.__class__.__name__, 'CreateViewOp')
-        eq_(create_op.view_name, 'my_test_view')
-        eq_(create_op.definition, 'SELECT 2')
+        op: AlterViewOp = upgrade_ops.ops[0]
+        eq_(op.__class__.__name__, 'AlterViewOp')
+        eq_(op.view_name, 'my_test_view')
+        eq_(op.definition, 'SELECT 2')
 
     def test_create_view_with_security(self):
         """Test autogen_for_views detects a new view with a SECURITY clause."""
@@ -129,17 +123,9 @@ class TestAutogenerate:
         self.mock_autogen_context.metadata = m2
 
         autogen_for_views(self.mock_autogen_context, upgrade_ops, [None])
-        
-        eq_(len(upgrade_ops.ops), 1)
-        op_tuple = upgrade_ops.ops[0]
-        eq_(len(op_tuple), 2)
-        
-        drop_op, create_op = op_tuple
-        
-        eq_(drop_op.__class__.__name__, 'DropViewOp')
-        eq_(create_op.__class__.__name__, 'CreateViewOp')
-        eq_(create_op.view_name, 'my_secure_view')
-        eq_(create_op.security, 'INVOKER')
+
+        # TODO: StarRocks does not support altering security via ALTER VIEW; expect no ops
+        eq_(len(upgrade_ops.ops), 0)
 
     def test_no_change_view_autogenerate(self):
         """Test that autogen_for_views detects no change."""
@@ -173,16 +159,8 @@ class TestAutogenerate:
 
         autogen_for_views(self.mock_autogen_context, upgrade_ops, [None])
 
-        eq_(len(upgrade_ops.ops), 1)
-        op_tuple = upgrade_ops.ops[0]
-        eq_(len(op_tuple), 2)
-        
-        drop_op, create_op = op_tuple
-        
-        eq_(drop_op.__class__.__name__, 'DropViewOp')
-        eq_(create_op.__class__.__name__, 'CreateViewOp')
-        eq_(create_op.view_name, 'my_test_view')
-        # This test confirms that a difference in comment triggers a modification.
+        # TODO: StarRocks does not support altering comment via ALTER VIEW; expect no ops
+        eq_(len(upgrade_ops.ops), 0)
         
     def test_modify_view_security_autogenerate(self):
         """Test that autogen_for_views detects a modified view security."""
@@ -199,9 +177,8 @@ class TestAutogenerate:
 
         autogen_for_views(self.mock_autogen_context, upgrade_ops, [None])
 
-        eq_(len(upgrade_ops.ops), 1)
-        _drop_op, create_op = upgrade_ops.ops[0]
-        eq_(create_op.security, 'DEFINER')
+        # TODO: StarRocks does not support altering security via ALTER VIEW; expect no ops
+        eq_(len(upgrade_ops.ops), 0)
 
     def test_remove_view_security_autogenerate(self):
         """Test that autogen_for_views detects removing a view security clause."""
@@ -219,9 +196,8 @@ class TestAutogenerate:
 
         autogen_for_views(self.mock_autogen_context, upgrade_ops, [None])
 
-        eq_(len(upgrade_ops.ops), 1)
-        _drop_op, create_op = upgrade_ops.ops[0]
-        eq_(create_op.security, None)
+        # TODO: StarRocks does not support altering security via ALTER VIEW; expect no ops
+        eq_(len(upgrade_ops.ops), 0)
 
 # This is a placeholder for more advanced tests that require a live DB
 # We will need to set up a proper testing database and configuration for this.
@@ -315,6 +291,12 @@ class TestIntegration:
     # Fetches the StarRocks connection URL from environment variables
     # Defaults to a common local setup.
     STARROCKS_URI = os.getenv("STARROCKS_URI", "starrocks://root:@127.0.0.1:9030/test")
+    engine: Engine = create_engine(STARROCKS_URI)
+
+    @classmethod
+    def teardown_class(cls):
+        """Disposes the engine after all tests are done."""
+        cls.engine.dispose()
 
     @pytest.fixture(scope="function")
     def alembic_env(self) -> Generator[Config, Any, None]:
@@ -344,7 +326,7 @@ class TestIntegration:
         Tests the full Alembic workflow using lower-level APIs.
         """
         config: Config = alembic_env
-        engine: create_engine = create_engine(TestIntegration.STARROCKS_URI)
+        engine = self.engine
         
         view_name = "integration_test_view"
         
@@ -390,4 +372,69 @@ class TestIntegration:
 
             finally:
                 # 8. Robust cleanup
+                conn.execute(text(f"DROP VIEW IF EXISTS {view_name}"))
+
+    def test_full_autogenerate_and_alter(self, alembic_env: Config) -> None:
+        """
+        Tests that autogenerate correctly produces and executes an ALTER VIEW
+        operation when all attributes of a view are changed.
+        """
+        config: Config = alembic_env
+        engine = self.engine
+        view_name = "integration_test_alter_view"
+
+        with engine.connect() as conn:
+            # 1. Setup: Create an initial version of the view directly
+            initial_ddl = f"""
+            CREATE OR REPLACE VIEW {view_name}
+            (c1 COMMENT 'col 1')
+            COMMENT 'Initial version'
+            SECURITY INVOKER
+            AS SELECT 1 AS c1
+            """
+            conn.execute(text(initial_ddl))
+            
+            try:
+                # 2. Define target state with a modified view
+                target_metadata = MetaData()
+                altered_view = View(
+                    view_name, 
+                    "SELECT 2 AS new_c1, 3 AS new_c2", 
+                    comment="Altered version", 
+                    security="DEFINER",
+                    columns=[
+                        {'name': 'new_c1', 'comment': 'new col 1'},
+                        {'name': 'new_c2', 'comment': 'new col 2'},
+                    ]
+                )
+                target_metadata.info['views'] = {(altered_view, None): altered_view}
+
+                # 3. Produce migration operations
+                mc: MigrationContext = MigrationContext.configure(connection=conn)
+                migration_script = api.produce_migrations(mc, target_metadata)
+                
+                # 4. Assert that the correct operations were generated (AlterView only since comment/security ignored)
+                assert len(migration_script.upgrade_ops.ops) == 1
+                op_item = migration_script.upgrade_ops.ops[0]
+                assert isinstance(op_item, AlterViewOp)
+                assert op_item.view_name == view_name
+
+                # 5. Execute the upgrade operations
+                op = Operations(mc)
+                for op_to_run in migration_script.upgrade_ops.ops:
+                    op.invoke(op_to_run)
+
+                # 6. Assert the view was altered in the database
+                inspector = inspect(conn)
+                view_info = inspector.get_view(view_name)
+                
+                assert view_info is not None
+                assert "SELECT 2 AS new_c1, 3 AS new_c2" in view_info.definition
+                # StarRocks ALTER VIEW does not apply comment/security; reflection may return empty values.
+                # TODO: When StarRocks supports altering comment/security, enable assertions below.
+                # assert view_info.comment == "Altered version"
+                # assert view_info.security == "DEFINER"
+
+            finally:
+                # 7. Robust cleanup
                 conn.execute(text(f"DROP VIEW IF EXISTS {view_name}"))
