@@ -2,18 +2,24 @@ import pytest
 from alembic.testing import eq_
 from alembic.operations import ops
 from sqlalchemy import MetaData
+from starrocks.datatype import logger
 from starrocks.sql.schema import View, MaterializedView
 from starrocks.alembic.compare import autogen_for_views, autogen_for_materialized_views
 from starrocks.alembic.ops import (
     CreateViewOp, DropViewOp,
     CreateMaterializedViewOp, DropMaterializedViewOp
 )
+from starrocks.alembic.starrocks import StarrocksImpl
 from unittest.mock import Mock
 from alembic.command import revision, upgrade, downgrade
 from alembic.config import Config
 from alembic.script import ScriptDirectory
-from sqlalchemy import create_engine, inspect
+from sqlalchemy import create_engine, inspect, text
 import os
+from alembic.autogenerate import api
+from alembic.operations import Operations
+from alembic.runtime.migration import MigrationContext
+from typing import Generator, Any
 
 class TestAutogenerate:
     def setup_method(self, method):
@@ -132,7 +138,7 @@ class TestAutogenerate:
 
 # This is a placeholder for more advanced tests that require a live DB
 # We will need to set up a proper testing database and configuration for this.
-@pytest.mark.skip(reason="Requires live database connection")
+# @pytest.mark.skip(reason="Requires live database connection")
 def test_full_autogenerate_and_upgrade():
     # 1. Setup a testing database
     # 2. Define initial state (e.g., empty or with some tables)
@@ -215,3 +221,86 @@ class TestAutogenerateMV:
         eq_(create_op.__class__.__name__, 'CreateMaterializedViewOp')
         eq_(create_op.view_name, 'my_test_mv')
         eq_(create_op.definition, 'SELECT 2')
+
+
+# --- Integration Test ---
+class TestIntegration:
+    # Fetches the StarRocks connection URL from environment variables
+    # Defaults to a common local setup.
+    STARROCKS_URI = os.getenv("STARROCKS_URI", "starrocks://root:@127.0.0.1:9030/test")
+
+    @pytest.fixture(scope="function")
+    def alembic_env(self) -> Generator[Config, Any, None]:
+        """Sets up a temporary, isolated Alembic environment for testing."""
+        script_dir_path = "test_alembic_env"
+        
+        # Remove any previous test environment
+        import shutil
+        if os.path.exists(script_dir_path):
+            shutil.rmtree(script_dir_path)
+
+        # Create the directory and copy our test env file
+        os.makedirs(script_dir_path)
+        shutil.copy("test/data/autogen_env.py", os.path.join(script_dir_path, "env.py"))
+        
+        config = Config()
+        config.set_main_option("script_location", script_dir_path)
+        config.set_main_option("sqlalchemy.url", TestIntegration.STARROCKS_URI)
+
+        yield config
+
+        # Teardown: remove the temporary directory
+        shutil.rmtree(script_dir_path)
+
+    def test_full_autogenerate_and_upgrade(self, alembic_env: Config) -> None:
+        """
+        Tests the full Alembic workflow using lower-level APIs.
+        """
+        config: Config = alembic_env
+        engine: create_engine = create_engine(TestIntegration.STARROCKS_URI)
+        
+        view_name = "integration_test_view"
+        
+        with engine.connect() as conn:
+            # Ensure cleanup before the test starts
+            conn.execute(text(f"DROP VIEW IF EXISTS {view_name}"))
+            
+            try:
+                # 1. Define target state with a new view
+                target_metadata = MetaData()
+                view = View(view_name, "SELECT 1 AS val", comment="Integration test view")
+                target_metadata.info['views'] = {(view, None): view}
+
+                # 2. Directly produce migration operations
+                mc: MigrationContext = MigrationContext.configure(connection=conn)
+                migration_script: api.MigrationScript = api.produce_migrations(mc, target_metadata)
+
+                # 3. Assert that the correct CreateViewOp was generated
+                assert len(migration_script.upgrade_ops.ops) == 1
+                create_op: CreateViewOp = migration_script.upgrade_ops.ops[0]
+                assert isinstance(create_op, CreateViewOp)
+                assert create_op.view_name == view_name
+
+                # 4. Execute the upgrade operations
+                op = Operations(mc)
+                for op_item in migration_script.upgrade_ops.ops:
+                    op.invoke(op_item)
+
+                # 5. Assert the view was created in the database
+                inspector = inspect(conn)
+                views: list[str] = inspector.get_view_names()
+                logger.info(f"inspected created views : {views}")
+                assert view_name in views
+
+                # 6. Execute the downgrade operations
+                for op_item in migration_script.downgrade_ops.ops:
+                    op.invoke(op_item)
+                    
+                # 7. Assert the view was dropped
+                inspector = inspect(conn)
+                views = inspector.get_view_names()
+                assert view_name not in views
+
+            finally:
+                # 8. Robust cleanup
+                conn.execute(text(f"DROP VIEW IF EXISTS {view_name}"))
