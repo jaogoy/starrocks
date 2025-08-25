@@ -6,6 +6,7 @@ from alembic.autogenerate.api import AutogenContext
 from alembic.operations.ops import UpgradeOps
 
 from starrocks.sql.schema import MaterializedView, View
+from starrocks.reflection import ReflectionViewInfo
 
 from .ops import (
     CreateMaterializedViewOp,
@@ -68,13 +69,16 @@ def _compare_views(
 
     # Find views that exist in both and compare their definitions
     for schema, view_name in sorted(conn_views.intersection(metadata_views.keys())):
-        # NOTE: We don't have a way to reflect the SECURITY property yet.
-        # This will be a TODO for the inspector. For now, assume None.
+        view_info = inspector.get_view(view_name, schema=schema)
+        if not view_info:
+            continue
+            
         conn_view = View(
-            view_name,
-            inspector.get_view_definition(view_name, schema=schema),
+            name=view_info.name,
+            definition=view_info.definition,
             schema=schema,
-            security=None # TODO: Reflect this property
+            comment=view_info.comment,
+            security=view_info.security
         )
         metadata_view = metadata_views[(schema, view_name)]
 
@@ -97,7 +101,11 @@ def compare_view(
     metadata_view: View,
 ) -> None:
     """Compare a single view and generate operations if needed."""
-    if conn_view.definition != metadata_view.definition or conn_view.security != metadata_view.security:
+    if (
+        conn_view.definition != metadata_view.definition 
+        or conn_view.security != metadata_view.security
+        or conn_view.comment != metadata_view.comment
+    ):
         upgrade_ops.ops.append(
             (
                 DropViewOp(view_name, schema=schema),

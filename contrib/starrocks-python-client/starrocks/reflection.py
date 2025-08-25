@@ -41,6 +41,15 @@ class ReflectedState(object):
     ck_constraints: list[dict] = dataclasses.field(default_factory=list)
 
 
+@dataclasses.dataclass(kw_only=True)
+class ReflectionViewInfo:
+    """Stores reflection information about a view."""
+    name: str
+    definition: str
+    comment: str | None = None
+    security: str | None = None
+
+
 @log.class_logger
 class StarRocksTableDefinitionParser(object):
     """Parses content of information_schema tables to get table information."""

@@ -5,6 +5,7 @@ from sqlalchemy import MetaData
 from starrocks.datatype import logger
 from starrocks.sql.schema import View, MaterializedView
 from starrocks.alembic.compare import autogen_for_views, autogen_for_materialized_views
+from starrocks.reflection import ReflectionViewInfo
 from starrocks.alembic.ops import (
     CreateViewOp, DropViewOp,
     CreateMaterializedViewOp, DropMaterializedViewOp
@@ -72,7 +73,9 @@ class TestAutogenerate:
         """Test that autogen_for_views detects a modified view."""
         upgrade_ops = ops.UpgradeOps([])
         self.mock_inspector.get_view_names.return_value = ['my_test_view']
-        self.mock_inspector.get_view_definition.return_value = 'SELECT 1'
+        self.mock_inspector.get_view.return_value = ReflectionViewInfo(
+            name="my_test_view", definition="SELECT 1"
+        )
 
         m2 = MetaData()
         view2 = View('my_test_view', 'SELECT 2')
@@ -116,7 +119,9 @@ class TestAutogenerate:
         """Test autogen_for_views detects adding a SECURITY clause to a view."""
         upgrade_ops = ops.UpgradeOps([])
         self.mock_inspector.get_view_names.return_value = ['my_secure_view']
-        self.mock_inspector.get_view_definition.return_value = 'SELECT 1'
+        self.mock_inspector.get_view.return_value = ReflectionViewInfo(
+            name="my_secure_view", definition="SELECT 1"
+        )
 
         m2 = MetaData()
         view2 = View('my_secure_view', 'SELECT 1', security='INVOKER')
@@ -135,6 +140,88 @@ class TestAutogenerate:
         eq_(create_op.__class__.__name__, 'CreateViewOp')
         eq_(create_op.view_name, 'my_secure_view')
         eq_(create_op.security, 'INVOKER')
+
+    def test_no_change_view_autogenerate(self):
+        """Test that autogen_for_views detects no change."""
+        upgrade_ops = ops.UpgradeOps([])
+        self.mock_inspector.get_view_names.return_value = ['my_test_view']
+        self.mock_inspector.get_view.return_value = ReflectionViewInfo(
+            name="my_test_view", definition="SELECT 1"
+        )
+
+        m2 = MetaData()
+        view = View('my_test_view', 'SELECT 1', comment=None, security=None)
+        m2.info['views'] = {(view, None): view}
+        self.mock_autogen_context.metadata = m2
+
+        autogen_for_views(self.mock_autogen_context, upgrade_ops, [None])
+
+        eq_(len(upgrade_ops.ops), 0)
+
+    def test_modify_view_comment_autogenerate(self):
+        """Test that autogen_for_views detects a modified view comment."""
+        upgrade_ops = ops.UpgradeOps([])
+        self.mock_inspector.get_view_names.return_value = ['my_test_view']
+        self.mock_inspector.get_view.return_value = ReflectionViewInfo(
+            name="my_test_view", definition="SELECT 1"
+        )
+
+        m2 = MetaData()
+        view2 = View('my_test_view', 'SELECT 1', comment='New comment')
+        m2.info['views'] = {(view2, None): view2}
+        self.mock_autogen_context.metadata = m2
+
+        autogen_for_views(self.mock_autogen_context, upgrade_ops, [None])
+
+        eq_(len(upgrade_ops.ops), 1)
+        op_tuple = upgrade_ops.ops[0]
+        eq_(len(op_tuple), 2)
+        
+        drop_op, create_op = op_tuple
+        
+        eq_(drop_op.__class__.__name__, 'DropViewOp')
+        eq_(create_op.__class__.__name__, 'CreateViewOp')
+        eq_(create_op.view_name, 'my_test_view')
+        # This test confirms that a difference in comment triggers a modification.
+        
+    def test_modify_view_security_autogenerate(self):
+        """Test that autogen_for_views detects a modified view security."""
+        upgrade_ops = ops.UpgradeOps([])
+        self.mock_inspector.get_view_names.return_value = ['my_test_view']
+        self.mock_inspector.get_view.return_value = ReflectionViewInfo(
+            name="my_test_view", definition="SELECT 1", security='INVOKER'
+        )
+        
+        m2 = MetaData()
+        view2 = View('my_test_view', 'SELECT 1', security='DEFINER')
+        m2.info['views'] = {(view2, None): view2}
+        self.mock_autogen_context.metadata = m2
+
+        autogen_for_views(self.mock_autogen_context, upgrade_ops, [None])
+
+        eq_(len(upgrade_ops.ops), 1)
+        _drop_op, create_op = upgrade_ops.ops[0]
+        eq_(create_op.security, 'DEFINER')
+
+    def test_remove_view_security_autogenerate(self):
+        """Test that autogen_for_views detects removing a view security clause."""
+        upgrade_ops = ops.UpgradeOps([])
+        self.mock_inspector.get_view_names.return_value = ['my_test_view']
+        self.mock_inspector.get_view.return_value = ReflectionViewInfo(
+            name="my_test_view", definition="SELECT 1", security='INVOKER'
+        )
+        
+        m2 = MetaData()
+        # This metadata view has no security, but the reflected one will have INVOKER
+        view2 = View('my_test_view', 'SELECT 1', security=None)
+        m2.info['views'] = {(view2, None): view2}
+        self.mock_autogen_context.metadata = m2
+
+        autogen_for_views(self.mock_autogen_context, upgrade_ops, [None])
+
+        eq_(len(upgrade_ops.ops), 1)
+        _drop_op, create_op = upgrade_ops.ops[0]
+        eq_(create_op.security, None)
 
 # This is a placeholder for more advanced tests that require a live DB
 # We will need to set up a proper testing database and configuration for this.

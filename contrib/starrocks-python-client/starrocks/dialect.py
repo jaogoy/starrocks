@@ -34,10 +34,11 @@ from .datatype import (
 
 from . import reflection as _reflection
 from .sql.ddl import CreateView, DropView, CreateMaterializedView, DropMaterializedView
+from .reflection import ReflectionViewInfo
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
-from typing import List, Optional, Any
+from typing import List, Optional, Any, Dict
 
 # Register the compiler methods
 # The @compiles decorator is the public API for registering new SQL constructs.
@@ -687,20 +688,49 @@ class StarRocksDialect(MySQLDialect_pymysql):
         except Exception:
             return []
 
-    def get_view_definition(self, connection: Connection, view_name: str, schema: Optional[str] = None, **kw: Any) -> Optional[str]:
-        """Return the definition of a view."""
+    def get_view(self, connection: Connection, view_name: str, schema: Optional[str] = None, **kw: Any) -> Optional[ReflectionViewInfo]:
+        """Return all information about a view."""
+        view_info = self._get_view_info(connection, view_name, schema, **kw)
+        if not view_info:
+            return None
+        
+        return ReflectionViewInfo(
+            name=view_info.TABLE_NAME,
+            definition=view_info.VIEW_DEFINITION,
+            comment=view_info.TABLE_COMMENT,
+            security=view_info.SECURITY_TYPE,
+        )
+
+    @reflection.cache
+    def _get_view_info(self, connection: Connection, view_name: str, schema: Optional[str] = None, **kw: Any) -> Optional[_DecodingRow]:
+        """Gets all information about a view in a single query."""
         if schema is None:
             schema = self.default_schema_name
         try:
-            rows = self._read_from_information_schema(
+            return self._read_from_information_schema(
                 connection,
                 "views",
                 table_schema=schema,
                 table_name=view_name,
-            )
-            return rows[0].VIEW_DEFINITION
+            )[0]
         except Exception:
             return None
+
+    def get_view_definition(self, connection: Connection, view_name: str, schema: Optional[str] = None, **kw: Any) -> Optional[str]:
+        """Return the definition of a view."""
+        view_info = self._get_view_info(connection, view_name, schema, **kw)
+        return view_info.VIEW_DEFINITION if view_info else None
+
+    def get_view_comment(self, connection: Connection, view_name: str, schema: Optional[str] = None, **kw: Any) -> Optional[str]:
+        """Return the comment of a view."""
+        view_info = self._get_view_info(connection, view_name, schema, **kw)
+        return view_info.TABLE_COMMENT if view_info else None
+
+    def get_view_security(self, connection: Connection, view_name: str, schema: Optional[str] = None, **kw: Any) -> Optional[str]:
+        """Return the security type of a view."""
+        view_info = self._get_view_info(connection, view_name, schema, **kw)
+        # The column for security in information_schema.views is SECURITY_TYPE
+        return view_info.SECURITY_TYPE if view_info else None
 
     def get_materialized_view_names(self, connection: Connection, schema: Optional[str] = None, **kw: Any) -> List[str]:
         """Return all materialized view names in a given schema."""
