@@ -21,6 +21,7 @@ from sqlalchemy import Connection, exc, schema as sa_schema
 from sqlalchemy.dialects.mysql.pymysql import MySQLDialect_pymysql
 from sqlalchemy.dialects.mysql.base import MySQLDDLCompiler, MySQLTypeCompiler, MySQLCompiler, MySQLIdentifierPreparer, _DecodingRow
 from sqlalchemy.sql import sqltypes
+from sqlalchemy.sql.expression import Delete, Select
 from sqlalchemy.util import topological
 from sqlalchemy import util
 from sqlalchemy import log
@@ -34,6 +35,7 @@ from .datatype import (
 
 from . import reflection as _reflection
 from .sql.ddl import CreateView, DropView, AlterView, CreateMaterializedView, DropMaterializedView
+from .sql.schema import View
 from .reflection import ReflectionViewInfo, StarRocksInspector, ReflectionViewDefaults
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy import text
@@ -145,20 +147,20 @@ class StarRocksTypeCompiler(MySQLTypeCompiler):
 
 
 class StarRocksSQLCompiler(MySQLCompiler):
-    def visit_delete(self, delete_stmt, **kw):
-        result = super().visit_delete(delete_stmt, **kw)
-        compile_state = delete_stmt._compile_state_factory(
+    def visit_delete(self, delete_stmt: Delete, **kw: Any) -> str:
+        result: str = super().visit_delete(delete_stmt, **kw)
+        compile_state: Any = delete_stmt._compile_state_factory(
             delete_stmt, self, **kw
         )
         delete_stmt = compile_state.statement
-        table = self.delete_table_clause(
+        table: str = self.delete_table_clause(
             delete_stmt, delete_stmt.table, False
         )
         if not delete_stmt._where_criteria:
             return "TRUNCATE TABLE " + table
         return result
 
-    def limit_clause(self, select, **kw):
+    def limit_clause(self, select: Select, **kw: Any) -> str:
         # StarRocks supports:
         #   LIMIT <limit>
         #   LIMIT <limit> OFFSET <offset>
@@ -177,7 +179,7 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
         super().__init__(*args, **kwargs)
         self.logger = logging.getLogger(f"{__name__}.StarRocksDDLCompiler")
 
-    def visit_create_table(self, create, **kw):
+    def visit_create_table(self, create: sa_schema.CreateTable, **kw: Any) -> str:
         table = create.element
         preparer = self.preparer
 
@@ -191,10 +193,9 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
 
         text += preparer.format_table(table) + " "
 
-        create_table_suffix = self.create_table_suffix(table)
+        create_table_suffix: str = self.create_table_suffix(table)
         if create_table_suffix:
             text += create_table_suffix + " "
-
 
         text += "("
 
@@ -232,12 +233,12 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
         text += "\n)%s\n\n" % self.post_create_table(table)
         return text
 
-    def post_create_table(self, table):
+    def post_create_table(self, table: sa_schema.Table) -> str:
         """Build table-level CREATE options like ENGINE and COLLATE."""
 
-        table_opts = []
+        table_opts: list[str] = []
 
-        opts = dict(
+        opts: dict[str, Any] = dict(
             (k[len(self.dialect.name) + 1 :].upper(), v)
             for k, v in table.kwargs.items()
             if k.startswith("%s_" % self.dialect.name)
@@ -286,10 +287,10 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
 
         return " ".join(table_opts)
 
-    def get_column_specification(self, column, **kw):
+    def get_column_specification(self, column: sa_schema.Column, **kw: Any) -> str:
         """Builds column DDL."""
 
-        colspec = [
+        colspec: list[str] = [
             self.preparer.format_column(column),
             self.dialect.type_compiler.process(
                 column.type, type_expression=column
@@ -353,14 +354,14 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
                 colspec.append("DEFAULT " + default)
         return " ".join(colspec)
 
-    def visit_computed_column(self, generated, **kw):
+    def visit_computed_column(self, generated: sa_schema.Computed, **kw: Any) -> str:
         #ToDo >= version 3.1
         text = "AS (%s)" % self.sql_compiler.process(
             generated.sqltext, include_table=False, literal_binds=True
         )
         return text
 
-    def visit_primary_key_constraint(self, constraint, **kw):
+    def visit_primary_key_constraint(self, constraint: sa_schema.PrimaryKeyConstraint, **kw: Any) -> str:
         if len(constraint) == 0:
             return ""
         text = ""
@@ -380,7 +381,7 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
         text += self.define_constraint_deferrability(constraint)
         return text
 
-    def visit_set_table_comment(self, create, **kw):
+    def visit_set_table_comment(self, create: sa_schema.SetTableComment, **kw: Any) -> str:
         return "ALTER TABLE %s COMMENT=%s" % (
             self.preparer.format_table(create.element),
             self.sql_compiler.render_literal_value(
@@ -388,7 +389,7 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
             ),
         )
 
-    def visit_drop_table_comment(self, create, **kw):
+    def visit_drop_table_comment(self, create: sa_schema.DropTableComment, **kw: Any) -> str:
         return "ALTER TABLE %s COMMENT=''" % (
             self.preparer.format_table(create.element)
         )
@@ -436,14 +437,14 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
         self.dialect.logger.debug("Compiled SQL for AlterView: \n%s", text)
         return text
 
-    def _get_view_column_clauses(self, view) -> str:
+    def _get_view_column_clauses(self, view: View) -> str:
         """Helper method to format the column clauses for a CREATE VIEW statement."""
-        column_clauses = []
+        column_clauses: list[str] = []
         for c in view.columns:
             if isinstance(c, dict):
-                col_name = self.preparer.quote(c['name'])
+                col_name: str = self.preparer.quote(c['name'])
                 if 'comment' in c:
-                    comment = self.sql_compiler.render_literal_value(
+                    comment: str = self.sql_compiler.render_literal_value(
                         c['comment'], sqltypes.String()
                     )
                     column_clauses.append(f'\t{col_name} COMMENT {comment}')
@@ -453,15 +454,15 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
                 column_clauses.append(f'\t{self.preparer.quote(c)}')
         return " (\n%s\n)" % ",\n".join(column_clauses)
 
-    def visit_drop_view(self, drop, **kw):
+    def visit_drop_view(self, drop: DropView, **kw: Any) -> str:
         view = drop.element
         return f"DROP VIEW IF EXISTS {self.preparer.format_table(view)}"
 
-    def visit_create_materialized_view(self, create, **kw):
+    def visit_create_materialized_view(self, create: CreateMaterializedView, **kw: Any) -> str:
         mv = create.element
         properties = ""
         if mv.properties:
-            prop_clauses = [f'"{k}" = "{v}"' for k, v in mv.properties.items()]
+            prop_clauses: list[str] = [f'"{k}" = "{v}"' for k, v in mv.properties.items()]
             properties = f"PROPERTIES ({', '.join(prop_clauses)})"
 
         return (
@@ -469,7 +470,7 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
             f"{properties} AS {mv.definition}"
         )
 
-    def visit_drop_materialized_view(self, drop, **kw):
+    def visit_drop_materialized_view(self, drop: DropMaterializedView, **kw: Any) -> str:
         mv = drop.element
         return f"DROP MATERIALIZED VIEW IF EXISTS {self.preparer.format_table(mv)}"
 
@@ -492,7 +493,6 @@ class StarRocksDialect(MySQLDialect_pymysql):
     ischema_names = ischema_names
     inspector = StarRocksInspector
 
-
     statement_compiler = StarRocksSQLCompiler
     ddl_compiler = StarRocksDDLCompiler
     type_compiler = StarRocksTypeCompiler
@@ -502,7 +502,7 @@ class StarRocksDialect(MySQLDialect_pymysql):
         super(StarRocksDialect, self).__init__(*args, **kw)
         self.logger = logging.getLogger(f"{__name__}.StarRocksDialect")
 
-    def _get_server_version_info(self, connection):
+    def _get_server_version_info(self, connection: Connection) -> tuple[int, ...]:
         # get database server version info explicitly over the wire
         # to avoid proxy servers like MaxScale getting in the
         # way with their own values, see #4205
@@ -516,8 +516,8 @@ class StarRocksDialect(MySQLDialect_pymysql):
 
         return self._parse_server_version(val)
 
-    def _parse_server_version(self, val):
-        server_version_info = tuple()
+    def _parse_server_version(self, val: str) -> tuple[int, ...]:
+        server_version_info: tuple[int, ...] = tuple()
         m = re.match(r"(\d+)\.?(\d+)?(?:\.(\d+))?(?:\.\d+)?(?:[-\s])?(?P<commit>.*)?", val)
         if m is not None:
             server_version_info = tuple([int(x) for x in m.group(1, 2, 3) if x is not None])
@@ -538,17 +538,17 @@ class StarRocksDialect(MySQLDialect_pymysql):
         return _reflection.StarRocksTableDefinitionParser(self, preparer)
 
     def _read_from_information_schema(
-        self, connection: Connection, inf_sch_table: str, charset: Union[str, None] = None, **kwargs
-    ):
-        def escape_single_quote(s):
+        self, connection: Connection, inf_sch_table: str, charset: Optional[str] = None, **kwargs: Any
+    ) -> list[_DecodingRow]:
+        def escape_single_quote(s: str) -> str:
             return s.replace("'", "\\'")
         
-        st = dedent(f"""
+        st: str = dedent(f"""
             SELECT * 
             FROM information_schema.{inf_sch_table} 
             WHERE {" AND ".join([f"{k} = '{escape_single_quote(v)}'" for k, v in kwargs.items()])}
         """)
-        rp = None
+        rp: Any = None
         try:
             rp = connection.execution_options(
                 skip_user_error_events=False
@@ -558,20 +558,20 @@ class StarRocksDialect(MySQLDialect_pymysql):
                 raise exc.NoSuchTableError(f"information_schema.{inf_sch_table}") from e
             else:
                 raise
-        rows = [_DecodingRow(row, charset) for row in rp.mappings().fetchall()]
+        rows: list[_DecodingRow] = [_DecodingRow(row, charset) for row in rp.mappings().fetchall()]
         if not rows:
             raise exc.NoSuchTableError(f"Empty response for query: '{st}'")
         return rows
     
     @reflection.cache
-    def _setup_parser(self, connection: Connection, table_name: str, schema: Union[str, None] = None, **kw):
-        charset = self._connection_charset
-        parser = self._tabledef_parser
+    def _setup_parser(self, connection: Connection, table_name: str, schema: Optional[str] = None, **kw: Any) -> Any:
+        charset: Optional[str] = self._connection_charset
+        parser: _reflection.StarRocksTableDefinitionParser = self._tabledef_parser
 
         if not schema:
             schema = connection.dialect.default_schema_name
 
-        table_rows = self._read_from_information_schema(
+        table_rows: list[_DecodingRow] = self._read_from_information_schema(
             connection=connection,
             inf_sch_table="tables",
             charset=charset,
@@ -583,7 +583,7 @@ class StarRocksDialect(MySQLDialect_pymysql):
                 f"Multiple tables found with name {table_name} in schema {schema}"
             )
 
-        table_config_rows = self._read_from_information_schema(
+        table_config_rows: list[_DecodingRow] = self._read_from_information_schema(
             connection=connection,
             inf_sch_table="tables_config",
             charset=charset,
@@ -595,7 +595,7 @@ class StarRocksDialect(MySQLDialect_pymysql):
                 f"Multiple tables found with name {table_name} in schema {schema}"
             )
 
-        column_rows = self._read_from_information_schema(
+        column_rows: list[_DecodingRow] = self._read_from_information_schema(
             connection=connection,
             inf_sch_table="columns",
             charset=charset,
@@ -606,15 +606,15 @@ class StarRocksDialect(MySQLDialect_pymysql):
         return parser.parse(table=table_rows[0], table_config=table_config_rows[0], columns=column_rows, charset=charset)
 
     def _show_table_indexes(
-        self, connection, table, charset=None, full_name=None
-    ):
+        self, connection: Connection, table: sa_schema.Table, charset: Optional[str] = None, full_name: Optional[str] = None
+    ) -> list[Any]:
         """Run SHOW INDEX FROM for a ``Table``."""
 
         if full_name is None:
             full_name = self.identifier_preparer.format_table(table)
         st = "SHOW INDEX FROM %s" % full_name
 
-        rp = None
+        rp: Any = None
         try:
             rp = connection.execution_options(
                 skip_user_error_events=True
@@ -624,22 +624,22 @@ class StarRocksDialect(MySQLDialect_pymysql):
                 raise exc.NoSuchTableError(full_name) from e
             else:
                 raise
-        index_results = self._compat_fetchall(rp, charset=charset)
+        index_results: list[Any] = self._compat_fetchall(rp, charset=charset)
         return index_results
 
     @reflection.cache
-    def get_indexes(self, connection, table_name, schema=None, **kw):
+    def get_indexes(self, connection: Connection, table_name: str, schema: Optional[str] = None, **kw: Any) -> list[dict[str, Any]]:
 
-        parsed_state = self._parsed_state_or_create(
+        parsed_state: Any = self._parsed_state_or_create(
             connection, table_name, schema, **kw
         )
 
-        indexes = []
+        indexes: list[dict[str, Any]] = []
 
         for spec in parsed_state.keys:
-            dialect_options = {}
+            dialect_options: dict[str, Any] = {}
             unique = False
-            flavor = spec["type"]
+            flavor: Optional[str] = spec["type"]
             if flavor == "PRIMARY":
                 continue
             if flavor == "DUPLICATE":
@@ -661,11 +661,11 @@ class StarRocksDialect(MySQLDialect_pymysql):
                     "parser"
                 ]
 
-            index_d = {}
+            index_d: dict[str, Any] = {}
 
             index_d["name"] = spec["name"]
             index_d["column_names"] = [s[0] for s in spec["columns"]]
-            mysql_length = {
+            mysql_length: dict[str, Any] = {
                 s[0]: s[1] for s in spec["columns"] if s[1] is not None
             }
             if mysql_length:
@@ -681,13 +681,17 @@ class StarRocksDialect(MySQLDialect_pymysql):
             indexes.append(index_d)
         return indexes
 
-    def has_table(self, connection, table_name, schema=None, **kw):
+    def has_table(self, connection: Connection, table_name: str, schema: Optional[str] = None, **kw: Any) -> bool:
         try:
             return super().has_table(connection, table_name, schema, **kw)
         except exc.DBAPIError as e:
             if self._extract_error_code(e.orig) in (5501, 5502):
                 return False
             raise
+
+    def get_table_state(self, connection: Connection, table_name: str, schema: Optional[str] = None, **kw: Any):
+        """Return StarRocks parsed table state (ReflectedState)."""
+        return self._setup_parser(connection, table_name, schema, **kw)
 
     def get_view_names(self, connection: Connection, schema: Optional[str] = None, **kw: Any) -> List[str]:
         """Return all view names in a given schema."""
@@ -829,7 +833,7 @@ class StarRocksDialect(MySQLDialect_pymysql):
         if schema is None:
             schema = self.default_schema_name
         try:
-            rows = self._read_from_information_schema(
+            rows: list[_DecodingRow] = self._read_from_information_schema(
                 connection,
                 "materialized_views",
                 table_schema=schema,
@@ -843,7 +847,7 @@ class StarRocksDialect(MySQLDialect_pymysql):
         if schema is None:
             schema = self.default_schema_name
         try:
-            rows = self._read_from_information_schema(
+            rows: list[_DecodingRow] = self._read_from_information_schema(
                 connection,
                 "materialized_views",
                 table_schema=schema,
