@@ -152,8 +152,13 @@ def compare_view(
 ) -> None:
     """Compare a single view and generate operations if needed."""
     definition_changed = normalize_sql(conn_view.definition) != normalize_sql(metadata_view.definition)
-    comment_changed = conn_view.comment != metadata_view.comment
-    security_changed = conn_view.security != metadata_view.security
+    # Comment/security normalized for comparison
+    conn_view_comment = (conn_view.comment or "").strip()
+    metadata_view_comment = (metadata_view.comment or "").strip()
+    comment_changed = conn_view_comment != metadata_view_comment
+    conn_view_security = (conn_view.security or "").upper()
+    metadata_view_security = (metadata_view.security or "").upper()
+    security_changed = conn_view_security != metadata_view_security
 
     if comment_changed:
         logger.warning(

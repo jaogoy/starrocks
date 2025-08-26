@@ -51,6 +51,36 @@ class ReflectionViewInfo:
     security: str | None = None
 
 
+class ReflectionViewDefaults:
+    """Central place for view reflection default values and normalization."""
+
+    DEFAULT_COMMENT: str = ""
+    DEFAULT_SECURITY: str = ""
+
+    @classmethod
+    def apply(
+        cls,
+        *,
+        name: str,
+        definition: str,
+        comment: str | None = None,
+        security: str | None = None,
+    ) -> "ReflectionViewInfo":
+        """Apply defaults and normalization to reflected view values.
+
+        - comment: default empty string
+        - security: default empty string, uppercase when present
+        """
+        normalized_comment = (comment or cls.DEFAULT_COMMENT)
+        normalized_security = (security or cls.DEFAULT_SECURITY).upper()
+        return ReflectionViewInfo(
+            name=name,
+            definition=definition,
+            comment=normalized_comment,
+            security=normalized_security,
+        )
+
+
 class StarRocksInspector(Inspector):
     def __init__(self, bind):
         super().__init__(bind)

@@ -131,12 +131,13 @@ class TestAutogenerate:
         """Test that autogen_for_views detects no change."""
         upgrade_ops = ops.UpgradeOps([])
         self.mock_inspector.get_view_names.return_value = ['my_test_view']
+        # definition uses backticks; should be normalized equal
         self.mock_inspector.get_view.return_value = ReflectionViewInfo(
-            name="my_test_view", definition="SELECT 1"
+            name="my_test_view", definition="SELECT 1 AS `val`"
         )
 
         m2 = MetaData()
-        view = View('my_test_view', 'SELECT 1', comment=None, security=None)
+        view = View('my_test_view', 'SELECT 1 AS val', comment=None, security=None)
         m2.info['views'] = {(view, None): view}
         self.mock_autogen_context.metadata = m2
 

@@ -34,7 +34,7 @@ from .datatype import (
 
 from . import reflection as _reflection
 from .sql.ddl import CreateView, DropView, AlterView, CreateMaterializedView, DropMaterializedView
-from .reflection import ReflectionViewInfo, StarRocksInspector
+from .reflection import ReflectionViewInfo, StarRocksInspector, ReflectionViewDefaults
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
@@ -705,7 +705,10 @@ class StarRocksDialect(MySQLDialect_pymysql):
 
     @reflection.cache
     def _get_view_info(self, connection: Connection, view_name: str, schema: Optional[str] = None, **kw: Any) -> Optional[Dict[str, Any]]:
-        """Gets all information about a view in a single query."""
+        """Gets all information about a view.
+
+        Note: comment is currently not fetched from information_schema and defaults to empty.
+        """
         if schema is None:
             schema = self.default_schema_name
         try:
@@ -715,20 +718,15 @@ class StarRocksDialect(MySQLDialect_pymysql):
                 table_schema=schema,
                 table_name=view_name,
             )[0]
-            
-            table_details = self._read_from_information_schema(
-                connection,
-                "tables",
-                table_schema=schema,
-                table_name=view_name,
-            )[0]
-
-            return {
+            info = {
                 "name": view_details.TABLE_NAME,
                 "definition": view_details.VIEW_DEFINITION,
-                "comment": table_details.TABLE_COMMENT,  # TODO: currently, we use comments from IS.tables
+                # comment intentionally defaulted; not queried for now
+                "comment": "",
                 "security": view_details.SECURITY_TYPE,
             }
+            self.logger.debug("_get_view_info fetched: schema=%s name=%s security=%s", schema, info["name"], info["security"])
+            return info
         except Exception:
             return None
 
@@ -766,28 +764,33 @@ class StarRocksDialect(MySQLDialect_pymysql):
         if not view_info:
             return None
         
-        return ReflectionViewInfo(
-            name=view_info["name"],
-            definition=self._strip_identifier_backticks(view_info["definition"]),
-            comment=view_info["comment"],
-            security=view_info["security"],
+        # Apply defaults and normalization
+        name = view_info["name"]
+        definition = self._strip_identifier_backticks(view_info["definition"])
+        comment = (view_info.get("comment") or "")
+        security = (view_info.get("security") or "").upper()
+        self.logger.debug("get_view normalized: schema=%s name=%s security=%s", schema, name, security)
+        return ReflectionViewDefaults.apply(
+            name=name,
+            definition=definition,
+            comment=comment,
+            security=security,
         )
 
     def get_view_definition(self, connection: Connection, view_name: str, schema: Optional[str] = None, **kw: Any) -> Optional[str]:
-        """Return the definition of a view."""
-        view_info = self._get_view_info(connection, view_name, schema, **kw)
-        return view_info.VIEW_DEFINITION if view_info else None
+        """Return the definition of a view (delegates to get_view)."""
+        rv = self.get_view(connection, view_name, schema=schema, **kw)
+        return rv.definition if rv else None
 
     def get_view_comment(self, connection: Connection, view_name: str, schema: Optional[str] = None, **kw: Any) -> Optional[str]:
-        """Return the comment of a view."""
-        view_info = self._get_view_info(connection, view_name, schema, **kw)
-        return view_info.TABLE_COMMENT if view_info else None
+        """Return the comment of a view (delegates to get_view)."""
+        rv = self.get_view(connection, view_name, schema=schema, **kw)
+        return rv.comment if rv else None
 
     def get_view_security(self, connection: Connection, view_name: str, schema: Optional[str] = None, **kw: Any) -> Optional[str]:
-        """Return the security type of a view."""
-        view_info = self._get_view_info(connection, view_name, schema, **kw)
-        # The column for security in information_schema.views is SECURITY_TYPE
-        return view_info.SECURITY_TYPE if view_info else None
+        """Return the security type of a view (delegates to get_view)."""
+        rv = self.get_view(connection, view_name, schema=schema, **kw)
+        return rv.security if rv else None
 
     def get_materialized_view_names(self, connection: Connection, schema: Optional[str] = None, **kw: Any) -> List[str]:
         """Return all materialized view names in a given schema."""
