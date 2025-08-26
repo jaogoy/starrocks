@@ -29,3 +29,14 @@ def test_reflection_view_defaults_apply_upper_security_and_keep_comment():
     assert info.security == expected_security
 
 
+def test_reflection_view_defaults_empty_strings():
+    info: ReflectionViewInfo = ReflectionViewDefaults.apply(
+        name="v3",
+        definition="SELECT 3",
+        comment="",
+        security="",
+    )
+    assert info.comment == ""
+    assert info.security == ""
+
+

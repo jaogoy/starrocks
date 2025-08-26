@@ -132,6 +132,14 @@ def _compare_views(
         )
         metadata_view = metadata_views[(schema, view_name)]
 
+        logger.debug(
+            "Comparing view %s.%s: conn(def)=%r meta(def)=%r",
+            schema or autogen_context.dialect.default_schema_name,
+            view_name,
+            normalize_sql(conn_view.definition),
+            normalize_sql(metadata_view.definition),
+        )
+
         comparators.dispatch("view")(
             autogen_context,
             upgrade_ops,
@@ -151,7 +159,9 @@ def compare_view(
     metadata_view: View,
 ) -> None:
     """Compare a single view and generate operations if needed."""
-    definition_changed = normalize_sql(conn_view.definition) != normalize_sql(metadata_view.definition)
+    conn_def_norm = normalize_sql(conn_view.definition)
+    metadata_def_norm = normalize_sql(metadata_view.definition)
+    definition_changed = conn_def_norm != metadata_def_norm
     # Comment/security normalized for comparison
     conn_view_comment = (conn_view.comment or "").strip()
     metadata_view_comment = (metadata_view.comment or "").strip()
@@ -159,6 +169,15 @@ def compare_view(
     conn_view_security = (conn_view.security or "").upper()
     metadata_view_security = (metadata_view.security or "").upper()
     security_changed = conn_view_security != metadata_view_security
+
+    logger.debug(
+        "compare_view: %s.%s def_changed=%s comment_changed=%s security_changed=%s",
+        schema or autogen_context.dialect.default_schema_name,
+        view_name,
+        definition_changed,
+        comment_changed,
+        security_changed,
+    )
 
     if comment_changed:
         logger.warning(
@@ -182,6 +201,11 @@ def compare_view(
                 schema=schema,
                 reverse_view_definition=conn_view.definition,
             )
+        )
+        logger.debug(
+            "Generated AlterViewOp for %s.%s",
+            schema or autogen_context.dialect.default_schema_name,
+            view_name,
         )
     # else: only comment/security changed -> no operation generated
 

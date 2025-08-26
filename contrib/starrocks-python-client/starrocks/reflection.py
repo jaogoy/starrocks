@@ -88,6 +88,10 @@ class StarRocksInspector(Inspector):
     def get_view(self, view_name: str, schema: str | None = None) -> ReflectionViewInfo | None:
         return self.dialect.get_view(self.bind, view_name, schema=schema)
 
+    def get_views(self, schema: str | None = None) -> dict[tuple[str | None, str], ReflectionViewInfo]:
+        """Batch reflection wrapper for dialect.get_views (prototype)."""
+        return self.dialect.get_views(self.bind, schema=schema)
+
 
 @log.class_logger
 class StarRocksTableDefinitionParser(object):

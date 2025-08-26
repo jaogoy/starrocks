@@ -90,7 +90,7 @@ class MyTable(Base):
     __tablename__ = 'my_table'
     id = Column(Integer, primary_key=True)
     name = Column(String(50))
-
+    
     __table_args__ = {
         "starrocks_PRIMARY_KEY": "id",
         "starrocks_engine": "OLAP",
@@ -164,6 +164,58 @@ Follow the standard Alembic workflow:
     alembic upgrade head
     ```
 
+### 3.1 View Autogenerate Details and Limitations
+
+- Autogenerate will detect:
+  - New views in metadata: emits `op.create_view(...)`
+  - Dropped views in DB: emits `op.drop_view(...)`
+  - Definition changes: emits `op.alter_view(...)`
+- StarRocks limitation: `ALTER VIEW` only supports redefining the `AS SELECT` clause. It does not support changing `COMMENT` or `SECURITY` directly. If only `COMMENT`/`SECURITY` change, no operation is emitted; if the definition also changes, those attributes are ignored and only `ALTER VIEW` is generated.
+- View definition comparison uses normalization: remove identifier backticks, strip comments, collapse whitespace, and compare case-insensitively.
+
+Minimal example (env.py):
+
+```python
+from alembic import context
+from sqlalchemy import engine_from_config, pool, MetaData
+from starrocks.alembic.starrocks import StarrocksImpl  # ensure impl registered
+from starrocks.sql.schema import View
+
+config = context.config
+
+target_metadata = MetaData()
+my_view = View('v_demo', 'SELECT 1 AS c')
+target_metadata.info.setdefault('views', {})[(my_view, None)] = my_view
+
+def run_migrations_offline():
+    url = config.get_main_option("sqlalchemy.url")
+    context.configure(url=url, target_metadata=target_metadata, literal_binds=True)
+    with context.begin_transaction():
+        context.run_migrations()
+
+def run_migrations_online():
+    connectable = engine_from_config(config.get_section(config.config_ini_section), prefix="sqlalchemy.", poolclass=pool.NullPool)
+    with connectable.connect() as connection:
+        context.configure(connection=connection, target_metadata=target_metadata)
+        with context.begin_transaction():
+            context.run_migrations()
+
+if context.is_offline_mode():
+    run_migrations_offline()
+else:
+    run_migrations_online()
+```
+
+Generated snippet example:
+
+```python
+def upgrade():
+    op.create_view('v_demo', 'SELECT 1 AS c')
+
+def downgrade():
+    op.drop_view('v_demo', schema='None')
+```
+
 ### 4. Debugging and Logging
 
 To see the raw SQL that the dialect compiles and executes, you can configure logging.
@@ -194,6 +246,12 @@ log_cli = true
 log_cli_level = DEBUG
 log_cli_format = %(levelname)-5.5s [%(name)s] %(message)s
 ```
+
+## Examples
+
+- Quickstart autogenerate for views: `examples/quickstart_autogen_views.py`
+- Additional view/mv usage examples: `examples/view_examples.py`
+- View naming and schema isolation examples: `examples/view_naming_examples.py`
 
 ## Contributing
 

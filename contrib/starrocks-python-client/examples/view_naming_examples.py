@@ -13,10 +13,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-Examples demonstrating how to avoid naming conflicts between views and tables
-with StarRocks SQLAlchemy dialect.
-"""
+"""Examples demonstrating how to avoid naming conflicts between views and tables
+with StarRocks SQLAlchemy dialect (English only)."""
 
 from sqlalchemy import (
     create_engine, MetaData, Table, Column, Integer, String, 
@@ -26,14 +24,14 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from starrocks import ViewMixin, MaterializedViewMixin
 
 
-# Example 1: 使用命名约定避免冲突
+# Example 1: Use naming conventions to avoid conflicts
 def example_naming_convention():
-    """使用命名约定来区分视图和表"""
+    """Use naming conventions to distinguish views and tables."""
     
     class Base(DeclarativeBase):
         pass
     
-    # 定义表 - 使用普通名称
+    # Define table - plain name
     class User(Base):
         __tablename__ = "users"
         
@@ -41,12 +39,12 @@ def example_naming_convention():
         name: Mapped[str] = mapped_column(String(50))
         email: Mapped[str] = mapped_column(String(100))
     
-    # 定义视图 - 使用后缀 _view 来区分
+    # Define view - use suffix _view to distinguish
     class UserView(Base, ViewMixin):
-        __view_name__ = "users_view"  # 注意：不是 "users"
-        __view_comment__ = "用户视图"
+        __view_name__ = "users_view"  # not "users"
+        __view_comment__ = "user view"
         
-        # 定义视图中的列
+        # Columns in the view
         id: Mapped[int] = mapped_column(primary_key=True)
         name: Mapped[str] = mapped_column(String(50))
         
@@ -62,13 +60,13 @@ def example_naming_convention():
             
             return cls.create_view_definition(metadata, selectable)
     
-    # 定义物化视图 - 使用后缀 _mv 来区分
+    # Define materialized view - use suffix _mv
     class UserStatsMV(Base, MaterializedViewMixin):
-        __view_name__ = "users_mv"  # 注意：不是 "users"
-        __view_comment__ = "用户统计物化视图"
+        __view_name__ = "users_mv"  # not "users"
+        __view_comment__ = "user stats materialized view"
         __refresh_strategy__ = "MANUAL"
         
-        # 定义物化视图中的列
+        # Columns in MV
         id: Mapped[int] = mapped_column(primary_key=True)
         name: Mapped[str] = mapped_column(String(50))
         count: Mapped[int] = mapped_column(Integer)
@@ -86,32 +84,32 @@ def example_naming_convention():
             
             return cls.create_materialized_view_definition(metadata, selectable)
     
-    print("命名约定示例:")
-    print(f"- 表名: {User.__tablename__}")
-    print(f"- 视图名: {UserView.__view_name__}")
-    print(f"- 物化视图名: {UserStatsMV.__view_name__}")
-    print("这样可以避免命名冲突！")
+    print("Naming convention example:")
+    print(f"- table name: {User.__tablename__}")
+    print(f"- view name: {UserView.__view_name__}")
+    print(f"- materialized view name: {UserStatsMV.__view_name__}")
+    print("This avoids naming conflicts.")
 
 
-# Example 2: 使用不同的schema来隔离
+# Example 2: Use a different schema to isolate
 def example_schema_isolation():
-    """使用不同的schema来隔离视图和表"""
+    """Use a different schema to isolate views and tables."""
     
     class Base(DeclarativeBase):
         pass
     
-    # 定义表 - 在默认schema中
+    # Table - default schema
     class User(Base):
         __tablename__ = "users"
         
         id: Mapped[int] = mapped_column(primary_key=True)
         name: Mapped[str] = mapped_column(String(50))
     
-    # 定义视图 - 在 views schema 中
+    # View - in schema "views"
     class UserView(Base, ViewMixin):
-        __view_name__ = "users"  # 可以使用相同的名称
-        __view_schema__ = "views"  # 在 views schema 中
-        __view_comment__ = "用户视图"
+        __view_name__ = "users"  # can reuse same name
+        __view_schema__ = "views"  # in schema "views"
+        __view_comment__ = "user view"
         
         # 定义视图中的列
         id: Mapped[int] = mapped_column(primary_key=True)
@@ -129,124 +127,119 @@ def example_schema_isolation():
             
             return cls.create_view_definition(metadata, selectable)
     
-    print("Schema隔离示例:")
-    print(f"- 表: {User.__tablename__} (默认schema)")
-    print(f"- 视图: {UserView.__view_schema__}.{UserView.__view_name__}")
-    print("使用不同的schema可以完全避免命名冲突！")
+    print("Schema isolation example:")
+    print(f"- table: {User.__tablename__} (default schema)")
+    print(f"- view: {UserView.__view_schema__}.{UserView.__view_name__}")
+    print("Using different schemas avoids conflicts.")
 
 
-# Example 3: 使用类属性来明确标识
+# Example 3: Use class attributes to identify
 def example_class_attributes():
-    """使用类属性来明确标识视图和表"""
+    """Use class attributes to identify views and tables."""
     
     class Base(DeclarativeBase):
         pass
     
-    # 定义表
+    # Define table
     class User(Base):
         __tablename__ = "users"
         
         id: Mapped[int] = mapped_column(primary_key=True)
         name: Mapped[str] = mapped_column(String(50))
     
-    # 定义视图
+    # Define view
     class UserView(Base, ViewMixin):
         __view_name__ = "user_view"
-        __view_comment__ = "用户视图"
+        __view_comment__ = "user view"
         
         # 定义视图中的列
         id: Mapped[int] = mapped_column(primary_key=True)
         name: Mapped[str] = mapped_column(String(50))
     
-    print("类属性示例:")
+    print("Class attribute example:")
     print(f"- User.__tablename__: {User.__tablename__}")
     print(f"- User.__is_view__: {getattr(User, '__is_view__', False)}")
     print(f"- UserView.__tablename__: {UserView.__tablename__}")
     print(f"- UserView.__is_view__: {UserView.__is_view__}")
     print(f"- UserView.__is_materialized_view__: {UserView.__is_materialized_view__}")
-    print("类属性可以明确区分视图和表！")
+    print("Class attributes clearly distinguish views and tables.")
 
 
-# Example 4: 解释View和Table的区别
+# Example 4: Explain differences between View and Table
 def example_view_vs_table():
-    """解释View和Table的区别"""
+    """Explain differences between View and Table."""
     
     class Base(DeclarativeBase):
         pass
     
-    # 定义表
+    # Define table
     class User(Base):
         __tablename__ = "users"
         
         id: Mapped[int] = mapped_column(primary_key=True)
         name: Mapped[str] = mapped_column(String(50))
     
-    # 定义视图
+    # Define view
     class UserView(Base, ViewMixin):
         __view_name__ = "user_view"
-        __view_comment__ = "用户视图"
+        __view_comment__ = "user view"
         
         # 定义视图中的列
         id: Mapped[int] = mapped_column(primary_key=True)
         name: Mapped[str] = mapped_column(String(50))
     
-    print("View vs Table 区别:")
-    print("1. 表类:")
+    print("View vs Table:")
+    print("1. Table class:")
     print(f"   - __tablename__: {User.__tablename__}")
-    print(f"   - 会被SQLAlchemy注册为表: {User.__tablename__ in Base.metadata.tables}")
-    print(f"   - 没有 __is_view__ 属性")
+    print(f"   - Registered as table: {User.__tablename__ in Base.metadata.tables}")
+    print(f"   - No __is_view__ attribute")
     print()
-    print("2. 视图类:")
+    print("2. View class:")
     print(f"   - __tablename__: {UserView.__tablename__}")
-    print(f"   - 不会被SQLAlchemy注册为表: {UserView.__view_name__ in Base.metadata.tables}")
-    print(f"   - 有 __is_view__ 属性: {UserView.__is_view__}")
+    print(f"   - Not registered as table: {UserView.__view_name__ in Base.metadata.tables}")
+    print(f"   - Has __is_view__: {UserView.__is_view__}")
     print()
-    print("3. 创建对象:")
-    print("   - 表类: 创建 Table 对象")
-    print("   - 视图类: 创建 View 对象")
+    print("3. Objects:")
+    print("   - Table class: creates Table objects")
+    print("   - View class: creates View objects")
 
 
-# Example 5: 最佳实践建议
+# Example 5: Best practices
 def example_best_practices():
-    """展示最佳实践"""
+    """Show best practices."""
     
-    print("最佳实践建议:")
-    print("1. 使用命名约定:")
-    print("   - 表: users, orders, products")
-    print("   - 视图: users_view, orders_view, products_view")
-    print("   - 物化视图: users_mv, orders_mv, products_mv")
+    print("Best practices:")
+    print("1. Use naming conventions:")
+    print("   - tables: users, orders, products")
+    print("   - views: users_view, orders_view, products_view")
+    print("   - materialized views: users_mv, orders_mv, products_mv")
     print()
-    print("2. 使用不同的schema:")
-    print("   - 表: public.users")
-    print("   - 视图: views.users")
-    print("   - 物化视图: materialized_views.users")
+    print("2. Use different schemas:")
+    print("   - table: public.users")
+    print("   - view: views.users")
+    print("   - materialized view: materialized_views.users")
     print()
-    print("3. 使用描述性的名称:")
-    print("   - 表: user_profiles")
-    print("   - 视图: active_users_view")
-    print("   - 物化视图: user_statistics_mv")
+    print("3. Use descriptive names:")
+    print("   - table: user_profiles")
+    print("   - view: active_users_view")
+    print("   - materialized view: user_statistics_mv")
     print()
-    print("4. 理解View和Table的区别:")
-    print("   - View类不会创建Table对象")
-    print("   - View类创建View对象")
-    print("   - View对象可以生成查询用的Table对象")
+    print("4. Understand differences:")
+    print("   - View classes don't create Table objects")
+    print("   - View classes create View objects")
+    print("   - View objects can generate Table objects for querying")
 
 
 if __name__ == "__main__":
-    print("视图命名冲突避免示例")
+    print("View naming conflict avoidance examples")
     print("=" * 50)
     print()
-    
     example_naming_convention()
     print()
-    
     example_schema_isolation()
     print()
-    
     example_class_attributes()
     print()
-    
     example_view_vs_table()
     print()
-    
-    example_best_practices() 
+    example_best_practices()

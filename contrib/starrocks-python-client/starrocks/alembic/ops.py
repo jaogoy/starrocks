@@ -5,6 +5,9 @@ from starrocks.sql.schema import View, MaterializedView
 from typing import Optional, Dict, Any
 
 from sqlalchemy.sql.elements import quoted_name
+import logging
+
+logger = logging.getLogger("starrocks.alembic.ops")
 
 @Operations.register_operation("alter_view")
 class AlterViewOp(ops.MigrateOperation):
@@ -58,6 +61,7 @@ class AlterViewOp(ops.MigrateOperation):
 
     def reverse(self):
         # Reversing an ALTER is another ALTER, using the stored "reverse" attributes.
+        logger.debug("reverse AlterViewOp for %s", self.view_name)
         return AlterViewOp(
             self.view_name,
             self.reverse_view_definition,
@@ -99,6 +103,7 @@ class CreateViewOp(ops.MigrateOperation):
         return operations.invoke(op)
 
     def reverse(self) -> ops.MigrateOperation:
+        logger.debug("reverse CreateViewOp for %s", self.view_name)
         return DropViewOp(
             self.view_name,
             schema=self.schema,
@@ -131,6 +136,7 @@ class DropViewOp(ops.MigrateOperation):
     def reverse(self) -> ops.MigrateOperation:
         if self._reverse_view_definition is None:
             raise NotImplementedError("Cannot reverse a DropViewOp without the view's definition.")
+        logger.debug("reverse DropViewOp for %s", self.view_name)
         return CreateViewOp(
             self.view_name,
             self._reverse_view_definition,
@@ -174,6 +180,7 @@ class DropMaterializedViewOp(ops.MigrateOperation):
 @Operations.implementation_for(AlterViewOp)
 def alter_view(operations: "Operations", op: AlterViewOp):
     """Execute an ALTER VIEW statement."""
+    logger.debug("implementation alter_view: %s", op.view_name)
     view = View(
         name=op.view_name,
         definition=op.definition,
@@ -186,6 +193,7 @@ def alter_view(operations: "Operations", op: AlterViewOp):
 @Operations.implementation_for(CreateViewOp)
 def create_view(operations: "Operations", op: CreateViewOp):
     """Execute a CREATE VIEW statement."""
+    logger.debug("implementation create_view: %s", op.view_name)
     view = View(
         name=op.view_name,
         definition=op.definition,
@@ -199,6 +207,7 @@ def create_view(operations: "Operations", op: CreateViewOp):
 @Operations.implementation_for(DropViewOp)
 def drop_view(operations: Operations, op: DropViewOp) -> None:
     """Implementation for the 'drop_view' operation."""
+    logger.debug("implementation drop_view: %s", op.view_name)
     operations.execute(DropView(View(op.view_name, None, schema=op.schema)))
 
 @Operations.implementation_for(CreateMaterializedViewOp)

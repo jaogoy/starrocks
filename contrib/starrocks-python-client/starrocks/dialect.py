@@ -703,6 +703,38 @@ class StarRocksDialect(MySQLDialect_pymysql):
         except Exception:
             return []
 
+    def get_views(self, connection: Connection, schema: Optional[str] = None, **kw: Any) -> Dict[tuple[str | None, str], "ReflectionViewInfo"]:
+        """Batch reflection: return all views mapping to ReflectionViewInfo by (schema, name).
+
+        Prototype: not used by autogenerate yet, provided for potential optimization.
+        """
+        if schema is None:
+            schema = self.default_schema_name
+        results: Dict[tuple[str | None, str], ReflectionViewInfo] = {}
+        try:
+            rows = self._read_from_information_schema(
+                connection,
+                "views",
+                table_schema=schema,
+            )
+            for row in rows:
+                info = {
+                    "name": row.TABLE_NAME,
+                    "definition": row.VIEW_DEFINITION,
+                    "comment": "",
+                    "security": row.SECURITY_TYPE,
+                }
+                rv = ReflectionViewDefaults.apply(
+                    name=info["name"],
+                    definition=self._strip_identifier_backticks(info["definition"]),
+                    comment=info["comment"],
+                    security=info["security"],
+                )
+                results[(schema, rv.name)] = rv
+            return results
+        except Exception:
+            return results
+
     @reflection.cache
     def _get_view_info(self, connection: Connection, view_name: str, schema: Optional[str] = None, **kw: Any) -> Optional[Dict[str, Any]]:
         """Gets all information about a view.
