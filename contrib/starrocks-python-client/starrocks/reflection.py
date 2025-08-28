@@ -19,18 +19,14 @@ import json
 import re
 from typing import Any, Optional
 
-from sqlalchemy.dialects.mysql.types import DATETIME
-from sqlalchemy.dialects.mysql.types import TIME
-from sqlalchemy.dialects.mysql.types import TIMESTAMP
+from sqlalchemy.dialects.mysql.types import DATETIME, TIME, TIMESTAMP
 from sqlalchemy.dialects.mysql.base import _DecodingRow
 from sqlalchemy.dialects.mysql.reflection import _re_compile
-from sqlalchemy import log
-from sqlalchemy import types as sqltypes
-from sqlalchemy import util
+from sqlalchemy import log, types as sqltypes, util
 from sqlalchemy.engine.reflection import Inspector
 
 from .params import TableInfoKeyWithPrefix
-from .types import TableModel, TableType
+from .types import TableModel
 
 # kw_only is added in python 3.10
 # https://docs.python.org/3/library/dataclasses.html#dataclasses.dataclass
@@ -110,10 +106,14 @@ class StarRocksTableDefinitionParser(object):
         return ReflectedState(
             table_name=table["TABLE_NAME"],
             columns=[self._parse_column(column=column) for column in columns],
-            table_options=self._parse_table_options(table=table, table_config=table_config, columns=columns),
+            table_options=self._parse_table_options(
+                table=table, table_config=table_config, columns=columns
+            ),
             keys=[{
                 "type": self._get_key_type(table_config=table_config),
-                "columns": [(c, None, None) for c in self._get_key_columns(columns=columns)],
+                "columns": [
+                    (c, None, None) for c in self._get_key_columns(columns=columns)
+                ],
                 "parser": None,
                 "name": None,
             }]
@@ -182,7 +182,7 @@ class StarRocksTableDefinitionParser(object):
         """
         sorted_columns = sorted(columns, key=lambda col: col["ORDINAL_POSITION"])
         return [c["COLUMN_NAME"] for c in sorted_columns if c["COLUMN_KEY"]]
-     
+
     def _get_key_type(self, table_config: _DecodingRow) -> str:
         """
         Get key type from information_schema.tables_config table.
@@ -194,9 +194,11 @@ class StarRocksTableDefinitionParser(object):
         Get key description from information_schema.columns table.
         It returns string representation of key description.
         """
-        quoted_cols = [self.preparer.quote_identifier(col) for col in self._get_key_columns(columns=columns)]
+        quoted_cols = [
+            self.preparer.quote_identifier(col) for col in self._get_key_columns(columns=columns)
+        ]
         return f"{self._get_key_type(columns=columns)}({', '.join(quoted_cols)})"
-     
+
     def _get_distribution_desc(self, table_config: _DecodingRow) -> str:
         """
         Get distribution from information_schema.tables table.
@@ -233,6 +235,6 @@ class StarRocksTableDefinitionParser(object):
                 opts[TableInfoKeyWithPrefix.properties] = dict(json.loads(table_config.PROPERTIES or "{}").items())
             except json.JSONDecodeError:
                 pass  # Ignore if properties are not valid JSON
-        
+
         return opts
 

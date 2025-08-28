@@ -48,7 +48,7 @@ class ColumnAggType:
     REPLACE_IF_NOT_NULL = "REPLACE_IF_NOT_NULL"
 
     # Allowed set for validation
-    ALLOWED = {
+    ALLOWED_ITEMS = {
         SUM,
         COUNT,
         MIN,
@@ -58,5 +58,3 @@ class ColumnAggType:
         REPLACE,
         REPLACE_IF_NOT_NULL,
     }
-
-

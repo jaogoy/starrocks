@@ -67,10 +67,10 @@ def normalize_sql(sql_text: Optional[str]) -> Optional[str]:
     sql_text = re.sub(r"\s+", " ", sql_text).strip().lower()
     return sql_text
 
+
 # ==============================================================================
 # View Comparison
 # ==============================================================================
-
 @comparators.dispatch_for("schema")
 def autogen_for_views(
     autogen_context: AutogenContext, upgrade_ops: UpgradeOps, schemas: List[Optional[str]]
@@ -90,6 +90,7 @@ def autogen_for_views(
     }
 
     _compare_views(conn_views, metadata_views, autogen_context, upgrade_ops)
+
 
 def _compare_views(
     conn_views: Set[Tuple[Optional[str], str]],

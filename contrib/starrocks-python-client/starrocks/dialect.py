@@ -15,32 +15,36 @@
 import re
 from textwrap import dedent
 import logging
-import json
 
-from sqlalchemy import Connection, exc, schema as sa_schema
+from sqlalchemy import Connection, exc, schema as sa_schema, util, log
 from sqlalchemy.dialects.mysql.pymysql import MySQLDialect_pymysql
-from sqlalchemy.dialects.mysql.base import MySQLDDLCompiler, MySQLTypeCompiler, MySQLCompiler, MySQLIdentifierPreparer, _DecodingRow
+from sqlalchemy.dialects.mysql.base import (
+    MySQLDDLCompiler,
+    MySQLTypeCompiler,
+    MySQLCompiler,
+    MySQLIdentifierPreparer,
+    _DecodingRow,
+)
 from sqlalchemy.sql import sqltypes
 from sqlalchemy.sql.expression import Delete, Select
-from sqlalchemy import util
-from sqlalchemy import log
 from sqlalchemy.engine import reflection
-from sqlalchemy.dialects.mysql.types import TINYINT, SMALLINT, INTEGER, BIGINT, DECIMAL, DOUBLE, FLOAT, CHAR, VARCHAR, DATETIME
+from sqlalchemy.dialects.mysql.types import (
+    TINYINT, SMALLINT, INTEGER, BIGINT, DECIMAL, DOUBLE, FLOAT, CHAR, VARCHAR, DATETIME
+)
 from sqlalchemy.dialects.mysql.json import JSON
+
+from starrocks.types import ColumnAggType
+
 from .datatype import (
     LARGEINT, HLL, BITMAP, PERCENTILE, ARRAY, MAP, STRUCT,
     DATE
 )
-
 from . import reflection as _reflection
 from .sql.ddl import CreateView, DropView, AlterView, CreateMaterializedView, DropMaterializedView
 from .sql.schema import View
 from .reflection import ReflectionViewInfo, StarRocksInspector, ReflectionViewDefaults
 from typing import List, Optional, Any, Dict
 from .params import TableInfoKey, TableInfoKeyWithPrefix, ColumnAggInfoKeyWithPrefix
-from sqlalchemy import text
-from .reflection import ReflectedState
-from .params import TableType
 
 # Register the compiler methods
 # The @compiles decorator is the public API for registering new SQL constructs.
@@ -54,11 +58,11 @@ from .params import TableType
 
 
 ##############################################################################################
-## NOTES - INCOMPLETE/UNFINISHED
+# NOTES - INCOMPLETE/UNFINISHED
 # There are a number of items in here marked as ToDo
 # In terms of table creation, the Partition, Distribution and OrderBy clauses need to be addressed from table options
-# Tests `test_has_index` and `test_has_index_schema` are failing, this is because the CREATE INDEX statement appears to work async
-#  and only when it's finished does it appear in the table definition
+# Tests `test_has_index` and `test_has_index_schema` are failing, this is because the CREATE INDEX statement appears to
+# work async and only when it's finished does it appear in the table definition
 # Other tests are failing, need to fix or figure out how to suppress
 # Review some skipped test suite requirements
 #
@@ -252,7 +256,7 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
             CompileError: If any validation rule is violated.
         """
         key_kwarg_map = TableInfoKeyWithPrefix.KEY_KWARG_MAP
-        
+
         key_str = None
         key_type = None
 
@@ -260,10 +264,10 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
             if kwarg in table.kwargs:
                 key_str = table.kwargs[kwarg]
                 key_type = name
-                break # Found the key, no need to check for others
-        
+                break  # Found the key, no need to check for others
+
         if not key_str:
-            return # No key defined, nothing to validate
+            return  # No key defined, nothing to validate
 
         key_column_names = [k.strip() for k in key_str.split(',')]
         table_column_names = {c.name for c in table.columns}
@@ -278,7 +282,6 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
         # 2. Specific Check: For AGGREGATE KEY tables, validate column order.
         if key_type == 'AGGREGATE KEY':
             self._validate_aggregate_key_order(table, key_column_names)
-
 
     def _validate_aggregate_key_order(self, table: sa_schema.Table, key_column_names: list[str]):
         """
@@ -315,12 +318,13 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
         for i, col in enumerate(col_list):
             if col.name in key_column_names:
                 last_key_col_index = i
-        
+
         for i in range(last_key_col_index):
             if col_list[i].name not in key_column_names:
-                 raise exc.CompileError(
+                raise exc.CompileError(
                     "For AGGREGATE KEY tables, all key columns must be defined before any value columns. "
-                    f"Value column '{col_list[i].name}' appears before key column '{col_list[last_key_col_index].name}'."
+                    f"Value column '{col_list[i].name}' appears before "
+                    f"key column '{col_list[last_key_col_index].name}'."
                 )
 
     def post_create_table(self, table: sa_schema.Table) -> str:
@@ -349,7 +353,7 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
 
         # Extract StarRocks-specific table options from kwargs without the dialect prefix (starrocks_)
         opts: dict[str, Any] = dict(
-            (k[len(self.dialect.name) + 1 :].upper(), v)
+            (k[len(self.dialect.name) + 1:].upper(), v)
             for k, v in table.kwargs.items()
             if k.startswith("%s_" % self.dialect.name)
         )
@@ -382,7 +386,7 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
             if 'BUCKETS' in opts:
                 dist_str += f' BUCKETS {opts["BUCKETS"]}'
             table_opts.append(dist_str)
-        
+
         # Order By
         if 'ORDER_BY' in opts:
             table_opts.append(f'ORDER BY({opts["ORDER_BY"]})')
@@ -394,8 +398,10 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
             elif isinstance(props_val, list):
                 props_items = props_val
             else:
-                raise exc.CompileError(f"Unsupported type for PROPERTIES: {type(props_val)}")
-            
+                raise exc.CompileError(
+                    f"Unsupported type for PROPERTIES: {type(props_val)}"
+                )
+
             props = ",\n".join([f'\t"{k}"="{v}"' for k, v in props_items])
             table_opts.append(f"PROPERTIES(\n{props}\n)")
 
@@ -416,7 +422,7 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
           and `NOT NULL` as required by StarRocks.
         - **Generated Columns**: Compiles `sqlalchemy.Computed` constructs into
           StarRocks' `AS (...)` syntax.
-        
+
         Args:
             column: The `sqlalchemy.schema.Column` object to process.
             **kw: Additional keyword arguments from the compiler.
@@ -425,7 +431,7 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
             The full DDL string for the column definition.
         """
         # name, type, others of a column for the output colspec
-        idx_name, idx_type, idx_others = 0, 1, 2
+        _, idx_type = 0, 1
 
         # name and type 
         colspec: list[str] = [
@@ -450,11 +456,16 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
         if ColumnAggInfoKeyWithPrefix.is_agg_key in column.info:
             colspec.append(ColumnAggType.KEY)
             if ColumnAggInfoKeyWithPrefix.agg_type in column.info:
-                raise exc.CompileError(f"Column '{column.name}' cannot be both KEY and aggregated (has {ColumnAggInfoKeyWithPrefix.agg_type}).")
+                raise exc.CompileError(
+                    f"Column '{column.name}' cannot be both KEY and aggregated "
+                    f"(has {ColumnAggInfoKeyWithPrefix.agg_type})."
+                )
         elif ColumnAggInfoKeyWithPrefix.agg_type in column.info:
             agg_val = str(column.info[ColumnAggInfoKeyWithPrefix.agg_type]).upper()
-            if agg_val not in ColumnAggType.ALLOWED:
-                raise exc.CompileError(f"Unsupported aggregate type for column '{column.name}': {agg_val}")
+            if agg_val not in ColumnAggType.ALLOWED_ITEMS:
+                raise exc.CompileError(
+                    f"Unsupported aggregate type for column '{column.name}': {agg_val}"
+                )
             colspec.append(agg_val)
 
         # NULL or NOT NULL. AUTO_INCREMENT columns must be NOT NULL
@@ -557,7 +568,7 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
         text += "VIEW "
         if create.if_not_exists:
             text += "IF NOT EXISTS "
-        
+
         text += self.preparer.format_table(view) + "\n"
 
         if view.columns:
@@ -617,7 +628,9 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
         mv = create.element
         properties = ""
         if mv.properties:
-            prop_clauses: list[str] = [f'"{k}" = "{v}"' for k, v in mv.properties.items()]
+            prop_clauses: list[str] = [
+                f'"{k}" = "{v}"' for k, v in mv.properties.items()
+            ]
             properties = f"PROPERTIES ({', '.join(prop_clauses)})"
 
         return (
@@ -653,8 +666,8 @@ class StarRocksDialect(MySQLDialect_pymysql):
     type_compiler = StarRocksTypeCompiler
     preparer = StarRocksIdentifierPreparer
 
-    def __init__(self, *args, **kw):
-        super(StarRocksDialect, self).__init__(*args, **kw)
+    def __init__(self, *args, **kwargs):
+        super(StarRocksDialect, self).__init__(*args, **kwargs)
         self.logger = logging.getLogger(f"{__name__}.StarRocksDialect")
 
     def _get_server_version_info(self, connection: Connection) -> tuple[int, ...]:
@@ -702,9 +715,10 @@ class StarRocksDialect(MySQLDialect_pymysql):
             return s.replace("'", "\\'")
 
         st: str = dedent(f"""
-            SELECT * 
+            SELECT *
             FROM information_schema.{inf_sch_table} 
-            WHERE {" AND ".join([f"{k} = '{escape_single_quote(v)}'" for k, v in kwargs.items()])}
+            WHERE {" AND ".join([f"{k} = '{escape_single_quote(v)}'"
+                                 for k, v in kwargs.items()])}
         """)
         rp: Any = None
         try:
@@ -713,16 +727,23 @@ class StarRocksDialect(MySQLDialect_pymysql):
             ).exec_driver_sql(st)
         except exc.DBAPIError as e:
             if self._extract_error_code(e.orig) == 1146:
-                raise exc.NoSuchTableError(f"information_schema.{inf_sch_table}") from e
+                raise exc.NoSuchTableError(
+                    f"information_schema.{inf_sch_table}"
+                ) from e
             else:
                 raise
-        rows: list[_DecodingRow] = [_DecodingRow(row, charset) for row in rp.mappings().fetchall()]
+        rows: list[_DecodingRow] = [_DecodingRow(
+            row, charset) for row in rp.mappings().fetchall()]
         if not rows:
-            raise exc.NoSuchTableError(f"Empty response for query: '{st}'")
+            raise exc.NoSuchTableError(
+                f"Empty response for query: '{st}'"
+            )
         return rows
 
     @reflection.cache
-    def _setup_parser(self, connection: Connection, table_name: str, schema: Optional[str] = None, **kw: Any) -> Any:
+    def _setup_parser(
+        self, connection: Connection, table_name: str, schema: Optional[str] = None, **kwargs: Any
+    ) -> Any:
         charset: Optional[str] = self._connection_charset
         parser: _reflection.StarRocksTableDefinitionParser = self._tabledef_parser
 
@@ -761,10 +782,12 @@ class StarRocksDialect(MySQLDialect_pymysql):
             table_name=table_name,
         )
 
-        return parser.parse(table=table_rows[0], table_config=table_config_rows[0], columns=column_rows, charset=charset)
+        return parser.parse(table=table_rows[0], table_config=table_config_rows[0], columns=column_rows,
+                            charset=charset)
 
     def _show_table_indexes(
-        self, connection: Connection, table: sa_schema.Table, charset: Optional[str] = None, full_name: Optional[str] = None
+        self, connection: Connection, table: sa_schema.Table, charset: Optional[str] = None,
+        full_name: Optional[str] = None
     ) -> list[Any]:
         """Run SHOW INDEX FROM for a ``Table``."""
 
@@ -786,10 +809,12 @@ class StarRocksDialect(MySQLDialect_pymysql):
         return index_results
 
     @reflection.cache
-    def get_indexes(self, connection: Connection, table_name: str, schema: Optional[str] = None, **kw: Any) -> list[dict[str, Any]]:
+    def get_indexes(
+        self, connection: Connection, table_name: str, schema: Optional[str] = None, **kwargs: Any
+    ) -> list[dict[str, Any]]:
 
         parsed_state: Any = self._parsed_state_or_create(
-            connection, table_name, schema, **kw
+            connection, table_name, schema, **kwargs
         )
 
         indexes: list[dict[str, Any]] = []
@@ -839,15 +864,17 @@ class StarRocksDialect(MySQLDialect_pymysql):
             indexes.append(index_d)
         return indexes
 
-    def has_table(self, connection: Connection, table_name: str, schema: Optional[str] = None, **kw: Any) -> bool:
+    def has_table(
+        self, connection: Connection, table_name: str, schema: Optional[str] = None, **kwargs: Any
+    ) -> bool:
         try:
-            return super().has_table(connection, table_name, schema, **kw)
+            return super().has_table(connection, table_name, schema, **kwargs)
         except exc.DBAPIError as e:
             if self._extract_error_code(e.orig) in (5501, 5502):
                 return False
             raise
 
-    def get_view_names(self, connection: Connection, schema: Optional[str] = None, **kw: Any) -> List[str]:
+    def get_view_names(self, connection: Connection, schema: Optional[str] = None, **kwargs: Any) -> List[str]:
         """Return all view names in a given schema."""
         if schema is None:
             schema = self.default_schema_name
@@ -861,7 +888,9 @@ class StarRocksDialect(MySQLDialect_pymysql):
         except Exception:
             return []
 
-    def get_views(self, connection: Connection, schema: Optional[str] = None, **kw: Any) -> Dict[tuple[str | None, str], "ReflectionViewInfo"]:
+    def get_views(
+        self, connection: Connection, schema: Optional[str] = None, **kwargs: Any
+    ) -> Dict[tuple[str | None, str], "ReflectionViewInfo"]:
         """Batch reflection: return all views mapping to ReflectionViewInfo by (schema, name).
 
         Prototype: not used by autogenerate yet, provided for potential optimization.
@@ -894,7 +923,9 @@ class StarRocksDialect(MySQLDialect_pymysql):
             return results
 
     @reflection.cache
-    def _get_view_info(self, connection: Connection, view_name: str, schema: Optional[str] = None, **kw: Any) -> Optional[Dict[str, Any]]:
+    def _get_view_info(
+        self, connection: Connection, view_name: str, schema: Optional[str] = None, **kwargs: Any
+    ) -> Optional[Dict[str, Any]]:
         """Gets all information about a view.
 
         Note: comment is currently not fetched from information_schema and defaults to empty.
@@ -915,23 +946,31 @@ class StarRocksDialect(MySQLDialect_pymysql):
                 "comment": "",
                 "security": view_details.SECURITY_TYPE,
             }
-            self.logger.debug("_get_view_info fetched: schema=%s name=%s security=%s", schema, info["name"], info["security"])
+            self.logger.debug(
+                "_get_view_info fetched: schema=%s name=%s security=%s",
+                schema, info["name"], info["security"]
+            )
             return info
         except Exception:
             return None
 
-    def get_view(self, connection: Connection, view_name: str, schema: Optional[str] = None, **kw: Any) -> Optional[ReflectionViewInfo]:
+    def get_view(
+        self, connection: Connection, view_name: str, schema: Optional[str] = None, **kwargs: Any
+    ) -> Optional[ReflectionViewInfo]:
         """Return all information about a view."""
-        view_info = self._get_view_info(connection, view_name, schema, **kw)
+        view_info = self._get_view_info(connection, view_name, schema, **kwargs)
         if not view_info:
             return None
-        
+
         # Apply defaults and normalization
         name = view_info["name"]
         definition = self._strip_identifier_backticks(view_info["definition"])
         comment = (view_info.get("comment") or "")
         security = (view_info.get("security") or "").upper()
-        self.logger.debug("get_view normalized: schema=%s name=%s security=%s", schema, name, security)
+        self.logger.debug(
+            "get_view normalized: schema=%s name=%s security=%s",
+            schema, name, security
+        )
         return ReflectionViewDefaults.apply(
             name=name,
             definition=definition,
@@ -939,22 +978,30 @@ class StarRocksDialect(MySQLDialect_pymysql):
             security=security,
         )
 
-    def get_view_definition(self, connection: Connection, view_name: str, schema: Optional[str] = None, **kw: Any) -> Optional[str]:
+    def get_view_definition(
+        self, connection: Connection, view_name: str, schema: Optional[str] = None, **kwargs: Any
+    ) -> Optional[str]:
         """Return the definition of a view (delegates to get_view)."""
-        rv = self.get_view(connection, view_name, schema=schema, **kw)
+        rv = self.get_view(connection, view_name, schema=schema, **kwargs)
         return rv.definition if rv else None
 
-    def get_view_comment(self, connection: Connection, view_name: str, schema: Optional[str] = None, **kw: Any) -> Optional[str]:
+    def get_view_comment(
+        self, connection: Connection, view_name: str, schema: Optional[str] = None, **kwargs: Any
+    ) -> Optional[str]:
         """Return the comment of a view (delegates to get_view)."""
-        rv = self.get_view(connection, view_name, schema=schema, **kw)
+        rv = self.get_view(connection, view_name, schema=schema, **kwargs)
         return rv.comment if rv else None
 
-    def get_view_security(self, connection: Connection, view_name: str, schema: Optional[str] = None, **kw: Any) -> Optional[str]:
+    def get_view_security(
+        self, connection: Connection, view_name: str, schema: Optional[str] = None, **kwargs: Any
+    ) -> Optional[str]:
         """Return the security type of a view (delegates to get_view)."""
-        rv = self.get_view(connection, view_name, schema=schema, **kw)
+        rv = self.get_view(connection, view_name, schema=schema, **kwargs)
         return rv.security if rv else None
 
-    def get_materialized_view_names(self, connection: Connection, schema: Optional[str] = None, **kw: Any) -> List[str]:
+    def get_materialized_view_names(
+        self, connection: Connection, schema: Optional[str] = None, **kwargs: Any
+    ) -> List[str]:
         """Return all materialized view names in a given schema."""
         if schema is None:
             schema = self.default_schema_name
@@ -968,7 +1015,9 @@ class StarRocksDialect(MySQLDialect_pymysql):
         except Exception:
             return []
 
-    def get_materialized_view_definition(self, connection: Connection, view_name: str, schema: Optional[str] = None, **kw: Any) -> Optional[str]:
+    def get_materialized_view_definition(
+        self, connection: Connection, view_name: str, schema: Optional[str] = None, **kwargs: Any
+    ) -> Optional[str]:
         """Return the definition of a materialized view."""
         if schema is None:
             schema = self.default_schema_name
