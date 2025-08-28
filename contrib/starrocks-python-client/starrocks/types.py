@@ -6,6 +6,9 @@ class TableType:
 
     DEFAULT = DUPLICATE_KEY
 
+    # For validation and mapping
+    ALL_KEY_TYPES = {PRIMARY_KEY, DUPLICATE_KEY, AGGREGATE_KEY, UNIQUE_KEY}
+
 class ColumnAggType:
     """Supported StarRocks aggregate functions for value columns.
 

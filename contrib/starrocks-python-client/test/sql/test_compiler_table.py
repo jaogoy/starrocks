@@ -1,15 +1,15 @@
-import pytest
-import re
 import logging
-from sqlalchemy import (
-    Table, MetaData, Column, Integer, String, Date, DateTime, BigInteger, SmallInteger, Double
-)
-from sqlalchemy.schema import CreateTable
 from sqlalchemy.dialects import registry
+from sqlalchemy.schema import CreateTable
+from sqlalchemy import (
+    Table, MetaData, Column, Integer, String, Date, DateTime, BigInteger, Double
+)
 
-from .test_utils import _normalize_sql
+from test.test_utils import _normalize_sql
+import pytest
+from starrocks.params import ColumnAggInfoKey, ColumnAggInfoKeyWithPrefix
+from starrocks.types import ColumnAggType
 
-logger = logging.getLogger(__name__)
 
 class TestCreateTableCompiler:
     @classmethod
@@ -41,9 +41,9 @@ class TestCreateTableCompiler:
 
     def test_key_descriptions(self):
         self.logger.info("Testing Key Description clauses")
-        
         # DUPLICATE KEY
-        tbl_dup = Table('key_duplicate_tbl', self.metadata, Column('k1', Integer), starrocks_duplicate_key='k1', starrocks_distributed_by='HASH(k1)')
+        tbl_dup = Table('key_duplicate_tbl', self.metadata, Column('k1', Integer),
+                        starrocks_duplicate_key='k1', starrocks_distributed_by='HASH(k1)')
         sql = self._compile_table(tbl_dup)
         expected_dup = """
             CREATE TABLE key_duplicate_tbl(k1 INTEGER) 
@@ -53,7 +53,8 @@ class TestCreateTableCompiler:
         assert _normalize_sql(sql) == _normalize_sql(expected_dup)
 
         # AGGREGATE KEY
-        tbl_agg = Table('key_aggregate_tbl', self.metadata, Column('k1', Integer), starrocks_aggregate_key='k1', starrocks_distributed_by='HASH(k1)')
+        tbl_agg = Table('key_aggregate_tbl', self.metadata, Column('k1', Integer),
+                        starrocks_aggregate_key='k1', starrocks_distributed_by='HASH(k1)')
         sql = self._compile_table(tbl_agg)
         expected_agg = """
             CREATE TABLE key_aggregate_tbl(k1 INTEGER) 
@@ -63,7 +64,8 @@ class TestCreateTableCompiler:
         assert _normalize_sql(sql) == _normalize_sql(expected_agg)
 
         # UNIQUE KEY
-        tbl_unique = Table('key_unique_tbl', self.metadata, Column('k1', Integer), starrocks_unique_key='k1', starrocks_distributed_by='HASH(k1)')
+        tbl_unique = Table('key_unique_tbl', self.metadata, Column('k1', Integer),
+                           starrocks_unique_key='k1', starrocks_distributed_by='HASH(k1)')
         sql = self._compile_table(tbl_unique)
         expected_unique = """
             CREATE TABLE key_unique_tbl(k1 INTEGER) 
@@ -73,10 +75,8 @@ class TestCreateTableCompiler:
         assert _normalize_sql(sql) == _normalize_sql(expected_unique)
 
         # PRIMARY KEY
-        tbl_primary = Table(
-            'key_primary_tbl', self.metadata, Column('k1', Integer), 
-            starrocks_primary_key='k1', starrocks_distributed_by='HASH(k1)'
-        )
+        tbl_primary = Table('key_primary_tbl', self.metadata, Column('k1', Integer),
+                            starrocks_primary_key='k1', starrocks_distributed_by='HASH(k1)')
         sql = self._compile_table(tbl_primary)
         expected_primary = """
             CREATE TABLE key_primary_tbl(k1 INTEGER) 
@@ -87,7 +87,7 @@ class TestCreateTableCompiler:
 
     def test_column_comment(self):
         self.logger.info("Testing Column Comment clause")
-        tbl = Table('col_comment_tbl', self.metadata, 
+        tbl = Table('col_comment_tbl', self.metadata,
                     Column('k1', Integer, comment='This is a column comment.'),
                     starrocks_distributed_by='HASH(k1)')
         sql = self._compile_table(tbl)
@@ -96,7 +96,7 @@ class TestCreateTableCompiler:
 
     def test_column_attributes(self):
         self.logger.info("Testing various column attributes")
-        tbl = Table('col_attr_tbl', self.metadata, 
+        tbl = Table('col_attr_tbl', self.metadata,
                     Column('k1', Integer, primary_key=True),
                     Column('k2', BigInteger, autoincrement=True),
                     Column('k3', String(50), nullable=True),
@@ -118,8 +118,8 @@ class TestCreateTableCompiler:
         self.logger.info("Testing Aggregate Key Table DDL")
         tbl = Table('agg_tbl', self.metadata,
                     Column('k1', Integer),
-                    Column('v1', Integer, info={'starrocks_agg': "SUM"}),
-                    Column('v2', String(50), info={'starrocks_agg': "REPLACE"}),
+                    Column('v1', Integer, info={ColumnAggInfoKeyWithPrefix.agg_type: ColumnAggType.SUM}),
+                    Column('v2', String(50), info={ColumnAggInfoKeyWithPrefix.agg_type: ColumnAggType.REPLACE}),
                     starrocks_aggregate_key='k1')
         sql = self._compile_table(tbl)
         expected = """
@@ -131,6 +131,49 @@ class TestCreateTableCompiler:
             AGGREGATE KEY(k1)
         """
         assert _normalize_sql(sql) == _normalize_sql(expected)
+
+    def test_aggregate_key_validation(self):
+        self.logger.info("Testing AGGREGATE KEY validation")
+        from sqlalchemy import exc
+
+        # Test case 1: Column marked as both key and aggregate
+        with pytest.raises(exc.CompileError, match="cannot be both KEY and aggregated"):
+            tbl1 = Table('invalid_agg_tbl1', self.metadata,
+                         Column('k1', Integer, info={
+                             ColumnAggInfoKeyWithPrefix.is_agg_key: True,
+                             ColumnAggInfoKeyWithPrefix.agg_type: ColumnAggType.SUM
+                         }),
+                         starrocks_aggregate_key='k1')
+            self._compile_table(tbl1)
+
+        # Test case 2: Column with aggregate marker on a non-aggregate table
+        with pytest.raises(exc.CompileError, match="only valid for AGGREGATE KEY tables"):
+            tbl2 = Table('invalid_agg_tbl2', self.metadata,
+                         Column('k1', Integer),
+                         Column('v1', Integer, info={ColumnAggInfoKeyWithPrefix.agg_type: ColumnAggType.SUM}),
+                         starrocks_duplicate_key='k1')
+            self._compile_table(tbl2)
+
+    def test_aggregate_key_ordering(self):
+        self.logger.info("Testing AGGREGATE KEY column ordering validation")
+        from sqlalchemy import exc
+
+        # Test case 1: Value column before key column
+        with pytest.raises(exc.CompileError, match="all key columns must be defined before any value columns"):
+            tbl1 = Table('invalid_order_tbl1', self.metadata,
+                         Column('v1', Integer, info={'starrocks_agg': "SUM"}),
+                         Column('k1', Integer),
+                         starrocks_aggregate_key='k1')
+            self._compile_table(tbl1)
+
+        # Test case 2: Key columns in wrong order compared to starrocks_aggregate_key
+        with pytest.raises(exc.CompileError, match="order of key columns in the table definition must match"):
+            tbl2 = Table('invalid_order_tbl2', self.metadata,
+                         Column('k2', Integer),
+                         Column('k1', Integer),
+                         Column('v1', Integer, info={'starrocks_agg': "SUM"}),
+                         starrocks_aggregate_key='k1,k2')
+            self._compile_table(tbl2)
 
     def test_column_default_value(self):
         self.logger.info("Testing column server_default value")
@@ -169,79 +212,69 @@ class TestCreateTableCompiler:
 
     def test_partition_descriptions(self):
         self.logger.info("Testing Partition Description clauses")
-        
+
         # Single-column RANGE partition
-        tbl_range = Table(
-            'p_range_tbl', self.metadata, Column('event_date', Date), 
-            starrocks_partition_by='RANGE(event_date) (PARTITION p2023 VALUES LESS THAN ("2024-01-01"))'
-        )
+        tbl_range = Table('p_range_tbl', self.metadata, Column('event_date', Date),
+                          starrocks_partition_by='RANGE(event_date) (PARTITION p2023 VALUES LESS THAN ("2024-01-01"))')
         sql = self._compile_table(tbl_range)
         expected = "CREATE TABLE p_range_tbl(event_date DATE) PARTITION BY RANGE(event_date)(PARTITION p2023 VALUES LESS THAN(\"2024-01-01\"))"
         assert _normalize_sql(sql) == _normalize_sql(expected)
 
         # Multi-column RANGE partition
-        tbl_range_multi = Table(
-            'p_range_multi_tbl', self.metadata, Column('k1', Integer), Column('k2', Integer), 
-            starrocks_partition_by='RANGE(k1, k2) (PARTITION p1 VALUES LESS THAN (100, 200))'
-        )
+        tbl_range_multi = Table('p_range_multi_tbl', self.metadata, Column('k1', Integer), Column('k2', Integer),
+                                starrocks_partition_by='RANGE(k1, k2) (PARTITION p1 VALUES LESS THAN (100, 200))')
         sql = self._compile_table(tbl_range_multi)
         expected = "CREATE TABLE p_range_multi_tbl(k1 INTEGER,k2 INTEGER) PARTITION BY RANGE(k1,k2)(PARTITION p1 VALUES LESS THAN(100,200))"
         assert _normalize_sql(sql) == _normalize_sql(expected)
 
         # LIST partition
-        tbl_list = Table(
-            'p_list_tbl', self.metadata, Column('city', String(50)), 
-            starrocks_partition_by='LIST(city) (PARTITION p_north VALUES IN ("Beihai", "Dalian"))'
-        )
+        tbl_list = Table('p_list_tbl', self.metadata, Column('city', String(50)),
+                         starrocks_partition_by='LIST(city) (PARTITION p_north VALUES IN ("Beihai", "Dalian"))')
         sql = self._compile_table(tbl_list)
         expected = "CREATE TABLE p_list_tbl(city VARCHAR(50)) PARTITION BY LIST(city)(PARTITION p_north VALUES IN(\"Beihai\",\"Dalian\"))"
         assert _normalize_sql(sql) == _normalize_sql(expected)
 
         # Please keep it. It is a special case that is recoganized as a RANGE partition.
-        tbl_expr_single = Table('p_range_date_trunc_tbl', self.metadata, Column('event_time', DateTime)
-                                , starrocks_partition_by="date_trunc('month', event_time)")
+        tbl_expr_single = Table('p_range_date_trunc_tbl', self.metadata, Column('event_time', DateTime),
+                                starrocks_partition_by="date_trunc('month', event_time)")
         sql = self._compile_table(tbl_expr_single)
         expected = "CREATE TABLE p_range_date_trunc_tbl(event_time DATETIME) PARTITION BY date_trunc('month',event_time)"
         assert _normalize_sql(sql) == _normalize_sql(expected)
 
         # Expression partition (single function)
-        tbl_expr_single = Table(
-            'p_expr_single_tbl', self.metadata, Column('event_time', DateTime),
-            starrocks_partition_by="to_date(event_time)"
-        )
+        tbl_expr_single = Table('p_expr_single_tbl', self.metadata, Column('event_time', DateTime),
+                                starrocks_partition_by="to_date(event_time)")
         sql = self._compile_table(tbl_expr_single)
         expected = "CREATE TABLE p_expr_single_tbl(event_time DATETIME) PARTITION BY to_date(event_time)"
         assert _normalize_sql(sql) == _normalize_sql(expected)
 
         # Expression partition (multiple functions and columns)
-        tbl_expr_multi = Table(
-            'p_expr_multi_tbl', self.metadata, Column('event_time', DateTime), Column('id', Integer),
-            starrocks_partition_by="date_trunc('day', event_time), id % 10"
-        )
+        tbl_expr_multi = Table('p_expr_multi_tbl', self.metadata, Column('event_time', DateTime), Column('id', Integer),
+                               starrocks_partition_by="date_trunc('day', event_time), id % 10")
         sql = self._compile_table(tbl_expr_multi)
         expected = "CREATE TABLE p_expr_multi_tbl(event_time DATETIME,id INTEGER) PARTITION BY date_trunc('day',event_time),id % 10"
         assert _normalize_sql(sql) == _normalize_sql(expected)
-        
+
         # Batch partition
-        tbl_batch = Table(
-            'p_batch_tbl', self.metadata, Column('datekey', Integer), 
-            starrocks_partition_by='RANGE(datekey) (START ("1") END ("5") EVERY (1))'
-        )
+        tbl_batch = Table('p_batch_tbl', self.metadata, Column('datekey', Integer),
+                          starrocks_partition_by='RANGE(datekey) (START ("1") END ("5") EVERY (1))')
         sql = self._compile_table(tbl_batch)
         expected = "CREATE TABLE p_batch_tbl(datekey INTEGER) PARTITION BY RANGE(datekey)(START(\"1\")END(\"5\")EVERY(1))"
         assert _normalize_sql(sql) == _normalize_sql(expected)
 
     def test_distribution_descriptions(self):
         self.logger.info("Testing Distribution Description clauses")
-        
+
         # HASH distribution
-        tbl_hash = Table('dist_hash_tbl', self.metadata, Column('user_id', Integer), starrocks_distributed_by='HASH(user_id)', starrocks_buckets=10)
+        tbl_hash = Table('dist_hash_tbl', self.metadata, Column('user_id', Integer),
+                         starrocks_distributed_by='HASH(user_id)', starrocks_buckets=10)
         sql = self._compile_table(tbl_hash)
         expected = "CREATE TABLE dist_hash_tbl(user_id INTEGER) DISTRIBUTED BY HASH(user_id) BUCKETS 10"
         assert _normalize_sql(sql) == _normalize_sql(expected)
-        
+
         # RANDOM distribution
-        tbl_random = Table('dist_random_tbl', self.metadata, Column('log_id', BigInteger), starrocks_distributed_by='RANDOM', starrocks_buckets=4)
+        tbl_random = Table('dist_random_tbl', self.metadata, Column('log_id', BigInteger),
+                           starrocks_distributed_by='RANDOM', starrocks_buckets=4)
         sql = self._compile_table(tbl_random)
         expected = "CREATE TABLE dist_random_tbl(log_id BIGINT) DISTRIBUTED BY RANDOM BUCKETS 4"
         assert _normalize_sql(sql) == _normalize_sql(expected)
@@ -249,8 +282,7 @@ class TestCreateTableCompiler:
     def test_order_by(self):
         self.logger.info("Testing ORDER BY clause")
         tbl = Table('orderby_tbl', self.metadata, Column('k1', Integer), Column('k2', String(50)),
-                    starrocks_order_by='k1, k2',
-                    starrocks_distributed_by='HASH(k1)')
+                    starrocks_order_by='k1, k2', starrocks_distributed_by='HASH(k1)')
         sql = self._compile_table(tbl)
         expected = "CREATE TABLE orderby_tbl(k1 INTEGER, k2 VARCHAR(50)) DISTRIBUTED BY HASH(k1) ORDER BY(k1, k2)"
         assert _normalize_sql(sql) == _normalize_sql(expected)
@@ -268,7 +300,7 @@ class TestCreateTableCompiler:
             )
         """
         assert _normalize_sql(expected) in _normalize_sql(sql)
-        
+
     def test_comprehensive_table(self):
         self.logger.info("Testing comprehensive CREATE TABLE statement")
         tbl = Table(
@@ -319,3 +351,4 @@ class TestCreateTableCompiler:
             )
         """
         assert _normalize_sql(sql) == _normalize_sql(expected)
+

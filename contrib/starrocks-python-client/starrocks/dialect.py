@@ -42,7 +42,7 @@ from sqlalchemy import text
 from sqlalchemy.engine import Connection
 from typing import List, Optional, Any, Dict
 from .types import TableType, ColumnAggType
-from .params import ColumnAggInfoKey
+from .params import ColumnAggInfoKey, TableInfoKey, TableInfoKeyWithPrefix, ColumnAggInfoKeyWithPrefix
 
 # Register the compiler methods
 # The @compiles decorator is the public API for registering new SQL constructs.
@@ -195,6 +195,9 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
 
         text += preparer.format_table(table) + " "
 
+        # StarRocks-specific validation for all key types
+        self._validate_key_definitions(table)
+
         create_table_suffix: str = self.create_table_suffix(table)
         if create_table_suffix:
             text += create_table_suffix + " "
@@ -235,11 +238,118 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
         text += "\n)%s\n\n" % self.post_create_table(table)
         return text
 
+    def _validate_key_definitions(self, table: sa_schema.Table):
+        """
+        Validates key definitions for all StarRocks table types.
+
+        This performs two checks:
+        1. (All key types) Ensures that all columns specified in the table's key
+           (e.g., `starrocks_primary_key`) are actually defined in the table.
+        2. (AGGREGATE KEY only) Enforces StarRocks' strict column ordering rules.
+
+        Args:
+            table: The SQLAlchemy Table object to validate.
+
+        Raises:
+            CompileError: If any validation rule is violated.
+        """
+        key_kwarg_map = TableInfoKeyWithPrefix.KEY_KWARG_MAP
+        
+        key_str = None
+        key_type = None
+
+        for kwarg, name in key_kwarg_map.items():
+            if kwarg in table.kwargs:
+                key_str = table.kwargs[kwarg]
+                key_type = name
+                break # Found the key, no need to check for others
+        
+        if not key_str:
+            return # No key defined, nothing to validate
+
+        key_column_names = [k.strip() for k in key_str.split(',')]
+        table_column_names = {c.name for c in table.columns}
+
+        # 1. Generic Check: Ensure all key columns exist in the table definition.
+        missing_keys = set(key_column_names) - table_column_names
+        if missing_keys:
+            raise exc.CompileError(
+                f"Columns specified in {key_type} ('{key_str}') not found in table: {', '.join(missing_keys)}"
+            )
+
+        # 2. Specific Check: For AGGREGATE KEY tables, validate column order.
+        if key_type == 'AGGREGATE KEY':
+            self._validate_aggregate_key_order(table, key_column_names)
+
+
+    def _validate_aggregate_key_order(self, table: sa_schema.Table, key_column_names: list[str]):
+        """
+        Validates column order for AGGREGATE KEY tables.
+
+        In StarRocks, for an AGGREGATE KEY table:
+        1. All key columns must be defined before any value (aggregate) columns.
+        2. The order of key columns in the table definition must match the order
+           specified in the `starrocks_aggregate_key` argument.
+
+        Args:
+            table: The SQLAlchemy Table object to validate.
+            key_column_names: The list of key column names from the kwarg.
+        """
+        key_cols_from_table = []
+        
+        # Separate table columns into key and value lists
+        for col in table.columns:
+            # Note: value columns are any columns not in the key list.
+            if col.name in key_column_names:
+                key_cols_from_table.append(col.name)
+
+        # Rule 2: The order of key columns in the table definition must match
+        if key_cols_from_table != key_column_names:
+            raise exc.CompileError(
+                "For AGGREGATE KEY tables, the order of key columns in the table definition "
+                f"must match the order in starrocks_aggregate_key. "
+                f"Expected order: {key_column_names}, Actual order: {key_cols_from_table}"
+            )
+
+        # Rule 1: All key columns must be defined before any value columns.
+        last_key_col_index = -1
+        col_list = list(table.columns)
+        for i, col in enumerate(col_list):
+            if col.name in key_column_names:
+                last_key_col_index = i
+        
+        for i in range(last_key_col_index):
+            if col_list[i].name not in key_column_names:
+                 raise exc.CompileError(
+                    "For AGGREGATE KEY tables, all key columns must be defined before any value columns. "
+                    f"Value column '{col_list[i].name}' appears before key column '{col_list[last_key_col_index].name}'."
+                )
+
     def post_create_table(self, table: sa_schema.Table) -> str:
-        """Build table-level CREATE options like ENGINE and COLLATE."""
+        """
+        Builds table-level clauses for a CREATE TABLE statement.
+
+        This method compiles StarRocks-specific table options provided as `starrocks_`
+        kwargs on the `Table` object. It is responsible for constructing clauses
+        that appear after the column definitions, such as:
+        - `ENGINE`
+        - `PRIMARY KEY`, `DUPLICATE KEY`, `AGGREGATE KEY`, `UNIQUE KEY`
+        - `COMMENT`
+        - `PARTITION BY`
+        - `DISTRIBUTED BY`
+        - `ORDER BY`
+        - `PROPERTIES`
+
+        Args:
+            table: The `sqlalchemy.schema.Table` object being compiled.
+
+        Returns:
+            A string containing all the compiled table-level DDL clauses.
+        """
 
         table_opts: list[str] = []
 
+        # Extract StarRocks-specific table options from kwargs without the dialect prefix (starrocks_)
         opts: dict[str, Any] = dict(
             (k[len(self.dialect.name) + 1 :].upper(), v)
             for k, v in table.kwargs.items()
@@ -253,19 +363,10 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
             table_opts.append(f'ENGINE={opts["ENGINE"]}')
 
         # Key Types (Primary, Duplicate, Aggregate, Unique)
-        table_type: TableType = TableType.DEFAULT
-        if 'PRIMARY_KEY' in opts:
-            table_type = TableType.PRIMARY_KEY
-            table_opts.append(f'PRIMARY KEY({opts["PRIMARY_KEY"]})')
-        elif 'DUPLICATE_KEY' in opts:
-            table_type = TableType.DUPLICATE_KEY
-            table_opts.append(f'DUPLICATE KEY({opts["DUPLICATE_KEY"]})')
-        elif 'AGGREGATE_KEY' in opts:
-            table_type = TableType.AGGREGATE_KEY
-            table_opts.append(f'AGGREGATE KEY({opts["AGGREGATE_KEY"]})')
-        elif 'UNIQUE_KEY' in opts:
-            table_type = TableType.UNIQUE_KEY  
-            table_opts.append(f'UNIQUE KEY({opts["UNIQUE_KEY"]})')
+        for tbl_type_key_str, table_type in TableInfoKey.KEY_KWARG_MAP.items():
+            kwarg_upper = tbl_type_key_str.upper()
+            if kwarg_upper in opts:
+                table_opts.append(f'{table_type}({opts[kwarg_upper]})')
 
         if "COMMENT" in opts:
             comment = self.sql_compiler.render_literal_value(
@@ -303,9 +404,29 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
         return " ".join(table_opts)
 
     def get_column_specification(self, column: sa_schema.Column, **kw: Any) -> str:
-        """Builds column DDL."""
+        """Builds column DDL for StarRocks, handling StarRocks-specific features.
 
-        # name, type, others of a column
+        This method extends the base MySQL compiler to support:
+        - **KEY specifier**: For AGGREGATE KEY tables, key columns can be marked
+          with `info={'starrocks_is_agg_key': True}`. The compiler validates that
+          a column is not both a key and an aggregate.
+        - **Aggregate Functions**: For AGGREGATE KEY tables, value columns can have
+          an aggregate function (e.g., 'SUM', 'REPLACE') specified via the
+          `info={'starrocks_agg': '...'}` dictionary on a Column.
+        - **AUTO_INCREMENT**: Automatically renders `AUTO_INCREMENT` for columns
+          with `autoincrement=True`. It also ensures these columns are `BIGINT`
+          and `NOT NULL` as required by StarRocks.
+        - **Generated Columns**: Compiles `sqlalchemy.Computed` constructs into
+          StarRocks' `AS (...)` syntax.
+        
+        Args:
+            column: The `sqlalchemy.schema.Column` object to process.
+            **kw: Additional keyword arguments from the compiler.
+
+        Returns:
+            The full DDL string for the column definition.
+        """
+        # name, type, others of a column for the output colspec
         idx_name, idx_type, idx_others = 0, 1, 2
 
         # name and type 
@@ -318,22 +439,22 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
 
         # aggregation type is only valid for AGGREGATE KEY tables
         is_agg_table: bool = (
-            f"{self.dialect.name}_aggregate_key" in (column.table.kwargs or {})
+            TableInfoKeyWithPrefix.AGGREGATE_KEY in (column.table.kwargs or {})
         )
         if not is_agg_table and (
-            ColumnAggInfoKey.is_agg_key in column.info
-            or ColumnAggInfoKey.agg in column.info
+            ColumnAggInfoKeyWithPrefix.is_agg_key in column.info
+            or ColumnAggInfoKeyWithPrefix.agg_type in column.info
         ):
             raise exc.CompileError(
                 "Column-level KEY/aggregate markers are only valid for AGGREGATE KEY tables; "
                 "declare starrocks_aggregate_key at table level first."
             )
-        if ColumnAggInfoKey.is_agg_key in column.info:
+        if ColumnAggInfoKeyWithPrefix.is_agg_key in column.info:
             colspec.append(ColumnAggType.KEY)
-            if ColumnAggInfoKey.agg in column.info:
-                raise exc.CompileError(f"Column '{column.name}' cannot be both KEY and aggregated (has {ColumnAggInfoKey.agg}).")
-        elif ColumnAggInfoKey.agg in column.info:
-            agg_val = str(column.info[ColumnAggInfoKey.agg]).upper()
+            if ColumnAggInfoKeyWithPrefix.agg_type in column.info:
+                raise exc.CompileError(f"Column '{column.name}' cannot be both KEY and aggregated (has {ColumnAggInfoKeyWithPrefix.agg_type}).")
+        elif ColumnAggInfoKeyWithPrefix.agg_type in column.info:
+            agg_val = str(column.info[ColumnAggInfoKeyWithPrefix.agg_type]).upper()
             if agg_val not in ColumnAggType.ALLOWED:
                 raise exc.CompileError(f"Unsupported aggregate type for column '{column.name}': {agg_val}")
             colspec.append(agg_val)
@@ -392,8 +513,7 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
         return " ".join(colspec)
 
     def visit_computed_column(self, generated: sa_schema.Computed, **kw: Any) -> str:
-        #ToDo >= version 3.1
-        text = "AS (%s)" % self.sql_compiler.process(
+        text = "AS %s" % self.sql_compiler.process(
             generated.sqltext, include_table=False, literal_binds=True
         )
         return text
