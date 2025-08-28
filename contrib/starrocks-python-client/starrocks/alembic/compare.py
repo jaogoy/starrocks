@@ -2,12 +2,13 @@ import re
 import logging
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-from alembic.autogenerate import api, comparators
+from alembic.autogenerate import comparators
 from alembic.autogenerate.api import AutogenContext
 from alembic.operations.ops import UpgradeOps
 from sqlalchemy.engine.reflection import Inspector
 from sqlalchemy.sql.schema import Table
 
+from starrocks.params import SRKwargsPrefix, TableInfoKey
 from starrocks.sql.schema import MaterializedView, View
 from starrocks.reflection import ReflectionViewInfo
 

@@ -3,6 +3,7 @@ from .types import TableType
 
 SRKwargsPrefix = 'starrocks_'
 
+
 class TableInfoKey:
     """Centralizes starrocks_ prefixed kwargs for Table objects. Clean names without prefix."""
 

@@ -9,6 +9,23 @@ class TableType:
     # For validation and mapping
     ALL_KEY_TYPES = {PRIMARY_KEY, DUPLICATE_KEY, AGGREGATE_KEY, UNIQUE_KEY}
 
+
+class TableModel:
+    """ Table type in information_schema.tables_config.TABLE_MODEL
+    """
+    DUP_KEYS = "DUP_KEYS"
+    AGG_KEYS = "AGG_KEYS"
+    PRI_KEYS = "PRI_KEYS"
+    UNQ_KEYS = "UNQ_KEYS"
+
+    TO_TYPE_MAP = {
+        DUP_KEYS: TableType.DUPLICATE_KEY,
+        AGG_KEYS: TableType.AGGREGATE_KEY,
+        PRI_KEYS: TableType.PRIMARY_KEY,
+        UNQ_KEYS: TableType.UNIQUE_KEY,
+    }
+
+
 class ColumnAggType:
     """Supported StarRocks aggregate functions for value columns.
 

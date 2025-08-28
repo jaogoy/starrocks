@@ -14,15 +14,14 @@
 # limitations under the License.
 import re
 from textwrap import dedent
-import time
-from typing import Union
+import logging
+import json
 
 from sqlalchemy import Connection, exc, schema as sa_schema
 from sqlalchemy.dialects.mysql.pymysql import MySQLDialect_pymysql
 from sqlalchemy.dialects.mysql.base import MySQLDDLCompiler, MySQLTypeCompiler, MySQLCompiler, MySQLIdentifierPreparer, _DecodingRow
 from sqlalchemy.sql import sqltypes
 from sqlalchemy.sql.expression import Delete, Select
-from sqlalchemy.util import topological
 from sqlalchemy import util
 from sqlalchemy import log
 from sqlalchemy.engine import reflection
@@ -37,12 +36,11 @@ from . import reflection as _reflection
 from .sql.ddl import CreateView, DropView, AlterView, CreateMaterializedView, DropMaterializedView
 from .sql.schema import View
 from .reflection import ReflectionViewInfo, StarRocksInspector, ReflectionViewDefaults
-from sqlalchemy.ext.compiler import compiles
-from sqlalchemy import text
-from sqlalchemy.engine import Connection
 from typing import List, Optional, Any, Dict
-from .types import TableType, ColumnAggType
-from .params import ColumnAggInfoKey, TableInfoKey, TableInfoKeyWithPrefix, ColumnAggInfoKeyWithPrefix
+from .params import TableInfoKey, TableInfoKeyWithPrefix, ColumnAggInfoKeyWithPrefix
+from sqlalchemy import text
+from .reflection import ReflectedState
+from .params import TableType
 
 # Register the compiler methods
 # The @compiles decorator is the public API for registering new SQL constructs.
@@ -683,6 +681,9 @@ class StarRocksDialect(MySQLDialect_pymysql):
         self.server_version_info = server_version_info
         return server_version_info
 
+    def _strip_identifier_backticks(self, identifier: str) -> str:
+        return identifier.strip().strip('`')
+
     @util.memoized_property
     def _tabledef_parser(self) -> _reflection.StarRocksTableDefinitionParser:
         """return the StarRocksTableDefinitionParser, generate if needed.
@@ -699,7 +700,7 @@ class StarRocksDialect(MySQLDialect_pymysql):
     ) -> list[_DecodingRow]:
         def escape_single_quote(s: str) -> str:
             return s.replace("'", "\\'")
-        
+
         st: str = dedent(f"""
             SELECT * 
             FROM information_schema.{inf_sch_table} 
@@ -719,7 +720,7 @@ class StarRocksDialect(MySQLDialect_pymysql):
         if not rows:
             raise exc.NoSuchTableError(f"Empty response for query: '{st}'")
         return rows
-    
+
     @reflection.cache
     def _setup_parser(self, connection: Connection, table_name: str, schema: Optional[str] = None, **kw: Any) -> Any:
         charset: Optional[str] = self._connection_charset
@@ -846,10 +847,6 @@ class StarRocksDialect(MySQLDialect_pymysql):
                 return False
             raise
 
-    def get_table_state(self, connection: Connection, table_name: str, schema: Optional[str] = None, **kw: Any):
-        """Return StarRocks parsed table state (ReflectedState)."""
-        return self._setup_parser(connection, table_name, schema, **kw)
-
     def get_view_names(self, connection: Connection, schema: Optional[str] = None, **kw: Any) -> List[str]:
         """Return all view names in a given schema."""
         if schema is None:
@@ -922,34 +919,6 @@ class StarRocksDialect(MySQLDialect_pymysql):
             return info
         except Exception:
             return None
-
-    def _strip_identifier_backticks(self, sql_text: str) -> str:
-        """Remove MySQL-style identifier quotes (`) while preserving those inside string literals.
-
-        This handles backslash-escaped characters within single-quoted strings.
-        """
-        in_single_quote = False
-        escaped = False
-        output_chars: list[str] = []
-        for ch in sql_text:
-            if in_single_quote:
-                output_chars.append(ch)
-                if escaped:
-                    escaped = False
-                elif ch == "\\":
-                    escaped = True
-                elif ch == "'":
-                    in_single_quote = False
-                continue
-            if ch == "'":
-                in_single_quote = True
-                output_chars.append(ch)
-            elif ch == "`":
-                # Skip identifier quote
-                continue
-            else:
-                output_chars.append(ch)
-        return "".join(output_chars)
 
     def get_view(self, connection: Connection, view_name: str, schema: Optional[str] = None, **kw: Any) -> Optional[ReflectionViewInfo]:
         """Return all information about a view."""

@@ -13,10 +13,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
 import dataclasses
 import json
 import re
-from typing import Any, Union
+from typing import Any, Optional
 
 from sqlalchemy.dialects.mysql.types import DATETIME
 from sqlalchemy.dialects.mysql.types import TIME
@@ -27,6 +28,9 @@ from sqlalchemy import log
 from sqlalchemy import types as sqltypes
 from sqlalchemy import util
 from sqlalchemy.engine.reflection import Inspector
+
+from .params import TableInfoKeyWithPrefix
+from .types import TableModel, TableType
 
 # kw_only is added in python 3.10
 # https://docs.python.org/3/library/dataclasses.html#dataclasses.dataclass
@@ -85,13 +89,12 @@ class StarRocksInspector(Inspector):
     def __init__(self, bind):
         super().__init__(bind)
 
-    def get_view(self, view_name: str, schema: str | None = None) -> ReflectionViewInfo | None:
-        return self.dialect.get_view(self.bind, view_name, schema=schema)
+    def get_view(self, view_name: str, schema: Optional[str] = None, **kwargs: Any) -> Optional[ReflectionViewInfo]:
+        return self.dialect.get_view(self.bind, view_name, schema=schema, **kwargs)
 
     def get_views(self, schema: str | None = None) -> dict[tuple[str | None, str], ReflectionViewInfo]:
         """Batch reflection wrapper for dialect.get_views (prototype)."""
         return self.dialect.get_views(self.bind, schema=schema)
-
 
 @log.class_logger
 class StarRocksTableDefinitionParser(object):
@@ -109,7 +112,7 @@ class StarRocksTableDefinitionParser(object):
             columns=[self._parse_column(column=column) for column in columns],
             table_options=self._parse_table_options(table=table, table_config=table_config, columns=columns),
             keys=[{
-                "type": self._get_key_type(columns=columns),
+                "type": self._get_key_type(table_config=table_config),
                 "columns": [(c, None, None) for c in self._get_key_columns(columns=columns)],
                 "parser": None,
                 "name": None,
@@ -174,59 +177,62 @@ class StarRocksTableDefinitionParser(object):
 
     def _get_key_columns(self, columns: list[_DecodingRow]) -> list[str]:
         """
-        Get list of key columns from information_schema.columns table.
+        Get list of key columns (COLUMN_KEY) from information_schema.columns table.
         It returns list of column names that are part of key.
         """
         sorted_columns = sorted(columns, key=lambda col: col["ORDINAL_POSITION"])
         return [c["COLUMN_NAME"] for c in sorted_columns if c["COLUMN_KEY"]]
-    
-    def _get_key_type(self, columns: list[_DecodingRow]) -> str:
+     
+    def _get_key_type(self, table_config: _DecodingRow) -> str:
         """
-        Get key type from information_schema.columns table.
-        It returns string representation of key type.
-        It assumes only one key type is present in columns.
+        Get key type from information_schema.tables_config table.
         """
-        key_map = {
-            "PRI": "PRIMARY",
-            "UNI": "UNIQUE",
-            "DUP": "DUPLICATE",
-            "AGG": "AGGREGATE",
-        }
-        key_types = list(set([c["COLUMN_KEY"] for c in columns if c["COLUMN_KEY"]]))
-        if len(key_types) > 1:
-            raise NotImplementedError(f"Multiple key types found: {key_types}")
-        if not key_types:
-            return ""
-        return key_map[key_types[0]]
-    
+        return TableModel.TO_TYPE_MAP.get(table_config.TABLE_MODEL, "")
+
     def _get_key_desc(self, columns: list[_DecodingRow]) -> str:
         """
         Get key description from information_schema.columns table.
         It returns string representation of key description.
         """
         quoted_cols = [self.preparer.quote_identifier(col) for col in self._get_key_columns(columns=columns)]
-        return f"{self._get_key_type(columns=columns)} KEY({', '.join(quoted_cols)})"
-    
-    def _get_distribution(self, table_config: _DecodingRow) -> str:
+        return f"{self._get_key_type(columns=columns)}({', '.join(quoted_cols)})"
+     
+    def _get_distribution_desc(self, table_config: _DecodingRow) -> str:
         """
         Get distribution from information_schema.tables table.
         It returns string representation of distribution option.
         """
-        distribution_cols = table_config["DISTRIBUTE_KEY"]
+        distribution_cols = table_config.DISTRIBUTE_KEY
         distribution_str = f'({distribution_cols})' if distribution_cols else ""
-        return f'{table_config["DISTRIBUTE_TYPE"]}{distribution_str}'
-    
+        return f'{table_config.DISTRIBUTE_TYPE}{distribution_str}'
+
     def _parse_table_options(self, table: _DecodingRow, table_config: _DecodingRow, columns: list[_DecodingRow]) -> dict:
-        """
-        Parse table options from information_schema.tables table.
-        It returns dictionary with table options expected by sqlalchemy.
-        """
-        return {
-            f"{self.dialect.name}_engine": table_config["TABLE_ENGINE"],
-            f"{self.dialect.name}_key_desc": self._get_key_desc(columns),
-            f"{self.dialect.name}_comment": table["TABLE_COMMENT"],
-            f"{self.dialect.name}_partition_by": table_config["PARTITION_KEY"],
-            f"{self.dialect.name}_distribution": self._get_distribution(table_config),
-            f"{self.dialect.name}_order_by": table_config["SORT_KEY"],
-            f"{self.dialect.name}_properties": tuple(json.loads(table_config["PROPERTIES"] or "{}").items()),
-        }
+        """Parse table options from `information_schema` views."""
+        opts = {}
+
+        # TODO: check whether there need be a `starrocks_primary_key = (c1, c2)` in the opts
+
+        if table_config.TABLE_ENGINE:
+            opts[TableInfoKeyWithPrefix.engine] = table_config.TABLE_ENGINE.upper()
+
+        if table.TABLE_COMMENT:
+            opts[TableInfoKeyWithPrefix.comment] = table.TABLE_COMMENT
+
+        if table_config.PARTITION_KEY:
+            opts[TableInfoKeyWithPrefix.partition_by] = table_config.PARTITION_KEY
+
+        if table_config.DISTRIBUTE_KEY:
+            opts[TableInfoKeyWithPrefix.distributed_by] = self._get_distribution_desc(table_config)
+
+        if table_config.SORT_KEY:
+            columns = [c.strip().strip('`') for c in table_config.SORT_KEY.split(',')]
+            opts[TableInfoKeyWithPrefix.order_by] = columns
+
+        if table_config.PROPERTIES:
+            try:
+                opts[TableInfoKeyWithPrefix.properties] = dict(json.loads(table_config.PROPERTIES or "{}").items())
+            except json.JSONDecodeError:
+                pass  # Ignore if properties are not valid JSON
+        
+        return opts
+
