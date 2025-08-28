@@ -41,6 +41,8 @@ from sqlalchemy.ext.compiler import compiles
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
 from typing import List, Optional, Any, Dict
+from .types import TableType, ColumnAggType
+from .params import ColumnAggInfoKey
 
 # Register the compiler methods
 # The @compiles decorator is the public API for registering new SQL constructs.
@@ -251,14 +253,25 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
             table_opts.append(f'ENGINE={opts["ENGINE"]}')
 
         # Key Types (Primary, Duplicate, Aggregate, Unique)
+        table_type: TableType = TableType.DEFAULT
         if 'PRIMARY_KEY' in opts:
+            table_type = TableType.PRIMARY_KEY
             table_opts.append(f'PRIMARY KEY({opts["PRIMARY_KEY"]})')
         elif 'DUPLICATE_KEY' in opts:
+            table_type = TableType.DUPLICATE_KEY
             table_opts.append(f'DUPLICATE KEY({opts["DUPLICATE_KEY"]})')
         elif 'AGGREGATE_KEY' in opts:
+            table_type = TableType.AGGREGATE_KEY
             table_opts.append(f'AGGREGATE KEY({opts["AGGREGATE_KEY"]})')
         elif 'UNIQUE_KEY' in opts:
+            table_type = TableType.UNIQUE_KEY  
             table_opts.append(f'UNIQUE KEY({opts["UNIQUE_KEY"]})')
+
+        if "COMMENT" in opts:
+            comment = self.sql_compiler.render_literal_value(
+                opts["COMMENT"], sqltypes.String()
+            )
+            table_opts.append(f"COMMENT {comment}")
 
         # Partition
         if 'PARTITION_BY' in opts:
@@ -266,7 +279,7 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
 
         # Distribution
         if 'DISTRIBUTED_BY' in opts:
-            dist_str = f'DISTRIBUTED BY HASH({opts["DISTRIBUTED_BY"]})'
+            dist_str = f'DISTRIBUTED BY {opts["DISTRIBUTED_BY"]}'
             if 'BUCKETS' in opts:
                 dist_str += f' BUCKETS {opts["BUCKETS"]}'
             table_opts.append(dist_str)
@@ -275,14 +288,16 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
         if 'ORDER_BY' in opts:
             table_opts.append(f'ORDER BY({opts["ORDER_BY"]})')
 
-        if "COMMENT" in opts:
-            comment = self.sql_compiler.render_literal_value(
-                opts["COMMENT"], sqltypes.String()
-            )
-            table_opts.append(f"COMMENT {comment}")
-
         if "PROPERTIES" in opts:
-            props = ",\n".join([f'\t"{k}"="{v}"' for k, v in opts["PROPERTIES"]])
+            props_val = opts["PROPERTIES"]
+            if isinstance(props_val, dict):
+                props_items = props_val.items()
+            elif isinstance(props_val, list):
+                props_items = props_val
+            else:
+                raise exc.CompileError(f"Unsupported type for PROPERTIES: {type(props_val)}")
+            
+            props = ",\n".join([f'\t"{k}"="{v}"' for k, v in props_items])
             table_opts.append(f"PROPERTIES(\n{props}\n)")
 
         return " ".join(table_opts)
@@ -290,6 +305,10 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
     def get_column_specification(self, column: sa_schema.Column, **kw: Any) -> str:
         """Builds column DDL."""
 
+        # name, type, others of a column
+        idx_name, idx_type, idx_others = 0, 1, 2
+
+        # name and type 
         colspec: list[str] = [
             self.preparer.format_column(column),
             self.dialect.type_compiler.process(
@@ -297,52 +316,67 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
             ),
         ]
 
-        # ToDo: Support aggregation type
-        #  agg_type: aggregation type.If not specified, this column is key column.If specified, it is value
-        #  column.The aggregation types supported are as follows:
-        #  SUM, MAX, MIN, REPLACE
-        #  HLL_UNION(only for HLL type)
-        #  BITMAP_UNION(only for BITMAP)
-        #  REPLACE_IF_NOT_NULL
+        # aggregation type is only valid for AGGREGATE KEY tables
+        is_agg_table: bool = (
+            f"{self.dialect.name}_aggregate_key" in (column.table.kwargs or {})
+        )
+        if not is_agg_table and (
+            ColumnAggInfoKey.is_agg_key in column.info
+            or ColumnAggInfoKey.agg in column.info
+        ):
+            raise exc.CompileError(
+                "Column-level KEY/aggregate markers are only valid for AGGREGATE KEY tables; "
+                "declare starrocks_aggregate_key at table level first."
+            )
+        if ColumnAggInfoKey.is_agg_key in column.info:
+            colspec.append(ColumnAggType.KEY)
+            if ColumnAggInfoKey.agg in column.info:
+                raise exc.CompileError(f"Column '{column.name}' cannot be both KEY and aggregated (has {ColumnAggInfoKey.agg}).")
+        elif ColumnAggInfoKey.agg in column.info:
+            agg_val = str(column.info[ColumnAggInfoKey.agg]).upper()
+            if agg_val not in ColumnAggType.ALLOWED:
+                raise exc.CompileError(f"Unsupported aggregate type for column '{column.name}': {agg_val}")
+            colspec.append(agg_val)
 
-        # if column.computed is not None:
-        #     colspec.append(self.process(column.computed))
+        # NULL or NOT NULL. AUTO_INCREMENT columns must be NOT NULL
+        if not column.nullable or column.autoincrement is True:
+            colspec.append("NOT NULL")
+        # else: omit explicit NULL (default)
+
+        # see: https://docs.sqlalchemy.org/en/latest/dialects/mysql.html#mysql_timestamp_null  # noqa
+        # elif column.nullable and is_timestamp:
+        #     colspec.append("NULL") # ToDo - remove this, find way to fix the test
 
         # is_timestamp = isinstance(
         #     column.type._unwrapped_dialect_impl(self.dialect),
         #     sqltypes.TIMESTAMP,
         # )
 
-        if not column.nullable:
-            colspec.append("NOT NULL")
-
-        # see: https://docs.sqlalchemy.org/en/latest/dialects/mysql.html#mysql_timestamp_null  # noqa
-        # elif column.nullable and is_timestamp:
-        #     colspec.append("NULL")
-
-        # Column comment is not supported in Starrocks
-        # comment = column.comment
-        # if comment is not None:
-        #     literal = self.sql_compiler.render_literal_value(
-        #         comment, sqltypes.String()
-        #     )
-        #     colspec.append("COMMENT " + literal)
+        if column.comment is not None:
+            literal = self.sql_compiler.render_literal_value(
+                column.comment, sqltypes.String()
+            )
+            colspec.append("COMMENT " + literal)
 
         # ToDo >= version 3.0
-        if (
-            column.table is not None
-            and column is column.table._autoincrement_column
-            and (
-                column.server_default is None
-                or isinstance(column.server_default, sa_schema.Identity)
-            )
-            and not (
-                self.dialect.supports_sequences
-                and isinstance(column.default, sa_schema.Sequence)
-                and not column.default.optional
-            )
-        ):
-            colspec[1] = "BIGINT" # ToDo - remove this, find way to fix the test
+        # if (
+        #     column.table is not None
+        #     and column is column.table._autoincrement_column
+        #     and (
+        #         column.server_default is None
+        #         or isinstance(column.server_default, sa_schema.Identity)
+        #     )
+        #     and not (
+        #         self.dialect.supports_sequences
+        #         and isinstance(column.default, sa_schema.Sequence)
+        #         and not column.default.optional
+        #     )
+        # ):
+        #     colspec[1] = "BIGINT" # ToDo - remove this, find way to fix the test
+
+        # AUTO_INCREMENT or default value or computed column
+        if column.autoincrement is True:
+            colspec[idx_type] = "BIGINT"  # AUTO_INCREMENT column must be BIGINT
             colspec.append("AUTO_INCREMENT")
         else:
             default = self.get_column_default_string(column)
@@ -352,6 +386,9 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
 
             elif default is not None:
                 colspec.append("DEFAULT " + default)
+        if column.computed is not None:
+            colspec.append(self.process(column.computed))
+
         return " ".join(colspec)
 
     def visit_computed_column(self, generated: sa_schema.Computed, **kw: Any) -> str:

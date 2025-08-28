@@ -1,10 +1,12 @@
 import re
 import logging
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from alembic.autogenerate import api, comparators
 from alembic.autogenerate.api import AutogenContext
 from alembic.operations.ops import UpgradeOps
+from sqlalchemy.engine.reflection import Inspector
+from sqlalchemy.sql.schema import Table
 
 from starrocks.sql.schema import MaterializedView, View
 from starrocks.reflection import ReflectionViewInfo
@@ -73,7 +75,7 @@ def autogen_for_views(
     autogen_context: AutogenContext, upgrade_ops: UpgradeOps, schemas: List[Optional[str]]
 ) -> None:
     """Main autogenerate entrypoint for views."""
-    inspector = autogen_context.inspector
+    inspector: Inspector = autogen_context.inspector
 
     conn_views: Set[Tuple[Optional[str], str]] = set()
     for schema in schemas:
@@ -95,16 +97,16 @@ def _compare_views(
     upgrade_ops: UpgradeOps,
 ) -> None:
     """Compare views between the database and the metadata and generate operations."""
-    inspector = autogen_context.inspector
+    inspector: Inspector = autogen_context.inspector
 
     # Find new views to create
     for schema, view_name in sorted(metadata_views.keys() - conn_views):
-        view = metadata_views[(schema, view_name)]
+        view: View = metadata_views[(schema, view_name)]
         upgrade_ops.ops.append(CreateViewOp(view.name, view.definition, schema=schema, security=view.security, comment=view.comment))
 
     # Find old views to drop
     for schema, view_name in sorted(conn_views - metadata_views.keys()):
-        view_info = inspector.get_view(view_name, schema=schema)
+        view_info: Optional[ReflectionViewInfo] = inspector.get_view(view_name, schema=schema)
         if not view_info:
             continue
         upgrade_ops.ops.append(
@@ -119,7 +121,7 @@ def _compare_views(
 
     # Find views that exist in both and compare their definitions
     for schema, view_name in sorted(conn_views.intersection(metadata_views.keys())):
-        view_info = inspector.get_view(view_name, schema=schema)
+        view_info: Optional[ReflectionViewInfo] = inspector.get_view(view_name, schema=schema)
         if not view_info:
             continue
             
@@ -130,7 +132,7 @@ def _compare_views(
             comment=view_info.comment,
             security=view_info.security
         )
-        metadata_view = metadata_views[(schema, view_name)]
+        metadata_view: View = metadata_views[(schema, view_name)]
 
         logger.debug(
             "Comparing view %s.%s: conn(def)=%r meta(def)=%r",
@@ -159,8 +161,8 @@ def compare_view(
     metadata_view: View,
 ) -> None:
     """Compare a single view and generate operations if needed."""
-    conn_def_norm = normalize_sql(conn_view.definition)
-    metadata_def_norm = normalize_sql(metadata_view.definition)
+    conn_def_norm: Optional[str] = normalize_sql(conn_view.definition)
+    metadata_def_norm: Optional[str] = normalize_sql(metadata_view.definition)
     definition_changed = conn_def_norm != metadata_def_norm
     # Comment/security normalized for comparison
     conn_view_comment = (conn_view.comment or "").strip()
@@ -218,7 +220,7 @@ def autogen_for_materialized_views(
     autogen_context: AutogenContext, upgrade_ops: UpgradeOps, schemas: List[Optional[str]]
 ) -> None:
     """Main autogenerate entrypoint for MVs."""
-    inspector = autogen_context.inspector
+    inspector: Inspector = autogen_context.inspector
 
     conn_mvs: Set[Tuple[Optional[str], str]] = set()
     for schema in schemas:
@@ -245,11 +247,11 @@ def _compare_materialized_views(
     upgrade_ops: UpgradeOps,
 ) -> None:
     """Compare MVs between the database and the metadata and generate operations."""
-    inspector = autogen_context.inspector
+    inspector: Inspector = autogen_context.inspector
 
     # Find new MVs to create
     for schema, mv_name in sorted(metadata_mvs.keys() - conn_mvs):
-        mv = metadata_mvs[(schema, mv_name)]
+        mv: MaterializedView = metadata_mvs[(schema, mv_name)]
         upgrade_ops.ops.append(
             CreateMaterializedViewOp(mv.name, mv.definition, schema=schema)
         )
@@ -260,13 +262,13 @@ def _compare_materialized_views(
 
     # Find modified MVs
     for schema, mv_name in sorted(conn_mvs.intersection(metadata_mvs.keys())):
-        view_info = inspector.get_materialized_view_definition(mv_name, schema=schema)
+        view_info: Optional[str] = inspector.get_materialized_view_definition(mv_name, schema=schema)
         conn_mv = MaterializedView(
             mv_name,
             view_info,
             schema=schema
         )
-        metadata_mv = metadata_mvs[(schema, mv_name)]
+        metadata_mv: MaterializedView = metadata_mvs[(schema, mv_name)]
 
         comparators.dispatch("materialized_view")(
             autogen_context,
