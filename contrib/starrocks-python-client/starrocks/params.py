@@ -56,3 +56,5 @@ def _create_prefixed_class(base_cls, prefix):
 
 TableInfoKeyWithPrefix = _create_prefixed_class(TableInfoKey, SRKwargsPrefix)
 ColumnAggInfoKeyWithPrefix = _create_prefixed_class(ColumnAggInfoKey, SRKwargsPrefix)
+
+ColumnSROptionsKey: str = "column_sr_options"

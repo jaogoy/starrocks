@@ -25,8 +25,8 @@ from sqlalchemy.dialects.mysql.reflection import _re_compile
 from sqlalchemy import log, types as sqltypes, util
 from sqlalchemy.engine.reflection import Inspector
 
-from .params import TableInfoKeyWithPrefix
-from .types import TableModel
+from .params import ColumnAggInfoKeyWithPrefix, ColumnSROptionsKey, TableInfoKeyWithPrefix
+from .types import TableModel, ViewSecurityType
 
 # kw_only is added in python 3.10
 # https://docs.python.org/3/library/dataclasses.html#dataclasses.dataclass
@@ -55,7 +55,7 @@ class ReflectionViewDefaults:
     """Central place for view reflection default values and normalization."""
 
     DEFAULT_COMMENT: str = ""
-    DEFAULT_SECURITY: str = ""
+    DEFAULT_SECURITY: str = ViewSecurityType.NONE
 
     @classmethod
     def apply(
@@ -65,7 +65,7 @@ class ReflectionViewDefaults:
         definition: str,
         comment: str | None = None,
         security: str | None = None,
-    ) -> "ReflectionViewInfo":
+    ) -> ReflectionViewInfo:
         """Apply defaults and normalization to reflected view values.
 
         - comment: default empty string
@@ -80,6 +80,17 @@ class ReflectionViewDefaults:
             security=normalized_security,
         )
 
+    @classmethod
+    def apply_info(cls, reflectionViewInfo: ReflectionViewInfo) -> ReflectionViewInfo:
+        """Apply defaults and normalization to reflected view values.
+        """
+        return ReflectionViewInfo(
+            name=reflectionViewInfo.name,
+            definition=reflectionViewInfo.definition,
+            comment=(reflectionViewInfo.comment or cls.DEFAULT_COMMENT),
+            security=(reflectionViewInfo.security or cls.DEFAULT_SECURITY).upper(),
+        )
+
 
 class StarRocksInspector(Inspector):
     def __init__(self, bind):
@@ -92,6 +103,7 @@ class StarRocksInspector(Inspector):
         """Batch reflection wrapper for dialect.get_views (prototype)."""
         return self.dialect.get_views(self.bind, schema=schema)
 
+
 @log.class_logger
 class StarRocksTableDefinitionParser(object):
     """Parses content of information_schema tables to get table information."""
@@ -102,21 +114,29 @@ class StarRocksTableDefinitionParser(object):
         self._re_csv_int = _re_compile(r"\d+")
         self._re_csv_str = _re_compile(r"\x27(?:\x27\x27|[^\x27])*\x27")
 
-    def parse(self, table: _DecodingRow, table_config: _DecodingRow, columns: list[_DecodingRow], charset: str) -> ReflectedState:
+    def parse(
+        self,
+        table: _DecodingRow,
+        table_config: _DecodingRow,
+        columns: list[_DecodingRow],
+        agg_types: dict[str, str],
+        charset: str,
+    ) -> ReflectedState:
         return ReflectedState(
             table_name=table["TABLE_NAME"],
-            columns=[self._parse_column(column=column) for column in columns],
+            columns=[
+                self._parse_column(column=column, agg_type=agg_types.get(column.COLUMN_NAME))
+                for column in columns
+            ],
             table_options=self._parse_table_options(
                 table=table, table_config=table_config, columns=columns
             ),
             keys=[{
                 "type": self._get_key_type(table_config=table_config),
-                "columns": [
-                    (c, None, None) for c in self._get_key_columns(columns=columns)
-                ],
+                "columns": [(c, None, None) for c in self._get_key_columns(columns=columns)],
                 "parser": None,
                 "name": None,
-            }]
+            }],
         )
 
     def _parse_column_type(self, column: _DecodingRow) -> Any:
@@ -158,22 +178,23 @@ class StarRocksTableDefinitionParser(object):
             type_instance = col_type(*type_args, **type_kw)
         return type_instance
 
-    def _parse_column(self, column: _DecodingRow) -> dict:
+    def _parse_column(self, column: _DecodingRow, agg_type: str | None = None) -> dict:
         """
         Parse column from information_schema.columns table.
         It returns dictionary with column informations expected by sqlalchemy.
         """
-        return {
+        col_info = {
             "name": column["COLUMN_NAME"],
             "type": self._parse_column_type(column=column),
             "nullable": column["IS_NULLABLE"] == "YES",
             "default": column["COLUMN_DEFAULT"],
             "autoincrement": None,  # TODO: This is not specified
-            "computed": {
-                "sqltext": column["GENERATION_EXPRESSION"]
-            },
+            "computed": {"sqltext": column["GENERATION_EXPRESSION"]},
             "comment": column["COLUMN_COMMENT"],
         }
+        if agg_type:
+            col_info[ColumnSROptionsKey] = {ColumnAggInfoKeyWithPrefix.agg_type: agg_type}
+        return col_info
 
     def _get_key_columns(self, columns: list[_DecodingRow]) -> list[str]:
         """
@@ -195,9 +216,11 @@ class StarRocksTableDefinitionParser(object):
         It returns string representation of key description.
         """
         quoted_cols = [
-            self.preparer.quote_identifier(col) for col in self._get_key_columns(columns=columns)
+            self.preparer.quote_identifier(col)
+            for col in self._get_key_columns(columns=columns)
         ]
-        return f"{self._get_key_type(columns=columns)}({', '.join(quoted_cols)})"
+        key_type = self._get_key_type(columns=columns)
+        return f"{key_type}({', '.join(quoted_cols)})"
 
     def _get_distribution_desc(self, table_config: _DecodingRow) -> str:
         """
@@ -215,26 +238,27 @@ class StarRocksTableDefinitionParser(object):
         # TODO: check whether there need be a `starrocks_primary_key = (c1, c2)` in the opts
 
         if table_config.TABLE_ENGINE:
-            opts[TableInfoKeyWithPrefix.engine] = table_config.TABLE_ENGINE.upper()
+            opts[TableInfoKeyWithPrefix.ENGINE] = table_config.TABLE_ENGINE.upper()
 
         if table.TABLE_COMMENT:
-            opts[TableInfoKeyWithPrefix.comment] = table.TABLE_COMMENT
+            opts[TableInfoKeyWithPrefix.COMMENT] = table.TABLE_COMMENT
 
         if table_config.PARTITION_KEY:
-            opts[TableInfoKeyWithPrefix.partition_by] = table_config.PARTITION_KEY
+            opts[TableInfoKeyWithPrefix.PARTITION_BY] = table_config.PARTITION_KEY
 
         if table_config.DISTRIBUTE_KEY:
-            opts[TableInfoKeyWithPrefix.distributed_by] = self._get_distribution_desc(table_config)
+            opts[TableInfoKeyWithPrefix.DISTRIBUTED_BY] = self._get_distribution_desc(table_config)
 
         if table_config.SORT_KEY:
-            columns = [c.strip().strip('`') for c in table_config.SORT_KEY.split(',')]
-            opts[TableInfoKeyWithPrefix.order_by] = columns
+            columns = [c.strip().strip("`") for c in table_config.SORT_KEY.split(",")]
+            opts[TableInfoKeyWithPrefix.ORDER_BY] = columns
 
         if table_config.PROPERTIES:
             try:
-                opts[TableInfoKeyWithPrefix.properties] = dict(json.loads(table_config.PROPERTIES or "{}").items())
+                opts[TableInfoKeyWithPrefix.PROPERTIES] = dict(
+                    json.loads(table_config.PROPERTIES or "{}").items()
+                )
             except json.JSONDecodeError:
                 pass  # Ignore if properties are not valid JSON
 
         return opts
-

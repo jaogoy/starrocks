@@ -9,7 +9,6 @@ from starrocks.reflection import ReflectionViewInfo
 from starrocks.alembic.ops import (
     CreateViewOp, DropViewOp, AlterViewOp,
 )
-from starrocks.alembic.starrocks import StarrocksImpl
 from unittest.mock import Mock
 from alembic.config import Config
 from sqlalchemy import create_engine, inspect, text
@@ -19,6 +18,9 @@ from alembic.operations import Operations
 from alembic.runtime.migration import MigrationContext
 from typing import Generator, Any
 from sqlalchemy import Engine
+
+from test import conftest_sr
+from test.test_utils import _normalize_sql
 
 
 class TestAutogenerateViews:
@@ -159,8 +161,8 @@ class TestAutogenerateViews:
         eq_(len(upgrade_ops.ops), 0)
 
 
-class TestIntegration:
-    STARROCKS_URI = os.getenv("STARROCKS_URI", "starrocks://root:@127.0.0.1:9030/test")
+class TestIntegrationViews:
+    STARROCKS_URI = conftest_sr._get_starrocks_url()
     engine: Engine = create_engine(STARROCKS_URI)
 
     @classmethod
@@ -177,7 +179,7 @@ class TestIntegration:
         shutil.copy("test/data/autogen_env.py", os.path.join(script_dir_path, "env.py"))
         config = Config()
         config.set_main_option("script_location", script_dir_path)
-        config.set_main_option("sqlalchemy.url", TestIntegration.STARROCKS_URI)
+        config.set_main_option("sqlalchemy.url", TestIntegrationViews.STARROCKS_URI)
         yield config
         shutil.rmtree(script_dir_path)
 
@@ -250,8 +252,7 @@ class TestIntegration:
                 inspector = inspect(conn)
                 view_info = inspector.get_view(view_name)
                 assert view_info is not None
-                assert "SELECT 2 AS new_c1, 3 AS new_c2" in view_info.definition
+                logger.info(f"view_info.definition: {view_info.definition}")
+                assert _normalize_sql("SELECT 2 AS new_c1, 3 AS new_c2") == _normalize_sql(view_info.definition)
             finally:
                 conn.execute(text(f"DROP VIEW IF EXISTS {view_name}"))
-
-

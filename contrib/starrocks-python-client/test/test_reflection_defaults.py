@@ -1,6 +1,7 @@
 import pytest
 
 from starrocks.reflection import ReflectionViewDefaults, ReflectionViewInfo
+from starrocks.types import ViewSecurityType
 
 
 def test_reflection_view_defaults_apply_basic():
@@ -23,10 +24,8 @@ def test_reflection_view_defaults_apply_upper_security_and_keep_comment():
         comment="some comment",
         security="invoker",
     )
-    expected_comment = "some comment"
-    expected_security = "INVOKER"
-    assert info.comment == expected_comment
-    assert info.security == expected_security
+    assert info.comment == "some comment"
+    assert info.security == ViewSecurityType.INVOKER
 
 
 def test_reflection_view_defaults_empty_strings():

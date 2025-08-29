@@ -58,3 +58,21 @@ class ColumnAggType:
         REPLACE,
         REPLACE_IF_NOT_NULL,
     }
+
+
+class ViewSecurityType:
+    """Supported StarRocks view security types.
+
+    Use these constants in View.info["security"].
+    """
+
+    NONE = ""
+    INVOKER = "INVOKER"
+    DEFINER = "DEFINER"
+
+    # Allowed set for validation
+    ALLOWED_ITEMS = {
+        NONE,
+        INVOKER,
+        DEFINER,
+    }

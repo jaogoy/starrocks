@@ -14,13 +14,17 @@
 # limitations under the License.
 
 import logging
-from typing import Optional, List, Any, Type, Dict, Callable, Literal
+from typing import Optional, List, Any, Type, Dict, Callable
 from datetime import date
 
 from sqlalchemy.engine import Dialect
 from sqlalchemy.sql import sqltypes
 from sqlalchemy.sql.type_api import TypeEngine
-from sqlalchemy.dialects.mysql.types import TINYINT, SMALLINT, INTEGER, BIGINT, DECIMAL, DOUBLE, FLOAT, CHAR, VARCHAR, DATETIME
+from sqlalchemy.sql.sqltypes import BOOLEAN, BINARY, VARBINARY
+from sqlalchemy.dialects.mysql.types import (
+    TINYINT, SMALLINT, INTEGER, BIGINT, DECIMAL, DOUBLE, FLOAT,
+    CHAR, VARCHAR, DATETIME
+)
 from sqlalchemy.dialects.mysql.json import JSON
 
 logger = logging.getLogger(__name__)
@@ -30,8 +34,13 @@ class LARGEINT(sqltypes.Integer):
     __visit_name__ = "LARGEINT"
 
 
+class STRING(sqltypes.String):
+    __visit_name__ = "STRING"
+
+
 class DATE(sqltypes.DATE):
     __visit_name__ = "DATE"
+
     def literal_processor(self, dialect: Dialect) -> Callable[[date], str]:
         def process(value: date) -> str:
             return f"TO_DATE('{value}')"

@@ -4,6 +4,8 @@ from typing import Optional
 
 
 class StarrocksImpl(MySQLImpl):
+    """Alembic DDL implementation for StarRocks."""
+
     __dialect__ = "starrocks"
 
     def version_table_impl(
@@ -11,7 +13,7 @@ class StarrocksImpl(MySQLImpl):
         *,
         version_table: str,
         version_table_schema: Optional[str],
-        version_table_pk: bool, # ignored as StarRocks requires a primary key
+        version_table_pk: bool,  # ignored as StarRocks requires a primary key
         **kw,
     ) -> Table:
         return Table(

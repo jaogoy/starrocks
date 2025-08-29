@@ -16,7 +16,7 @@ import re
 from textwrap import dedent
 import logging
 
-from sqlalchemy import Connection, exc, schema as sa_schema, util, log
+from sqlalchemy import Connection, exc, schema as sa_schema, util, log, text, Row
 from sqlalchemy.dialects.mysql.pymysql import MySQLDialect_pymysql
 from sqlalchemy.dialects.mysql.base import (
     MySQLDDLCompiler,
@@ -37,14 +37,14 @@ from starrocks.types import ColumnAggType
 
 from .datatype import (
     LARGEINT, HLL, BITMAP, PERCENTILE, ARRAY, MAP, STRUCT,
-    DATE
+    DATE, STRING
 )
 from . import reflection as _reflection
 from .sql.ddl import CreateView, DropView, AlterView, CreateMaterializedView, DropMaterializedView
 from .sql.schema import View
 from .reflection import ReflectionViewInfo, StarRocksInspector, ReflectionViewDefaults
 from typing import List, Optional, Any, Dict
-from .params import TableInfoKey, TableInfoKeyWithPrefix, ColumnAggInfoKeyWithPrefix
+from .params import ColumnSROptionsKey, TableInfoKey, TableInfoKeyWithPrefix, ColumnAggInfoKeyWithPrefix
 
 # Register the compiler methods
 # The @compiles decorator is the public API for registering new SQL constructs.
@@ -91,6 +91,7 @@ ischema_names = {
     # === String ===
     "varchar": VARCHAR,
     "char": CHAR,
+    "string": STRING,
     "json": JSON,
     # === Date and time ===
     "date": DATE,
@@ -131,6 +132,15 @@ class StarRocksTypeCompiler(MySQLTypeCompiler):
 
     def visit_LARGEINT(self, type_, **kw):
         return "LARGEINT"
+
+    def visit_STRING(self, type_, **kw):
+        return "STRING"
+
+    def visit_BINARY(self, type_, **kw):
+        return "BINARY"
+
+    def visit_VARBINARY(self, type_, **kw):
+        return "VARBINARY"
 
     def visit_ARRAY(self, type_, **kw):
         """Compiles the ARRAY type into the correct StarRocks syntax."""
@@ -297,7 +307,7 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
             key_column_names: The list of key column names from the kwarg.
         """
         key_cols_from_table = []
-        
+
         # Separate table columns into key and value lists
         for col in table.columns:
             # Note: value columns are any columns not in the key list.
@@ -433,7 +443,7 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
         # name, type, others of a column for the output colspec
         _, idx_type = 0, 1
 
-        # name and type 
+        # name and type
         colspec: list[str] = [
             self.preparer.format_column(column),
             self.dialect.type_compiler.process(
@@ -694,9 +704,6 @@ class StarRocksDialect(MySQLDialect_pymysql):
         self.server_version_info = server_version_info
         return server_version_info
 
-    def _strip_identifier_backticks(self, identifier: str) -> str:
-        return identifier.strip().strip('`')
-
     @util.memoized_property
     def _tabledef_parser(self) -> _reflection.StarRocksTableDefinitionParser:
         """return the StarRocksTableDefinitionParser, generate if needed.
@@ -716,7 +723,7 @@ class StarRocksDialect(MySQLDialect_pymysql):
 
         st: str = dedent(f"""
             SELECT *
-            FROM information_schema.{inf_sch_table} 
+            FROM information_schema.{inf_sch_table}
             WHERE {" AND ".join([f"{k} = '{escape_single_quote(v)}'"
                                  for k, v in kwargs.items()])}
         """)
@@ -757,6 +764,8 @@ class StarRocksDialect(MySQLDialect_pymysql):
             table_schema=schema,
             table_name=table_name,
         )
+        if not table_rows:
+            raise exc.NoSuchTableError(table_name)
         if len(table_rows) > 1:
             raise exc.InvalidRequestError(
                 f"Multiple tables found with name {table_name} in schema {schema}"
@@ -769,7 +778,7 @@ class StarRocksDialect(MySQLDialect_pymysql):
             table_schema=schema,
             table_name=table_name,
         )
-        if len(table_rows) > 1:
+        if len(table_config_rows) > 1:
             raise exc.InvalidRequestError(
                 f"Multiple tables found with name {table_name} in schema {schema}"
             )
@@ -859,7 +868,7 @@ class StarRocksDialect(MySQLDialect_pymysql):
                 index_d["type"] = flavor
 
             if dialect_options:
-                index_d["dialect_options"] = dialect_options
+                index_d[ColumnSROptionsKey] = dialect_options
 
             indexes.append(index_d)
         return indexes
@@ -905,17 +914,11 @@ class StarRocksDialect(MySQLDialect_pymysql):
                 table_schema=schema,
             )
             for row in rows:
-                info = {
-                    "name": row.TABLE_NAME,
-                    "definition": row.VIEW_DEFINITION,
-                    "comment": "",
-                    "security": row.SECURITY_TYPE,
-                }
                 rv = ReflectionViewDefaults.apply(
-                    name=info["name"],
-                    definition=self._strip_identifier_backticks(info["definition"]),
-                    comment=info["comment"],
-                    security=info["security"],
+                    name=row.TABLE_NAME,
+                    definition=row.VIEW_DEFINITION,
+                    comment="",
+                    security=row.SECURITY_TYPE,
                 )
                 results[(schema, rv.name)] = rv
             return results
@@ -925,7 +928,7 @@ class StarRocksDialect(MySQLDialect_pymysql):
     @reflection.cache
     def _get_view_info(
         self, connection: Connection, view_name: str, schema: Optional[str] = None, **kwargs: Any
-    ) -> Optional[Dict[str, Any]]:
+    ) -> Optional["ReflectionViewInfo"]:
         """Gets all information about a view.
 
         Note: comment is currently not fetched from information_schema and defaults to empty.
@@ -939,18 +942,18 @@ class StarRocksDialect(MySQLDialect_pymysql):
                 table_schema=schema,
                 table_name=view_name,
             )[0]
-            info = {
-                "name": view_details.TABLE_NAME,
-                "definition": view_details.VIEW_DEFINITION,
-                # comment intentionally defaulted; not queried for now
-                "comment": "",
-                "security": view_details.SECURITY_TYPE,
-            }
-            self.logger.debug(
-                "_get_view_info fetched: schema=%s name=%s security=%s",
-                schema, info["name"], info["security"]
+            rv = ReflectionViewInfo(
+                name=view_details.TABLE_NAME,
+                definition=view_details.VIEW_DEFINITION,
+                # TODO: comment is not queried for now, it's not in information_schema.views
+                comment="",
+                security=view_details.SECURITY_TYPE.upper(),
             )
-            return info
+            # self.logger.debug(
+            #     "_get_view_info fetched: schema=%s, name=%s, security=%s, definition=(%s)",
+            #     schema, rv.name, rv.security, rv.definition
+            # )
+            return rv
         except Exception:
             return None
 
@@ -961,22 +964,11 @@ class StarRocksDialect(MySQLDialect_pymysql):
         view_info = self._get_view_info(connection, view_name, schema, **kwargs)
         if not view_info:
             return None
-
-        # Apply defaults and normalization
-        name = view_info["name"]
-        definition = self._strip_identifier_backticks(view_info["definition"])
-        comment = (view_info.get("comment") or "")
-        security = (view_info.get("security") or "").upper()
         self.logger.debug(
-            "get_view normalized: schema=%s name=%s security=%s",
-            schema, name, security
+            "get_view normalized: schema=%s, name=%s, security=%s, definition=(%s)",
+            schema, view_info.name, view_info.security, view_info.definition
         )
-        return ReflectionViewDefaults.apply(
-            name=name,
-            definition=definition,
-            comment=comment,
-            security=security,
-        )
+        return ReflectionViewDefaults.apply_info(view_info)
 
     def get_view_definition(
         self, connection: Connection, view_name: str, schema: Optional[str] = None, **kwargs: Any

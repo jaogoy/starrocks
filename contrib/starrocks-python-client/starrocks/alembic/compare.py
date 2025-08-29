@@ -1,14 +1,20 @@
 import re
 import logging
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 from alembic.autogenerate import comparators
 from alembic.autogenerate.api import AutogenContext
-from alembic.operations.ops import UpgradeOps
+from alembic.operations.ops import AlterColumnOp, UpgradeOps
+from sqlalchemy import Column, quoted_name
 from sqlalchemy.engine.reflection import Inspector
 from sqlalchemy.sql.schema import Table
 
-from starrocks.params import SRKwargsPrefix, TableInfoKey
+from starrocks.params import (
+    SRKwargsPrefix,
+    TableInfoKeyWithPrefix,
+    ColumnAggInfoKey,
+    ColumnAggInfoKeyWithPrefix,
+)
 from starrocks.sql.schema import MaterializedView, View
 from starrocks.reflection import ReflectionViewInfo
 
@@ -89,6 +95,7 @@ def autogen_for_views(
         for schema in schemas
     }
 
+    logger.debug(f"_compare_views: conn_views: ({conn_views}), metadata_views: ({metadata_views})")
     _compare_views(conn_views, metadata_views, autogen_context, upgrade_ops)
 
 
@@ -104,7 +111,15 @@ def _compare_views(
     # Find new views to create
     for schema, view_name in sorted(metadata_views.keys() - conn_views):
         view: View = metadata_views[(schema, view_name)]
-        upgrade_ops.ops.append(CreateViewOp(view.name, view.definition, schema=schema, security=view.security, comment=view.comment))
+        upgrade_ops.ops.append(
+            CreateViewOp(
+                view.name,
+                view.definition,
+                schema=schema,
+                security=view.security,
+                comment=view.comment,
+            )
+        )
 
     # Find old views to drop
     for schema, view_name in sorted(conn_views - metadata_views.keys()):
@@ -126,7 +141,7 @@ def _compare_views(
         view_info: Optional[ReflectionViewInfo] = inspector.get_view(view_name, schema=schema)
         if not view_info:
             continue
-            
+
         conn_view = View(
             name=view_info.name,
             definition=view_info.definition,
@@ -152,6 +167,7 @@ def _compare_views(
             conn_view,
             metadata_view,
         )
+
 
 @comparators.dispatch_for("view")
 def compare_view(
@@ -185,14 +201,16 @@ def compare_view(
 
     if comment_changed:
         logger.warning(
-            "StarRocks does not support altering view comments via ALTER VIEW; comment change detected for %s.%s and will be ignored",
+            "StarRocks does not support altering view comments via ALTER VIEW; "
+            "comment change detected for %s.%s and will be ignored",
             schema or autogen_context.dialect.default_schema_name,
             view_name,
         )
 
     if security_changed:
         logger.warning(
-            "StarRocks does not support altering view security via ALTER VIEW; security change detected for %s.%s and will be ignored",
+            "StarRocks does not support altering view security via ALTER VIEW; "
+            "security change detected for %s.%s and will be ignored",
             schema or autogen_context.dialect.default_schema_name,
             view_name,
         )
@@ -216,6 +234,7 @@ def compare_view(
 # ==============================================================================
 # Materialized View Comparison
 # ==============================================================================
+
 
 @comparators.dispatch_for("schema")
 def autogen_for_materialized_views(
@@ -280,6 +299,7 @@ def _compare_materialized_views(
             conn_mv,
             metadata_mv,
         )
+
 
 @comparators.dispatch_for("materialized_view")
 def _compare_one_mv(

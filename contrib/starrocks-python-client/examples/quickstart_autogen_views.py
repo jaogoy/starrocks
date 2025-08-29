@@ -10,7 +10,6 @@ from alembic.runtime.migration import MigrationContext
 from alembic.autogenerate import api
 from alembic.operations import Operations
 from starrocks.sql.schema import View
-from starrocks.alembic.starrocks import StarrocksImpl  # ensure impl is imported
 import os
 
 
@@ -43,5 +42,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
-
