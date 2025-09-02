@@ -1,0 +1,1194 @@
+import pytest
+from alembic.autogenerate.api import AutogenContext
+from unittest.mock import Mock, PropertyMock
+
+from starrocks.alembic.compare import compare_starrocks_table
+from starrocks.params import TableInfoKeyWithPrefix
+from starrocks.defaults import TableReflectionDefaults
+
+
+LOG_ATTRIBUTE_NEED_SPECIFIED = "Please specify this attribute explicitly"
+LOG_NO_DEFAULT_VALUE = "but no default is defined in TableReflectionDefaults"
+LOG_ALTER_AUTO_GENERATED = "An ALTER TABLE SET operation will be generated"
+LOG_NO_ALERT_AUTO_GENERATED = "No ALTER TABLE SET operation will be generated"
+
+
+class TestRealTableObjects:
+    """Tests using real SQLAlchemy Table objects (without database connection).
+
+    Other test cases in this file, like TestEngineChanges, are using Mock objects
+    """
+
+    def test_real_table_schema_diff(self):
+        """Test real table schema diff generation with actual Table objects."""
+        from sqlalchemy import MetaData, Table, Column, Integer, String
+        from alembic.autogenerate.api import AutogenContext
+        from unittest.mock import Mock
+
+        autogen_context = Mock(spec=AutogenContext)
+        autogen_context.dialect.name = "starrocks"
+
+        # Create real metadata and table objects
+        metadata_old = MetaData()
+        metadata_new = MetaData()
+
+        # Table as it exists in database (reflected)
+        conn_table = Table(
+            'users', metadata_old,
+            Column('id', Integer),
+            Column('name', String(50)),
+            starrocks_DISTRIBUTED_BY='HASH(id) BUCKETS 8',
+            starrocks_PROPERTIES={'replication_num': '2'},
+            schema='test_db'
+        )
+
+        # Table as defined in new metadata (target state)
+        meta_table = Table(
+            'users', metadata_new,
+            Column('id', Integer),
+            Column('name', String(50)),
+            starrocks_DISTRIBUTED_BY='HASH(id, name) BUCKETS 16',
+            starrocks_ORDER_BY='id, name',
+            starrocks_PROPERTIES={'replication_num': '3', 'storage_medium': 'SSD'},
+            schema='test_db'
+        )
+
+        # Test the comparison
+        result = compare_starrocks_table(autogen_context, conn_table, meta_table)
+
+        # Should detect multiple changes
+        assert len(result) == 3  # distribution, properties, order_by
+
+        from starrocks.alembic.ops import AlterTablePropertiesOp, AlterTableDistributionOp, AlterTableOrderOp
+        op_types = [type(op) for op in result]
+        assert AlterTablePropertiesOp in op_types
+        assert AlterTableDistributionOp in op_types
+        assert AlterTableOrderOp in op_types
+
+        # Verify specific operation details
+        for op in result:
+            assert op.table_name == 'users'
+            assert op.schema == 'test_db'
+
+            if isinstance(op, AlterTableDistributionOp):
+                assert op.distributed_by == 'HASH(id, name)'
+                assert op.buckets == 16
+            elif isinstance(op, AlterTableOrderOp):
+                assert op.order_by == 'id, name'
+            elif isinstance(op, AlterTablePropertiesOp):
+                assert op.properties == {'replication_num': '3', 'storage_medium': 'SSD'}
+
+    def test_real_table_no_changes(self):
+        """Test that identical real tables produce no operations."""
+        from sqlalchemy import MetaData, Table, Column, Integer, String
+        from alembic.autogenerate.api import AutogenContext
+        from unittest.mock import Mock
+        
+        autogen_context = Mock(spec=AutogenContext)
+        autogen_context.dialect.name = "starrocks"
+        
+        # Use separate MetaData for each table to avoid conflicts
+        metadata_conn = MetaData()
+        metadata_new = MetaData()
+        
+        # Create identical table objects
+        table_kwargs = {
+            'starrocks_ENGINE': 'OLAP',
+            'starrocks_DISTRIBUTED_BY': 'HASH(id) BUCKETS 8',
+            'starrocks_PROPERTIES': {'replication_num': '3'},
+            'schema': 'test_db'
+        }
+        
+        conn_table = Table(
+            'users', metadata_conn,
+            Column('id', Integer),
+            Column('name', String(50)),
+            **table_kwargs
+        )
+
+        meta_table_kwargs = {
+            'starrocks_KEY': TableReflectionDefaults.DEFAULT_KEY,
+            'starrocks_DISTRIBUTED_BY': 'HASH(`id`)  BUCKETS   8',
+            'schema': 'test_db'
+        }
+        
+        meta_table = Table(
+            'users', metadata_new,
+            Column('id', Integer), 
+            Column('name', String(50)),
+            **meta_table_kwargs
+        )
+
+        result = compare_starrocks_table(autogen_context, conn_table, meta_table)
+
+        # No changes should be detected
+        assert result == []
+
+    def test_real_table_unsupported_engine_change(self):
+        """Test unsupported ENGINE change using real Table objects."""
+        from sqlalchemy import MetaData, Table, Column, Integer
+        from alembic.autogenerate.api import AutogenContext
+        from unittest.mock import Mock
+
+        autogen_context = Mock(spec=AutogenContext)
+        autogen_context.dialect.name = "starrocks"
+
+        metadata_old = MetaData()
+        metadata_new = MetaData()
+
+        conn_table = Table(
+            'users', metadata_old,
+            Column('id', Integer),
+            starrocks_ENGINE='OLAP',
+            schema='test_db'
+        )
+
+        meta_table = Table(
+            'users', metadata_new,
+            Column('id', Integer),
+            starrocks_ENGINE='MYSQL',
+            schema='test_db'
+        )
+
+        with pytest.raises(NotImplementedError) as exc_info:
+            compare_starrocks_table(autogen_context, conn_table, meta_table)
+        assert "StarRocks does not support 'ALTER TABLE ENGINE'" in str(exc_info.value)
+
+    def test_real_table_unsupported_key_change(self):
+        """Test unsupported KEY change using real Table objects."""
+        from sqlalchemy import MetaData, Table, Column, Integer
+        from alembic.autogenerate.api import AutogenContext
+        from unittest.mock import Mock
+
+        autogen_context = Mock(spec=AutogenContext)
+        autogen_context.dialect.name = "starrocks"
+
+        metadata_old = MetaData()
+        metadata_new = MetaData()
+
+        conn_table = Table(
+            'users', metadata_old,
+            Column('id', Integer),
+            starrocks_KEY='DUPLICATE KEY',
+            schema='test_db'
+        )
+
+        meta_table = Table(
+            'users', metadata_new,
+            Column('id', Integer),
+            starrocks_KEY='PRIMARY KEY',
+            schema='test_db'
+        )
+
+        with pytest.raises(NotImplementedError) as exc_info:
+            compare_starrocks_table(autogen_context, conn_table, meta_table)
+        assert "StarRocks does not support 'ALTER TABLE KEY'" in str(exc_info.value)
+
+    def test_real_table_unsupported_partition_change(self):
+        """Test unsupported PARTITION_BY change using real Table objects."""
+        from sqlalchemy import MetaData, Table, Column, Integer, String
+        from alembic.autogenerate.api import AutogenContext
+        from unittest.mock import Mock
+
+        autogen_context = Mock(spec=AutogenContext)
+        autogen_context.dialect.name = "starrocks"
+
+        metadata_old = MetaData()
+        metadata_new = MetaData()
+
+        conn_table = Table(
+            'users', metadata_old,
+            Column('id', Integer),
+            Column('name', String(50)),
+            starrocks_PARTITION_BY='RANGE(id)',
+            schema='test_db'
+        )
+
+        meta_table = Table(
+            'users', metadata_new,
+            Column('id', Integer),
+            Column('name', String(50)),
+            starrocks_PARTITION_BY='LIST(name)',
+            schema='test_db'
+        )
+
+        with pytest.raises(NotImplementedError) as exc_info:
+            compare_starrocks_table(autogen_context, conn_table, meta_table)
+        assert "StarRocks does not support 'ALTER TABLE PARTITION BY'" in str(exc_info.value)
+
+
+# Test cases organized by StarRocks grammar order:
+# engine → key → comment → partition → distribution → order by → properties
+class TestEngineChanges:
+    """Test ENGINE attribute changes (ALTER ENGINE not supported, but changes are detected)."""
+
+    def test_engine_none_to_default_value(self):
+        """Test ENGINE from None to default value ('OLAP')."""
+        autogen_context = Mock(spec=AutogenContext)
+        autogen_context.dialect.name = "starrocks"
+
+        conn_table = Mock()  # Table reflected from SR database, no ENGINE explicitly set, implies default OLAP
+        type(conn_table).name = PropertyMock(return_value="test_table")
+        type(conn_table).schema = PropertyMock(return_value="test_db")
+        conn_table.kwargs = {TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(id)"}
+
+        meta_table = Mock(  # Metadata explicitly sets default OLAP
+            kwargs={
+                TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(id)",
+                TableInfoKeyWithPrefix.ENGINE: TableReflectionDefaults.DEFAULT_ENGINE,
+            }
+        )
+
+        result = compare_starrocks_table(autogen_context, conn_table, meta_table)
+        assert len(result) == 0
+
+    def test_engine_none_to_non_default_value(self):
+        """Test ENGINE from None (implicit default OLAP) to a non-default value (MYSQL)."""
+        autogen_context = Mock(spec=AutogenContext)
+        autogen_context.dialect.name = "starrocks"
+
+        conn_table = Mock()  # Table reflected from SR database, no ENGINE explicitly set, implies default OLAP
+        type(conn_table).name = PropertyMock(return_value="test_table")
+        type(conn_table).schema = PropertyMock(return_value="test_db")
+        conn_table.kwargs = {TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(id)"}
+
+        meta_table = Mock(  # Metadata sets a non-default ENGINE
+            kwargs={
+                TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(id)",
+                TableInfoKeyWithPrefix.ENGINE: "MYSQL",
+            }
+        )
+
+        with pytest.raises(NotImplementedError) as exc_info:
+            compare_starrocks_table(autogen_context, conn_table, meta_table)
+        assert "StarRocks does not support 'ALTER TABLE ENGINE'" in str(exc_info.value)
+
+    def test_engine_default_to_none(self):
+        """Test ENGINE from default value ('OLAP') to None."""
+        autogen_context = Mock(spec=AutogenContext)
+        autogen_context.dialect.name = "starrocks"
+
+        conn_table = Mock()  # Table reflected from SR database, explicitly OLAP
+        type(conn_table).name = PropertyMock(return_value="test_table")
+        type(conn_table).schema = PropertyMock(return_value="test_db")
+        conn_table.kwargs = {
+            TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(id)",
+            TableInfoKeyWithPrefix.ENGINE: "OLAP",
+        }
+
+        meta_table = Mock(  # Metadata does not specify ENGINE, implies default OLAP
+            kwargs={
+                TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(id)",
+                # No ENGINE specified
+            }
+        )
+
+        result = compare_starrocks_table(autogen_context, conn_table, meta_table)
+        assert len(result) == 0
+
+    def test_engine_non_default_to_none(self):
+        """Test ENGINE from a non-default value ('MYSQL') to None."""
+        autogen_context = Mock(spec=AutogenContext)
+        autogen_context.dialect.name = "starrocks"
+
+        conn_table = Mock()  # Table reflected from SR database, explicitly MYSQL
+        type(conn_table).name = PropertyMock(return_value="test_table")
+        type(conn_table).schema = PropertyMock(return_value="test_db")
+        conn_table.kwargs = {
+            TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(id)",
+            TableInfoKeyWithPrefix.ENGINE: "MYSQL",
+        }
+
+        meta_table = Mock(  # Metadata does not specify ENGINE
+            kwargs={
+                TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(id)",
+            }
+        )
+
+        with pytest.raises(NotImplementedError) as exc_info:
+            compare_starrocks_table(autogen_context, conn_table, meta_table)
+        assert LOG_ATTRIBUTE_NEED_SPECIFIED in str(exc_info.value)
+
+    def test_engine_change(self):
+        """Test ENGINE value changes ('OLAP' to 'MYSQL')."""
+        autogen_context = Mock(spec=AutogenContext)
+        autogen_context.dialect.name = "starrocks"
+
+        conn_table = Mock()
+        type(conn_table).name = PropertyMock(return_value="test_table")
+        type(conn_table).schema = PropertyMock(return_value="test_db")
+        conn_table.kwargs = {
+            TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(id)",
+            TableInfoKeyWithPrefix.ENGINE: "OLAP",
+        }
+
+        meta_table = Mock(
+            kwargs={
+                TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(id)",
+                TableInfoKeyWithPrefix.ENGINE: "MYSQL",
+            }
+        )
+
+        # ENGINE changes are not supported in StarRocks, should raise NotImplementedError
+        with pytest.raises(NotImplementedError) as exc_info:
+            compare_starrocks_table(autogen_context, conn_table, meta_table)
+        assert "StarRocks does not support 'ALTER TABLE ENGINE'" in str(exc_info.value)
+
+    @pytest.mark.parametrize("conn_engine, meta_engine", [
+        ("OLAP", "OLAP"),
+        ("OLAP", "olap"),
+        ("olap", "OLAP"),
+    ])
+    def test_engine_no_change(self, conn_engine, meta_engine):
+        """Test ENGINE with no change."""
+        autogen_context = Mock(spec=AutogenContext)
+        autogen_context.dialect.name = "starrocks"
+
+        conn_table = Mock()
+        type(conn_table).name = PropertyMock(return_value="test_table")
+        type(conn_table).schema = PropertyMock(return_value="test_db")
+        conn_table.kwargs = {
+            TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(id)",
+            TableInfoKeyWithPrefix.ENGINE: conn_engine,
+        }
+
+        meta_table = Mock(
+            kwargs={
+                TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(id)",
+                TableInfoKeyWithPrefix.ENGINE: meta_engine,
+            }
+        )
+
+        result = compare_starrocks_table(autogen_context, conn_table, meta_table)
+        assert len(result) == 0
+
+    def test_engine_none_to_none(self):
+        """Test ENGINE from None to None (no change)."""
+        autogen_context = Mock(spec=AutogenContext)
+        autogen_context.dialect.name = "starrocks"
+
+        conn_table = Mock()  # No ENGINE explicitly set in database
+        type(conn_table).name = PropertyMock(return_value="test_table")
+        type(conn_table).schema = PropertyMock(return_value="test_db")
+        conn_table.kwargs = {TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(id)"}
+
+        meta_table = Mock(  # No ENGINE specified in metadata
+            kwargs={TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(id)"}
+        )
+
+        result = compare_starrocks_table(autogen_context, conn_table, meta_table)
+        assert len(result) == 0
+
+
+class TestKeyChanges:
+    """Test KEY attribute changes (ALTER KEY not supported, but changes are detected)."""
+
+    def test_key_none_to_default_value(self):
+        """Test KEY from None (implicit default DUPLICATE KEY) to default value ('DUPLICATE KEY')."""
+        autogen_context = Mock(spec=AutogenContext)
+        autogen_context.dialect.name = "starrocks"
+
+        conn_table = Mock()  # Table reflected from SR database, no KEY explicitly set, implies default DUPLICATE KEY
+        type(conn_table).name = PropertyMock(return_value="test_table")
+        type(conn_table).schema = PropertyMock(return_value="test_db")
+        conn_table.kwargs = {TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(id)"}
+
+        meta_table = Mock(  # Metadata explicitly sets default DUPLICATE KEY
+            kwargs={
+                TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(id)",
+                TableInfoKeyWithPrefix.KEY: TableReflectionDefaults.DEFAULT_KEY,
+            }
+        )
+
+        result = compare_starrocks_table(autogen_context, conn_table, meta_table)
+        assert len(result) == 0
+
+    def test_key_none_to_non_default_value(self):
+        """Test KEY from None (implicit default DUPLICATE KEY) to a non-default value (PRIMARY KEY)."""
+        autogen_context = Mock(spec=AutogenContext)
+        autogen_context.dialect.name = "starrocks"
+
+        conn_table = Mock()  # Table reflected from SR database, no KEY explicitly set, implies default DUPLICATE KEY
+        type(conn_table).name = PropertyMock(return_value="test_table")
+        type(conn_table).schema = PropertyMock(return_value="test_db")
+        conn_table.kwargs = {TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(id)"}
+
+        meta_table = Mock(  # Metadata sets a non-default KEY
+            kwargs={
+                TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(id)",
+                TableInfoKeyWithPrefix.KEY: "PRIMARY KEY",
+            }
+        )
+
+        with pytest.raises(NotImplementedError) as exc_info:
+            compare_starrocks_table(autogen_context, conn_table, meta_table)
+        assert "StarRocks does not support 'ALTER TABLE KEY'" in str(exc_info.value)
+
+    def test_key_default_to_none(self):
+        """Test KEY from default value ('DUPLICATE KEY') to None."""
+        autogen_context = Mock(spec=AutogenContext)
+        autogen_context.dialect.name = "starrocks"
+
+        conn_table = Mock()  # Table reflected from SR database, explicitly DUPLICATE KEY
+        type(conn_table).name = PropertyMock(return_value="test_table")
+        type(conn_table).schema = PropertyMock(return_value="test_db")
+        conn_table.kwargs = {
+            TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(id)",
+            TableInfoKeyWithPrefix.KEY: TableReflectionDefaults.DEFAULT_KEY,
+        }
+
+        meta_table = Mock(  # Metadata does not specify KEY, implies default DUPLICATE KEY
+            kwargs={
+                TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(id)",
+            }
+        )
+
+        result = compare_starrocks_table(autogen_context, conn_table, meta_table)
+
+        # No change detected since meta doesn't specify KEY
+        assert len(result) == 0
+
+    def test_key_non_default_to_none(self):
+        """Test KEY from a non-default value ('PRIMARY KEY') to None."""
+        autogen_context = Mock(spec=AutogenContext)
+        autogen_context.dialect.name = "starrocks"
+
+        conn_table = Mock()  # Table reflected from SR database, explicitly PRIMARY KEY
+        type(conn_table).name = PropertyMock(return_value="test_table")
+        type(conn_table).schema = PropertyMock(return_value="test_db")
+        conn_table.kwargs = {
+            TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(id)",
+            TableInfoKeyWithPrefix.KEY: "PRIMARY KEY",
+        }
+
+        meta_table = Mock(  # Metadata does not specify KEY
+            kwargs={
+                TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(id)",
+            }
+        )
+
+        with pytest.raises(NotImplementedError) as exc_info:
+            compare_starrocks_table(autogen_context, conn_table, meta_table)
+        
+        assert LOG_ATTRIBUTE_NEED_SPECIFIED in str(exc_info.value)
+
+    def test_key_change(self):
+        """Test KEY value changes ('DUPLICATE KEY' to 'UNIQUE KEY')."""
+        autogen_context = Mock(spec=AutogenContext)
+        autogen_context.dialect.name = "starrocks"
+
+        conn_table = Mock()
+        type(conn_table).name = PropertyMock(return_value="test_table")
+        type(conn_table).schema = PropertyMock(return_value="test_db")
+        conn_table.kwargs = {
+            TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(id)",
+            TableInfoKeyWithPrefix.KEY: "DUPLICATE KEY",
+        }
+
+        meta_table = Mock(
+            kwargs={
+                TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(id)",
+                TableInfoKeyWithPrefix.KEY: "UNIQUE KEY",
+            }
+        )
+
+        with pytest.raises(NotImplementedError) as exc_info:
+            compare_starrocks_table(autogen_context, conn_table, meta_table)
+        assert "StarRocks does not support 'ALTER TABLE KEY'" in str(exc_info.value)
+
+    @pytest.mark.parametrize("conn_key, meta_key", [
+        ("UNIQUE KEY", "UNIQUE KEY"),
+        ("UNIQUE KEY", "unique key"),
+        ("unique key", "UNIQUE KEY"),
+        ("DUPLICATE KEY(id, name)", "duplicate key(id, name)"),
+    ])
+    def test_key_no_change(self, conn_key, meta_key):
+        """Test KEY with no change."""
+        autogen_context = Mock(spec=AutogenContext)
+        autogen_context.dialect.name = "starrocks"
+
+        conn_table = Mock()
+        type(conn_table).name = PropertyMock(return_value="test_table")
+        type(conn_table).schema = PropertyMock(return_value="test_db")
+        conn_table.kwargs = {
+            TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(id)",
+            TableInfoKeyWithPrefix.KEY: conn_key,
+        }
+
+        meta_table = Mock(
+            kwargs={
+                TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(id)",
+                TableInfoKeyWithPrefix.KEY: meta_key,
+            }
+        )
+
+        result = compare_starrocks_table(autogen_context, conn_table, meta_table)
+        assert len(result) == 0
+
+    def test_key_none_to_none(self):
+        """Test KEY from None to None (no change)."""
+        autogen_context = Mock(spec=AutogenContext)
+        autogen_context.dialect.name = "starrocks"
+
+        conn_table = Mock()  # No KEY explicitly set in database
+        type(conn_table).name = PropertyMock(return_value="test_table")
+        type(conn_table).schema = PropertyMock(return_value="test_db")
+        conn_table.kwargs = {TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(id)"}
+
+        meta_table = Mock(  # No KEY specified in metadata
+            kwargs={TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(id)"}
+        )
+
+        result = compare_starrocks_table(autogen_context, conn_table, meta_table)
+        assert len(result) == 0
+
+
+class TestCommentChanges:
+    """Test COMMENT attribute changes (handled by Alembic's built-in logic)."""
+    pass  # Comment comparison is handled by Alembic's _compare_table_comment
+
+
+class TestPartitionChanges:
+    """Test PARTITION_BY attribute changes (ALTER PARTITION not supported, but changes are detected)."""
+
+    def test_partition_none_to_value(self):
+        """Test PARTITION_BY from None to value."""
+        autogen_context = Mock(spec=AutogenContext)
+        autogen_context.dialect.name = "starrocks"
+
+        conn_table = Mock()  # No PARTITION_BY explicitly set in database
+        type(conn_table).name = PropertyMock(return_value="test_table")
+        type(conn_table).schema = PropertyMock(return_value="test_db")
+        conn_table.kwargs = {TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(id)"}
+
+        meta_table = Mock(  # Metadata sets PARTITION_BY
+            kwargs={
+                TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(id)",
+                TableInfoKeyWithPrefix.PARTITION_BY: "RANGE(date_col)",
+            }
+        )
+
+        with pytest.raises(NotImplementedError) as exc_info:
+            compare_starrocks_table(autogen_context, conn_table, meta_table)
+        assert "StarRocks does not support 'ALTER TABLE PARTITION BY'" in str(exc_info.value)
+
+    def test_partition_value_to_none(self):
+        """Test PARTITION_BY from value to None."""
+        autogen_context = Mock(spec=AutogenContext)
+        autogen_context.dialect.name = "starrocks"
+
+        conn_table = Mock()  # Database has PARTITION_BY set
+        type(conn_table).name = PropertyMock(return_value="test_table")
+        type(conn_table).schema = PropertyMock(return_value="test_db")
+        conn_table.kwargs = {
+            TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(id)",
+            TableInfoKeyWithPrefix.PARTITION_BY: "RANGE(date_col)",
+        }
+
+        meta_table = Mock(  # Metadata does not specify PARTITION_BY
+            kwargs={
+                TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(id)",
+            }
+        )
+
+        # TODO: it's not supported to alter table partition by now
+        compare_starrocks_table(autogen_context, conn_table, meta_table)
+        # with pytest.raises(NotImplementedError) as exc_info:
+        #     compare_starrocks_table(autogen_context, conn_table, meta_table)
+        # assert LOG_ATTRIBUTE_NEED_SPECIFIED in str(exc_info.value)
+
+    def test_partition_change(self):
+        """Test PARTITION_BY value changes."""
+        autogen_context = Mock(spec=AutogenContext)
+        autogen_context.dialect.name = "starrocks"
+
+        conn_table = Mock()
+        type(conn_table).name = PropertyMock(return_value="test_table")
+        type(conn_table).schema = PropertyMock(return_value="test_db")
+        conn_table.kwargs = {
+            TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(id)",
+            TableInfoKeyWithPrefix.PARTITION_BY: "RANGE(date_col)",
+        }
+
+        meta_table = Mock(
+            kwargs={
+                TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(id)",
+                TableInfoKeyWithPrefix.PARTITION_BY: "LIST(category)",
+            }
+        )
+
+        with pytest.raises(NotImplementedError) as exc_info:
+            compare_starrocks_table(autogen_context, conn_table, meta_table)
+        assert "StarRocks does not support 'ALTER TABLE PARTITION BY'" in str(exc_info.value)
+
+    @pytest.mark.parametrize("conn_partition, meta_partition", [
+        ("RANGE(`date_col`)", "RANGE(date_col)"),
+        ("RANGE( `date_col` )", "RANGE(date_col)"),
+        ("RANGE(date_col)", "RANGE(date_col)"),
+        ("RANGE( `date_col` , `id`)", "RANGE(date_col,id)"),
+        ("range(`DATE_COL`)", "RANGE(date_col)"),
+    ])
+    def test_partition_no_change(self, conn_partition, meta_partition):
+        """Test PARTITION_BY no change."""
+        autogen_context = Mock(spec=AutogenContext)
+        autogen_context.dialect.name = "starrocks"
+
+        conn_table = Mock()
+        type(conn_table).name = PropertyMock(return_value="test_table")
+        type(conn_table).schema = PropertyMock(return_value="test_db")
+        conn_table.kwargs = {
+            TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(id)",
+            TableInfoKeyWithPrefix.PARTITION_BY: conn_partition,
+        }
+
+        meta_table = Mock(
+            kwargs={
+                TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(id)",
+                TableInfoKeyWithPrefix.PARTITION_BY: meta_partition,
+            }
+        )
+
+        result = compare_starrocks_table(autogen_context, conn_table, meta_table)
+        assert len(result) == 0
+
+    def test_partition_none_to_none(self):
+        """Test PARTITION_BY from None to None (no change)."""
+        autogen_context = Mock(spec=AutogenContext)
+        autogen_context.dialect.name = "starrocks"
+
+        conn_table = Mock()  # No PARTITION_BY explicitly set in database
+        type(conn_table).name = PropertyMock(return_value="test_table")
+        type(conn_table).schema = PropertyMock(return_value="test_db")
+        conn_table.kwargs = {TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(id)"}
+
+        meta_table = Mock(  # No PARTITION_BY specified in metadata
+            kwargs={TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(id)"}
+        )
+
+        result = compare_starrocks_table(autogen_context, conn_table, meta_table)
+        assert len(result) == 0
+
+
+class TestDistributionChanges:
+    """Test DISTRIBUTED_BY attribute changes."""
+
+    def test_distribution_none_to_default_value(self):
+        """Test DISTRIBUTED_BY from None to default value ('RANDOM')."""
+        autogen_context = Mock(spec=AutogenContext)
+        autogen_context.dialect.name = "starrocks"
+
+        conn_table = Mock()  # No DISTRIBUTED_BY explicitly set in database, implies default RANDOM
+        type(conn_table).name = PropertyMock(return_value="test_table")
+        type(conn_table).schema = PropertyMock(return_value="test_db")
+        conn_table.kwargs = {}
+
+        meta_table = Mock(  # Metadata explicitly sets default RANDOM
+            kwargs={
+                TableInfoKeyWithPrefix.DISTRIBUTED_BY: TableReflectionDefaults.DEFAULT_DISTRIBUTED_BY,
+            }
+        )
+
+        ops = compare_starrocks_table(autogen_context, conn_table, meta_table)
+        assert len(ops) == 0
+
+    def test_distribution_none_to_non_default_value(self):
+        """Test DISTRIBUTED_BY from None (implicit default RANDOM) to a non-default value."""
+        autogen_context = Mock(spec=AutogenContext)
+        autogen_context.dialect.name = "starrocks"
+
+        conn_table = Mock()  # No DISTRIBUTED_BY explicitly set in database
+        type(conn_table).name = PropertyMock(return_value="test_table")
+        type(conn_table).schema = PropertyMock(return_value="test_db")
+        conn_table.kwargs = {}
+
+        meta_table = Mock(  # Metadata sets a non-default DISTRIBUTED_BY
+            kwargs={
+                TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(id) BUCKETS 8",
+            }
+        )
+
+        result = compare_starrocks_table(autogen_context, conn_table, meta_table)
+        assert len(result) == 1
+        from starrocks.alembic.ops import AlterTableDistributionOp
+        assert isinstance(result[0], AlterTableDistributionOp)
+        assert result[0].distributed_by == "HASH(id)"
+        assert result[0].buckets == 8
+
+    def test_distribution_default_to_none(self):
+        """Test DISTRIBUTED_BY from default value ('RANDOM') to None."""
+        autogen_context = Mock(spec=AutogenContext)
+        autogen_context.dialect.name = "starrocks"
+
+        conn_table = Mock()  # Database explicitly has default RANDOM
+        type(conn_table).name = PropertyMock(return_value="test_table")
+        type(conn_table).schema = PropertyMock(return_value="test_db")
+        conn_table.kwargs = {TableInfoKeyWithPrefix.DISTRIBUTED_BY: TableReflectionDefaults.DEFAULT_DISTRIBUTED_BY}
+
+        meta_table = Mock(  # Metadata does not specify DISTRIBUTED_BY
+            kwargs={}
+        )
+
+        ops = compare_starrocks_table(autogen_context, conn_table, meta_table)
+        assert len(ops) == 0
+
+    def test_distribution_non_default_to_none(self):
+        """Test DISTRIBUTED_BY from a non-default value to None."""
+        autogen_context = Mock(spec=AutogenContext)
+        autogen_context.dialect.name = "starrocks"
+
+        conn_table = Mock()  # Database has non-default DISTRIBUTED_BY
+        type(conn_table).name = PropertyMock(return_value="test_table")
+        type(conn_table).schema = PropertyMock(return_value="test_db")
+        conn_table.kwargs = {TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(id) BUCKETS 8"}
+
+        meta_table = Mock(  # Metadata does not specify DISTRIBUTED_BY
+            kwargs={}
+        )
+
+        with pytest.raises(NotImplementedError) as exc_info:
+            compare_starrocks_table(autogen_context, conn_table, meta_table)
+        assert LOG_ATTRIBUTE_NEED_SPECIFIED in str(exc_info.value)
+
+    def test_distribution_change(self):
+        """Test DISTRIBUTED_BY value changes."""
+        autogen_context = Mock(spec=AutogenContext)
+        autogen_context.dialect.name = "starrocks"
+
+        conn_table = Mock()
+        type(conn_table).name = PropertyMock(return_value="test_table")
+        type(conn_table).schema = PropertyMock(return_value="test_db")
+        conn_table.kwargs = {TableInfoKeyWithPrefix.DISTRIBUTED_BY: "RANDOM"}
+
+        meta_table = Mock(
+            kwargs={
+                TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(user_id) BUCKETS 16",
+            }
+        )
+
+        result = compare_starrocks_table(autogen_context, conn_table, meta_table)
+        assert len(result) == 1
+        from starrocks.alembic.ops import AlterTableDistributionOp
+        assert isinstance(result[0], AlterTableDistributionOp)
+        assert result[0].distributed_by == "HASH(user_id)"
+        assert result[0].buckets == 16
+
+    @pytest.mark.parametrize("conn_distribution, meta_distribution", [
+        ("HASH(id) BUCKETS 8", "HASH(`id`)  BUCKETS   8"),
+        ("HASH(`id`)", "HASH(id)"),
+        ("HASH( `id` , `name`)", "HASH(id,name)"),
+        ("RANDOM", "RANDOM"),
+        ("hash(`ID`)", "HASH(id)"),
+    ])
+    def test_distribution_no_change(self, conn_distribution, meta_distribution):
+        """Test DISTRIBUTED_BY with no change."""
+        autogen_context = Mock(spec=AutogenContext)
+        autogen_context.dialect.name = "starrocks"
+
+        conn_table = Mock()
+        type(conn_table).name = PropertyMock(return_value="test_table")
+        type(conn_table).schema = PropertyMock(return_value="test_db")
+        conn_table.kwargs = {TableInfoKeyWithPrefix.DISTRIBUTED_BY: conn_distribution}
+
+        meta_table = Mock(
+            kwargs={
+                TableInfoKeyWithPrefix.DISTRIBUTED_BY: meta_distribution,
+            }
+        )
+
+        result = compare_starrocks_table(autogen_context, conn_table, meta_table)
+        assert len(result) == 0
+
+    def test_distribution_none_to_none(self):
+        """Test DISTRIBUTED_BY from None to None (no change)."""
+        autogen_context = Mock(spec=AutogenContext)
+        autogen_context.dialect.name = "starrocks"
+
+        conn_table = Mock()  # No DISTRIBUTED_BY explicitly set in database
+        type(conn_table).name = PropertyMock(return_value="test_table")
+        type(conn_table).schema = PropertyMock(return_value="test_db")
+        conn_table.kwargs = {}
+
+        meta_table = Mock(  # No DISTRIBUTED_BY specified in metadata
+            kwargs={}
+        )
+
+        result = compare_starrocks_table(autogen_context, conn_table, meta_table)
+        assert len(result) == 0
+
+
+class TestOrderByChanges:
+    """Test ORDER_BY attribute changes."""
+
+    def test_order_by_none_to_value(self):
+        """Test ORDER_BY from None to value.
+        Impossible in reality, because ORDER BY is always set when the table is created.
+        """
+        autogen_context = Mock(spec=AutogenContext)
+        autogen_context.dialect.name = "starrocks"
+
+        conn_table = Mock()  # No ORDER_BY explicitly set in database
+        type(conn_table).name = PropertyMock(return_value="test_table")
+        type(conn_table).schema = PropertyMock(return_value="test_db")
+        conn_table.kwargs = {TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(id)"}
+
+        meta_table = Mock(  # Metadata does not specify ORDER_BY (implying default)
+            kwargs={
+                TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(id)",
+                TableInfoKeyWithPrefix.ORDER_BY: "id, c2, c3"
+            }
+        )
+
+        compare_starrocks_table(autogen_context, conn_table, meta_table)
+        # assert len(result) == 0  # impossible in reality
+
+    def test_order_by_default_to_none(self):
+        """Test ORDER_BY from implicit default to None (no op).
+        Won't change without explicitly setting ORDER BY.
+        """
+        autogen_context = Mock(spec=AutogenContext)
+        autogen_context.dialect.name = "starrocks"
+
+        conn_table = Mock()
+        type(conn_table).name = PropertyMock(return_value="test_table")
+        type(conn_table).schema = PropertyMock(return_value="test_db")
+        conn_table.kwargs = {
+            TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(id)",
+            TableInfoKeyWithPrefix.ORDER_BY: "id, c2"
+        }
+
+        meta_table = Mock(  # Metadata does not specify ORDER_BY, implies empty string
+            kwargs={TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(id)"}
+        )
+
+        result = compare_starrocks_table(autogen_context, conn_table, meta_table)
+        assert len(result) == 0
+
+    def test_order_by_change(self):
+        """Test ORDER_BY value changes."""
+        autogen_context = Mock(spec=AutogenContext)
+        autogen_context.dialect.name = "starrocks"
+
+        conn_table = Mock()
+        type(conn_table).name = PropertyMock(return_value="test_table")
+        type(conn_table).schema = PropertyMock(return_value="test_db")
+        conn_table.kwargs = {
+            TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(id)",
+            TableInfoKeyWithPrefix.ORDER_BY: "id, col3",
+        }
+
+        meta_table = Mock(
+            kwargs={
+                TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(id)",
+                TableInfoKeyWithPrefix.ORDER_BY: "col2, col3"
+            }
+        )
+
+        result = compare_starrocks_table(autogen_context, conn_table, meta_table)
+        assert len(result) == 1
+        from starrocks.alembic.ops import AlterTableOrderOp
+        assert isinstance(result[0], AlterTableOrderOp)
+        assert result[0].order_by == "col2, col3"
+
+    @pytest.mark.parametrize("conn_order_by, meta_order_by", [
+        ("id", "`id`"),
+        ("`id`, `name`", "id, name"),
+        (" id , name ", "id,name"),
+        (["id", "name"], "id, name"),
+        ("ID", "id"),
+    ])
+    def test_order_by_no_change(self, conn_order_by, meta_order_by):
+        """Test ORDER_BY no change."""
+        autogen_context = Mock(spec=AutogenContext)
+        autogen_context.dialect.name = "starrocks"
+
+        conn_table = Mock()
+        type(conn_table).name = PropertyMock(return_value="test_table")
+        type(conn_table).schema = PropertyMock(return_value="test_db")
+        conn_table.kwargs = {
+            TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(id)",
+            TableInfoKeyWithPrefix.ORDER_BY: conn_order_by,
+        }
+
+        meta_table = Mock(
+            kwargs={
+                TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(id)",
+                TableInfoKeyWithPrefix.ORDER_BY: meta_order_by,
+            }
+        )
+
+        result = compare_starrocks_table(autogen_context, conn_table, meta_table)
+        assert len(result) == 0
+
+
+class TestPropertiesChanges:
+    """Test PROPERTIES attribute changes."""
+
+    @pytest.mark.parametrize("prop_key, default_value, non_default_value", [
+        ("replication_num", "3", "2"),
+        ("storage_medium", "HDD", "SSD"),
+    ])
+    def test_properties_none_to_default_value(self, prop_key, default_value, non_default_value):
+        """Test PROPERTIES from None (implicit default) to explicit default value."""
+        autogen_context = Mock(spec=AutogenContext)
+        autogen_context.dialect.name = "starrocks"
+
+        conn_table = Mock(kwargs={})  # No properties in DB, implies default
+        meta_table = Mock(kwargs={TableInfoKeyWithPrefix.PROPERTIES: {prop_key: default_value}})
+        
+        # Our `_compare_properties` detects this as a change because metadata *explicitly* provides a value
+        # even if it's the default. This is consistent with explicit metadata definitions.
+        result = compare_starrocks_table(autogen_context, conn_table, meta_table)
+        assert len(result) == 1
+        from starrocks.alembic.ops import AlterTablePropertiesOp
+        assert isinstance(result[0], AlterTablePropertiesOp)
+        assert result[0].properties == {prop_key: default_value}
+
+    @pytest.mark.parametrize("prop_key, default_value, non_default_value", [
+        ("replication_num", "3", "2"),
+        ("storage_medium", "HDD", "SSD"),
+    ])
+    def test_properties_none_to_non_default_value(self, prop_key, default_value, non_default_value):
+        """Test PROPERTIES from None (implicit default) to explicit non-default value."""
+        autogen_context = Mock(spec=AutogenContext)
+        autogen_context.dialect.name = "starrocks"
+
+        conn_table = Mock(kwargs={})  # No properties in DB, implies default
+        meta_table = Mock(kwargs={TableInfoKeyWithPrefix.PROPERTIES: {prop_key: non_default_value}})
+
+        result = compare_starrocks_table(autogen_context, conn_table, meta_table)
+        assert len(result) == 1
+        from starrocks.alembic.ops import AlterTablePropertiesOp
+        assert isinstance(result[0], AlterTablePropertiesOp)
+        assert result[0].properties == {prop_key: non_default_value}
+
+    @pytest.mark.parametrize("prop_key, default_value, non_default_value", [
+        ("replication_num", "3", "2"),
+    ])
+    def test_properties_default_to_none(self, prop_key, default_value, non_default_value):
+        """Test PROPERTIES from explicit default value to None (no op)."""
+        autogen_context = Mock(spec=AutogenContext)
+        autogen_context.dialect.name = "starrocks"
+
+        conn_table = Mock(kwargs={TableInfoKeyWithPrefix.PROPERTIES: {prop_key: default_value}})  # DB has explicit default
+        meta_table = Mock(kwargs={})  # Metadata has no properties
+
+        # If DB has default value and metadata has no value, it's considered no change
+        result = compare_starrocks_table(autogen_context, conn_table, meta_table)
+        assert len(result) == 0
+    
+    @pytest.mark.parametrize("prop_key, default_value, non_default_value", [
+        ("storage_medium", "HDD", "SSD"),
+    ])
+    def test_properties_none_default_to_none(self, prop_key, default_value, non_default_value, caplog):
+        """Test PROPERTIES from implicit default (default value is set to None) to None (no op)."""
+        autogen_context = Mock(spec=AutogenContext)
+        autogen_context.dialect.name = "starrocks"
+        caplog.set_level("INFO")
+
+        conn_table = Mock(kwargs={TableInfoKeyWithPrefix.PROPERTIES: {prop_key: default_value}})  # DB has explicit default
+        meta_table = Mock(kwargs={})  # Metadata has no properties
+
+        # If DB has default value and metadata has no value, it's considered no change
+        result = compare_starrocks_table(autogen_context, conn_table, meta_table)
+        assert len(result) == 0
+        assert LOG_NO_DEFAULT_VALUE in caplog.text
+        assert LOG_NO_ALERT_AUTO_GENERATED in caplog.text
+
+    @pytest.mark.parametrize("prop_key, default_value, non_default_value", [
+        ("replication_num", "3", "2"),
+        # ("storage_medium", "HDD", "SSD"),  # can't know the change for there is no default in TableReflectionDefaults
+    ])
+    def test_properties_non_default_to_none(self, prop_key, default_value, non_default_value, caplog):
+        """Test PROPERTIES from explicit non-default value to None (generate ALTER to reset to default)."""
+        autogen_context = Mock(spec=AutogenContext)
+        autogen_context.dialect.name = "starrocks"
+        caplog.set_level("WARNING")
+
+        conn_table = Mock(kwargs={TableInfoKeyWithPrefix.PROPERTIES: {prop_key: non_default_value}})  # DB has non-default value
+        meta_table = Mock(kwargs={})  # Metadata has no properties
+
+        # Should generate an ALTER to effectively reset to default (meta_properties will include the default for this prop)
+        result = compare_starrocks_table(autogen_context, conn_table, meta_table)
+        assert len(result) == 1
+        from starrocks.alembic.ops import AlterTablePropertiesOp
+        assert isinstance(result[0], AlterTablePropertiesOp)
+        assert result[0].properties == {prop_key: default_value}
+        assert len(caplog.records) == 1
+        assert LOG_ALTER_AUTO_GENERATED in caplog.text
+
+    @pytest.mark.parametrize("prop_key, value1, value2", [
+        ("replication_num", "2", "1"),
+        ("storage_medium", "SSD", "HDD"),
+    ])
+    def test_properties_change(self, prop_key, value1, value2):
+        """Test PROPERTIES value change."""
+        autogen_context = Mock(spec=AutogenContext)
+        autogen_context.dialect.name = "starrocks"
+
+        conn_table = Mock(kwargs={TableInfoKeyWithPrefix.PROPERTIES: {prop_key: value1}})  # DB has value1
+        meta_table = Mock(kwargs={TableInfoKeyWithPrefix.PROPERTIES: {prop_key: value2}})  # Metadata has value2
+
+        result = compare_starrocks_table(autogen_context, conn_table, meta_table)
+        assert len(result) == 1
+        from starrocks.alembic.ops import AlterTablePropertiesOp
+        assert isinstance(result[0], AlterTablePropertiesOp)
+        assert result[0].properties == {prop_key: value2}
+
+    @pytest.mark.parametrize("prop_key, value", [
+        ("replication_num", "3"),
+        ("storage_medium", "HDD"),
+    ])
+    def test_properties_no_change(self, prop_key, value):
+        """Test PROPERTIES no change."""
+        autogen_context = Mock(spec=AutogenContext)
+        autogen_context.dialect.name = "starrocks"
+
+        conn_table = Mock(kwargs={TableInfoKeyWithPrefix.PROPERTIES: {prop_key: value}})  # DB has value
+        meta_table = Mock(kwargs={TableInfoKeyWithPrefix.PROPERTIES: {prop_key: value}})  # Metadata has same value
+
+        result = compare_starrocks_table(autogen_context, conn_table, meta_table)
+        assert len(result) == 0
+
+    @pytest.mark.parametrize("conn_props, meta_props", [
+        ({"replication_num": "3"}, {"replication_num": "3"}),
+        ({"replication_num": "3"}, {"REPLICATION_NUM": "3"}),
+        ({"REPLICATION_NUM": "3"}, {"replication_num": "3"}),
+    ])
+    def test_properties_no_change2(self, conn_props, meta_props):
+        """Test PROPERTIES no change."""
+        autogen_context = Mock(spec=AutogenContext)
+        autogen_context.dialect.name = "starrocks"
+
+        conn_table = Mock(kwargs={TableInfoKeyWithPrefix.PROPERTIES: conn_props})  # DB has value
+        meta_table = Mock(kwargs={TableInfoKeyWithPrefix.PROPERTIES: meta_props})  # Metadata has same value
+
+        result = compare_starrocks_table(autogen_context, conn_table, meta_table)
+        assert len(result) == 0
+
+    def test_properties_none_to_none(self):
+        """Test PROPERTIES from None to None (no change)."""
+        autogen_context = Mock(spec=AutogenContext)
+        autogen_context.dialect.name = "starrocks"
+
+        conn_table = Mock(kwargs={})  # No properties in DB
+        meta_table = Mock(kwargs={})  # No properties in metadata
+
+        result = compare_starrocks_table(autogen_context, conn_table, meta_table)
+        assert len(result) == 0
+
+    def test_properties_multiple_changes(self):
+        """Test multiple property changes simultaneously."""
+        autogen_context = Mock(spec=AutogenContext)
+        autogen_context.dialect.name = "starrocks"
+
+        conn_props = {"replication_num": "3", "storage_medium": "HDD", "dynamic_partition.enable": "true"}
+        meta_props = {"replication_num": "2", "storage_medium": "SSD", "dynamic_partition.enable": "false"}
+
+        conn_table = Mock(kwargs={TableInfoKeyWithPrefix.PROPERTIES: conn_props})
+        meta_table = Mock(kwargs={TableInfoKeyWithPrefix.PROPERTIES: meta_props})
+
+        result = compare_starrocks_table(autogen_context, conn_table, meta_table)
+        assert len(result) == 1
+        from starrocks.alembic.ops import AlterTablePropertiesOp
+        assert isinstance(result[0], AlterTablePropertiesOp)
+        assert result[0].properties == meta_props
+
+
+class TestComplexScenarios:
+    """Test complex scenarios with multiple attribute changes."""
+
+    def test_multiple_attributes_change_simultaneously(self):
+        """Test multiple StarRocks table options changes at once."""
+        autogen_context = Mock(spec=AutogenContext)
+        autogen_context.dialect = Mock()
+        autogen_context.dialect.name = "starrocks"
+
+        conn_table = Mock()
+        type(conn_table).name = PropertyMock(return_value="test_table")
+        type(conn_table).schema = PropertyMock(return_value="test_schema")
+        conn_table.kwargs = {
+            # No ENGINE - avoid the exception for this test
+            TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(id) BUCKETS 8",
+            TableInfoKeyWithPrefix.ORDER_BY: "id",
+            TableInfoKeyWithPrefix.PROPERTIES: {"replication_num": "2"},
+        }
+
+        meta_table = Mock(
+            kwargs={
+                # No ENGINE - focus on testing other attributes
+                TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(user_id) BUCKETS 16",  # Changed
+                TableInfoKeyWithPrefix.ORDER_BY: "created_at, id",  # Changed
+                TableInfoKeyWithPrefix.PROPERTIES: {"replication_num": "3", "storage_medium": "SSD"},  # Changed
+            }
+        )
+
+        result = compare_starrocks_table(autogen_context, conn_table, meta_table)
+
+        # Should generate 3 operations (all detectable changes, excluding ENGINE and PARTITION_BY)
+        assert len(result) == 3
+
+        from starrocks.alembic.ops import (
+            AlterTableDistributionOp,
+            AlterTableOrderOp, AlterTablePropertiesOp
+        )
+        op_types = [type(op) for op in result]
+        assert AlterTableDistributionOp in op_types
+        assert AlterTableOrderOp in op_types
+        assert AlterTablePropertiesOp in op_types
+
+        for op in result:
+            if isinstance(op, AlterTableDistributionOp):
+                assert op.distributed_by == "HASH(user_id)"
+                assert op.buckets == 16
+            elif isinstance(op, AlterTableOrderOp):
+                assert op.order_by == "created_at, id"
+            elif isinstance(op, AlterTablePropertiesOp):
+                assert op.properties == {"replication_num": "3", "storage_medium": "SSD"}
+
+    def test_only_supported_operations_detected(self):
+        """Test that only supported operations are detected and generated."""
+        autogen_context = Mock(spec=AutogenContext)
+        autogen_context.dialect = Mock()
+        autogen_context.dialect.name = "starrocks"
+
+        conn_table = Mock()
+        type(conn_table).name = PropertyMock(return_value="test_table")
+        type(conn_table).schema = PropertyMock(return_value="test_schema")
+        conn_table.kwargs = {
+            # No ENGINE - test only supported operations
+            TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(id)",
+            TableInfoKeyWithPrefix.PROPERTIES: {"replication_num": "1"},
+        }
+
+        meta_table = Mock(
+            kwargs={
+                # No ENGINE - focus on supported operations
+                TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(user_id) BUCKETS 8",  # Supported
+                TableInfoKeyWithPrefix.PROPERTIES: {"replication_num": "3", "storage_medium": "SSD"},  # Supported
+            }
+        )
+
+        result = compare_starrocks_table(autogen_context, conn_table, meta_table)
+
+        # Should generate 2 operations (both supported)
+        assert len(result) == 2
+
+        from starrocks.alembic.ops import AlterTableDistributionOp, AlterTablePropertiesOp
+        op_types = [type(op) for op in result]
+        assert AlterTableDistributionOp in op_types  # Supported
+        assert AlterTablePropertiesOp in op_types  # Supported
+
+    def test_non_starrocks_dialect_ignored(self):
+        """Test that non-StarRocks dialects are ignored."""
+        autogen_context = Mock(spec=AutogenContext)
+        autogen_context.dialect = Mock()
+        autogen_context.dialect.name = "mysql"  # Not StarRocks
+
+        conn_table = Mock()
+        meta_table = Mock()
+
+        result = compare_starrocks_table(autogen_context, conn_table, meta_table)
+
+        # Should return empty list for non-StarRocks dialects
+        assert len(result) == 0
+

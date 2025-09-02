@@ -1,6 +1,7 @@
 import pytest
 
-from starrocks.reflection import ReflectionViewDefaults, ReflectionViewInfo
+from starrocks.reflection_info import ReflectionViewInfo
+from starrocks.defaults import ReflectionViewDefaults
 from starrocks.types import ViewSecurityType
 
 

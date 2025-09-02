@@ -63,5 +63,3 @@ class TestAutogenerateMV:
         eq_(create_op.__class__.__name__, 'CreateMaterializedViewOp')
         eq_(create_op.view_name, 'my_test_mv')
         eq_(create_op.definition, 'SELECT 2')
-
-

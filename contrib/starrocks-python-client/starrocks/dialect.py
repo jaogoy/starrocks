@@ -15,9 +15,12 @@
 import re
 from textwrap import dedent
 import logging
+from typing import Any, Dict, Optional
 
 from sqlalchemy import Connection, exc, schema as sa_schema, util, log, text, Row
+
 from sqlalchemy.dialects.mysql.pymysql import MySQLDialect_pymysql
+
 from sqlalchemy.dialects.mysql.base import (
     MySQLDDLCompiler,
     MySQLTypeCompiler,
@@ -33,17 +36,19 @@ from sqlalchemy.dialects.mysql.types import (
 )
 from sqlalchemy.dialects.mysql.json import JSON
 
-from starrocks.types import ColumnAggType
+from starrocks.types import ColumnAggType, SystemRunMode
 
 from .datatype import (
     LARGEINT, HLL, BITMAP, PERCENTILE, ARRAY, MAP, STRUCT,
-    DATE, STRING
+    DATE, STRING, logger
 )
 from . import reflection as _reflection
 from .sql.ddl import CreateView, DropView, AlterView, CreateMaterializedView, DropMaterializedView
 from .sql.schema import View
-from .reflection import ReflectionViewInfo, StarRocksInspector, ReflectionViewDefaults
-from typing import List, Optional, Any, Dict
+from .reflection import StarRocksInspector
+from .reflection_info import ReflectionViewInfo
+from .defaults import ReflectionViewDefaults
+from typing import List
 from .params import ColumnSROptionsKey, TableInfoKey, TableInfoKeyWithPrefix, ColumnAggInfoKeyWithPrefix
 
 # Register the compiler methods
@@ -679,6 +684,12 @@ class StarRocksDialect(MySQLDialect_pymysql):
     def __init__(self, *args, **kwargs):
         super(StarRocksDialect, self).__init__(*args, **kwargs)
         self.logger = logging.getLogger(f"{__name__}.StarRocksDialect")
+        self.run_mode: Optional[str] = None
+
+    def initialize(self, connection: Connection):
+        super().initialize(connection)
+        if self.run_mode is None:
+            self.run_mode = self._get_run_mode(connection)
 
     def _get_server_version_info(self, connection: Connection) -> tuple[int, ...]:
         # get database server version info explicitly over the wire
@@ -704,6 +715,33 @@ class StarRocksDialect(MySQLDialect_pymysql):
         self.server_version_info = server_version_info
         return server_version_info
 
+    def _get_run_mode(self, connection: Connection) -> str:
+        """Get the StarRocks system run_mode (shared_data or shared_nothing).
+        
+        Args:
+            connection: The SQLAlchemy connection object.
+            
+        Returns:
+            The run_mode as a string ('shared_data' or 'shared_nothing').
+            
+        Raises:
+            exc.DBAPIError: If the query fails.
+        """
+        try:
+            result = connection.execute(text("ADMIN SHOW FRONTEND CONFIG LIKE 'run_mode'"))
+            rows = result.fetchall()
+            if rows and len(rows) > 0:
+                # The result format is: | Key | AliasNames | Value | Type | IsMutable | Comment |
+                return rows[0][2]  # Value column
+            else:
+                # Default to shared_nothing if not found
+                return SystemRunMode.SHARED_NOTHING
+        except exc.DBAPIError as e:
+            # Log the error but don't fail the entire operation
+            self.logger.warning(f"Failed to get run_mode: {e}")
+            # Default to shared_nothing if query fails
+            return SystemRunMode.SHARED_NOTHING
+
     @util.memoized_property
     def _tabledef_parser(self) -> _reflection.StarRocksTableDefinitionParser:
         """return the StarRocksTableDefinitionParser, generate if needed.
@@ -720,7 +758,7 @@ class StarRocksDialect(MySQLDialect_pymysql):
     ) -> list[_DecodingRow]:
         def escape_single_quote(s: str) -> str:
             return s.replace("'", "\\'")
-
+        
         st: str = dedent(f"""
             SELECT *
             FROM information_schema.{inf_sch_table}
@@ -746,7 +784,7 @@ class StarRocksDialect(MySQLDialect_pymysql):
                 f"Empty response for query: '{st}'"
             )
         return rows
-
+    
     @reflection.cache
     def _setup_parser(
         self, connection: Connection, table_name: str, schema: Optional[str] = None, **kwargs: Any
@@ -770,6 +808,7 @@ class StarRocksDialect(MySQLDialect_pymysql):
             raise exc.InvalidRequestError(
                 f"Multiple tables found with name {table_name} in schema {schema}"
             )
+        logger.debug(f"reflected table info for table: {table_name}, info: {dict(table_rows[0])}")
 
         table_config_rows: list[_DecodingRow] = self._read_from_information_schema(
             connection=connection,
@@ -782,6 +821,7 @@ class StarRocksDialect(MySQLDialect_pymysql):
             raise exc.InvalidRequestError(
                 f"Multiple tables found with name {table_name} in schema {schema}"
             )
+        logger.debug(f"reflected table config for table: {table_name}, table_config: {dict(table_config_rows[0])}")
 
         column_rows: list[_DecodingRow] = self._read_from_information_schema(
             connection=connection,
@@ -791,8 +831,73 @@ class StarRocksDialect(MySQLDialect_pymysql):
             table_name=table_name,
         )
 
-        return parser.parse(table=table_rows[0], table_config=table_config_rows[0], columns=column_rows,
-                            charset=charset)
+        # Get aggregate info from `SHOW FULL COLUMNS`
+        full_column_rows: list[Row] = self._get_show_full_columns(
+            connection, table_name=table_name, schema=schema
+        )
+        column_2_agg_type: dict[str, str] = {
+            row.Field: row.Extra.upper()
+            for row in full_column_rows
+        }
+
+        return parser.parse(
+            table=table_rows[0],
+            table_config=table_config_rows[0],
+            columns=column_rows,
+            agg_types=column_2_agg_type,
+            charset=charset,
+        )
+
+
+    def _get_show_full_columns(
+        self, connection: Connection, table_name: str, schema: Optional[str] = None, **kwargs: Any
+    ) -> list[Row]:
+        """Run SHOW FULL COLUMNS to get detailed column information.
+        Currently, it's only used to get aggregate type of columns.
+        Other column info are still mainly extracted from information_schema.columns.
+        """
+        full_table_name = self._get_quote_full_table_name(table_name, schema)
+        try:
+            return connection.execute(text(f"SHOW FULL COLUMNS FROM {full_table_name}")).fetchall()
+        except exc.DBAPIError as e:
+            # 1146: Table ... doesn't exist
+            if e.orig and e.orig.args[0] == 1146:
+                raise exc.NoSuchTableError(table_name) from e
+            raise
+
+    def _get_table_options(
+        self, connection: Connection, table_name: str, schema: Optional[str] = None, **kwargs: Any
+    ) -> dict[str, Any]:
+        """
+        Retrieves table options from the StarRocks information_schema.tables_config table.
+
+        Args:
+            connection: The SQLAlchemy connection object.
+            table_name: The name of the table.
+            schema: The schema name.
+            **kwargs: Additional keyword arguments.
+
+        Returns:
+            A dictionary of table options.
+        """
+
+        try:
+            rows = self._read_from_information_schema(
+                connection,
+                "tables_config",
+                table_schema=schema,
+                table_name=table_name,
+            )
+            if not rows:
+                return {}
+            return {
+                row.Key.upper(): row.Value
+                for row in rows
+            }
+        except exc.DBAPIError as e:
+            if self._extract_error_code(e.orig) == 1146:
+                raise exc.NoSuchTableError(table_name) from e
+            raise
 
     def _show_table_indexes(
         self, connection: Connection, table: sa_schema.Table, charset: Optional[str] = None,
@@ -1023,3 +1128,6 @@ class StarRocksDialect(MySQLDialect_pymysql):
             return rows[0].VIEW_DEFINITION
         except Exception:
             return None
+
+
+

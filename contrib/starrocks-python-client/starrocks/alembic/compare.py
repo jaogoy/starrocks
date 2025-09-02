@@ -1,4 +1,3 @@
-import re
 import logging
 from functools import wraps
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
@@ -20,7 +19,8 @@ from starrocks.params import (
     TableInfoKey,
 )
 
-from starrocks.reflection import ReflectionViewInfo
+from starrocks.reflection import StarRocksTableDefinitionParser
+from starrocks.reflection_info import ReflectionViewInfo
 from starrocks.sql.schema import MaterializedView, View
 
 from starrocks.alembic.ops import (
@@ -30,9 +30,9 @@ from starrocks.alembic.ops import (
     CreateMaterializedViewOp,
     DropMaterializedViewOp,
 )
-from starrocks.utils import CaseInsensitiveDict
+from starrocks.utils import CaseInsensitiveDict, TableAttributeNormalizer
 
-logger = logging.getLogger("starrocks.alembic.compare")
+logger = logging.getLogger(__name__)
 
 
 def comparators_dispatch_for_starrocks(dispatch_type: str):
@@ -73,51 +73,6 @@ def comparators_dispatch_for_starrocks(dispatch_type: str):
         return comparators.dispatch_for(dispatch_type)(wrapper)
     
     return decorator
-
-
-def _strip_identifier_backticks(sql_text: str) -> str:
-    """Remove MySQL-style identifier quotes (`) while preserving string literals."""
-    in_single_quote = False
-    escaped = False
-    out: list[str] = []
-    for ch in sql_text:
-        if in_single_quote:
-            out.append(ch)
-            if escaped:
-                escaped = False
-            elif ch == "\\":
-                escaped = True
-            elif ch == "'":
-                in_single_quote = False
-            continue
-        if ch == "'":
-            in_single_quote = True
-            out.append(ch)
-        elif ch == "`":
-            # drop identifier quote
-            continue
-        else:
-            out.append(ch)
-    return "".join(out)
-
-
-def normalize_sql(sql_text: Optional[str]) -> Optional[str]:
-    """A normalizer for SQL text for diffing.
-
-    - Strips single-line comments
-    - Removes identifier backticks outside string literals
-    - Collapses whitespace
-    - Lowercases
-    """
-    if sql_text is None:
-        return None
-    # Remove comments
-    sql_text = re.sub(r"--.*?(?:\n|$)", " ", sql_text)
-    # Remove identifier quotes but keep quotes inside strings
-    sql_text = _strip_identifier_backticks(sql_text)
-    # Collapse whitespace and convert to lowercase
-    sql_text = re.sub(r"\s+", " ", sql_text).strip().lower()
-    return sql_text
 
 
 # ==============================================================================
@@ -205,8 +160,8 @@ def _compare_views(
             "Comparing view %s.%s: conn(def)=%r meta(def)=%r",
             schema or autogen_context.dialect.default_schema_name,
             view_name,
-            normalize_sql(conn_view.definition),
-            normalize_sql(metadata_view.definition),
+            TableAttributeNormalizer.normalize_sql(conn_view.definition),
+            TableAttributeNormalizer.normalize_sql(metadata_view.definition),
         )
 
         comparators.dispatch("view")(
@@ -233,8 +188,8 @@ def compare_view(
     
     Check for changes in view definition, comment and security attributes.
     """
-    conn_def_norm: Optional[str] = normalize_sql(conn_view.definition)
-    metadata_def_norm: Optional[str] = normalize_sql(metadata_view.definition)
+    conn_def_norm: Optional[str] = TableAttributeNormalizer.normalize_sql(conn_view.definition)
+    metadata_def_norm: Optional[str] = TableAttributeNormalizer.normalize_sql(metadata_view.definition)
     definition_changed = conn_def_norm != metadata_def_norm
     # Comment/security normalized for comparison
     conn_view_comment = (conn_view.comment or "").strip()
@@ -284,6 +239,7 @@ def compare_view(
             view_name,
         )
     # else: only comment/security changed -> no operation generated
+
 
 # ==============================================================================
 # Materialized View Comparison
@@ -408,16 +364,14 @@ def compare_starrocks_table(
     Raises:
         NotImplementedError: If a change is detected that is not supported in StarRocks.
     """
+    # Get the system run_mode for proper default value comparison
+    run_mode = autogen_context.dialect.run_mode
+    logger.debug(f"System run_mode for table comparison: {run_mode}")
+
     conn_table_attributes = _extract_starrocks_dialect_attributes(conn_table.kwargs)
     meta_table_attributes = _extract_starrocks_dialect_attributes(metadata_table.kwargs)
 
     ops_list = []
-
-    # Table info for passing to comparison functions
-    table_info = {
-        'name': conn_table.name,
-        'schema': conn_table.schema,
-    }
 
     logger.debug(
         "StarRocks-specific attributes comparison for table '%s': "
@@ -432,122 +386,262 @@ def compare_starrocks_table(
     # Compare each type of table attribute using dedicated functions
     # Order follows StarRocks CREATE TABLE grammar:
     #   engine -> key -> comment -> partition -> distribution -> order by -> properties
-
-    _compare_engine(conn_table_attributes, meta_table_attributes, ops_list, table_info)
-    # Note: KEY comparison not implemented yet (would be _compare_key)
+    table, schema = conn_table.name, conn_table.schema
+    _compare_engine(conn_table_attributes, meta_table_attributes, ops_list, table, schema)
+    _compare_key(conn_table_attributes, meta_table_attributes, ops_list, table, schema)
     # Note: COMMENT comparison is handled by Alembic's built-in _compare_table_comment
-    _compare_partition(conn_table_attributes, meta_table_attributes, ops_list, table_info)
-    _compare_distribution(conn_table_attributes, meta_table_attributes, ops_list, table_info)
-    _compare_order_by(conn_table_attributes, meta_table_attributes, ops_list, table_info)
-    _compare_properties(conn_table_attributes, meta_table_attributes, ops_list, table_info)
+    _compare_partition(conn_table_attributes, meta_table_attributes, ops_list, table, schema)
+    _compare_distribution(conn_table_attributes, meta_table_attributes, ops_list, table, schema)
+    _compare_order_by(conn_table_attributes, meta_table_attributes, ops_list, table, schema)
+    _compare_properties(conn_table_attributes, meta_table_attributes, ops_list, table, schema, run_mode)
 
     return ops_list
 
 
-def _compare_distribution(conn_table_options: Dict[str, Any], meta_table_options: Dict[str, Any], ops_list: List[AlterTableOp], table_info: Dict[str, Any]) -> None:
+def _compare_engine(
+    conn_table_attributes: Dict[str, Any], meta_table_attributes: Dict[str, Any],
+    ops_list: List[AlterTableOp], table_name: str, schema: Optional[str]
+) -> None:
+    """Compare engine changes and add AlterTableEngineOp if needed.
 
-def _compare_distribution(conn_table_attributes: Dict[str, Any], meta_table_attributes: Dict[str, Any], ops_list: List[AlterTableOp], table_info: Dict[str, Any]) -> None:
+    Note: StarRocks does not support ALTER TABLE ENGINE, so this will raise an error
+    if a change is detected.
+    """
+    meta_engine = meta_table_attributes.get(TableInfoKey.ENGINE)
+    conn_engine = conn_table_attributes.get(TableInfoKey.ENGINE)
+    logger.debug(f"ENGINE. meta_engine: {meta_engine}, conn_engine: {conn_engine}")
+
+    normalized_meta = TableAttributeNormalizer.normalize_engine(meta_engine)
+    # Reflected table must have a default ENGINE, so we need to normalize it
+    normalized_conn = TableReflectionDefaults.normalize_engine(conn_engine)
+
+    _compare_single_table_attribute(
+        table_name,
+        schema,
+        TableInfoKey.ENGINE,
+        normalized_conn,
+        normalized_meta,
+        default_value=TableReflectionDefaults.DEFAULT_ENGINE,
+        support_change=False  # exception handling for engine change
+    )
+
+
+def _compare_key(
+    conn_table_attributes: Dict[str, Any], meta_table_attributes: Dict[str, Any],
+    ops_list: List[AlterTableOp], table_name: str, schema: Optional[str]
+) -> None:
+    """Compare key changes and add AlterTableKeyOp if needed.
+    
+    Note: StarRocks does not support ALTER TABLE KEY, so this will raise an error
+    if a change is detected.
+    """
+    conn_key = conn_table_attributes.get(TableInfoKey.KEY)
+    meta_key = meta_table_attributes.get(TableInfoKey.KEY)
+    logger.debug(f"KEY. conn_key: {conn_key}, meta_key: {meta_key}")
+
+    # Reflected table must have a default KEY, so we need to normalize it
+    normalized_conn = TableReflectionDefaults.normalize_key(conn_key)
+    normalized_meta = TableAttributeNormalizer.normalize_key(meta_key)
+
+    _compare_single_table_attribute(
+        table_name,
+        schema,
+        TableInfoKey.KEY,
+        normalized_conn,
+        normalized_meta,
+        default_value=TableReflectionDefaults.DEFAULT_KEY,
+        support_change=False
+    )
+
+
+def _compare_partition(
+    conn_table_attributes: Dict[str, Any], meta_table_attributes: Dict[str, Any],
+    ops_list: List[AlterTableOp], table_name: str, schema: Optional[str]
+) -> None:
+    """Compare partition changes and add AlterTablePartitionOp if needed."""
+    conn_partition = conn_table_attributes.get(TableInfoKey.PARTITION_BY)
+    meta_partition = meta_table_attributes.get(TableInfoKey.PARTITION_BY)
+    logger.debug(f"PARTITION_BY. conn_partition: {conn_partition}, meta_partition: {meta_partition}")
+
+    normalized_conn = TableAttributeNormalizer.normalize_partition_string(conn_partition)
+    normalized_meta = TableAttributeNormalizer.normalize_partition_string(meta_partition)
+
+    # TODO: currently we don't support ALTER TABLE PARTITION BY, and it needs to inspect the
+    # partition info from database by using 'SHOW CREATE TABLE', but we haven't implemented it yet.
+    # so we just ignore the partition change for now.
+    if not normalized_meta:
+        return
+
+    if _compare_single_table_attribute(
+        table_name,
+        schema,
+        TableInfoKey.PARTITION_BY, 
+        normalized_conn, 
+        normalized_meta, 
+        default_value=TableReflectionDefaults.DEFAULT_PARTITION_BY,
+        support_change=False
+    ):
+        from starrocks.alembic.ops import AlterTablePartitionOp
+        ops_list.append(
+            AlterTablePartitionOp(
+                table_name,
+                meta_partition,
+                schema=schema,
+            )
+        )
+
+
+def _compare_distribution(
+    conn_table_attributes: Dict[str, Any], meta_table_attributes: Dict[str, Any],
+    ops_list: List[AlterTableOp], table_name: str, schema: Optional[str]
+) -> None:
     """Compare distribution changes and add AlterTableDistributionOp if needed."""
-    meta_distribution = meta_table_attributes.get(TableInfoKey.DISTRIBUTED_BY)
     conn_distribution = conn_table_attributes.get(TableInfoKey.DISTRIBUTED_BY)
+    meta_distribution = meta_table_attributes.get(TableInfoKey.DISTRIBUTED_BY)
 
     # Normalize both strings for comparison (handles backticks)
-    normalized_meta = _normalize_distribution_string(meta_distribution) if meta_distribution else None
-    normalized_conn = _normalize_distribution_string(conn_distribution) if conn_distribution else None
-    logger.debug(f"DISTRIBUTED_BY. normalized_meta: {normalized_meta}, normalized_conn: {normalized_conn}")
+    normalized_conn = TableAttributeNormalizer.normalize_distribution_string(conn_distribution)
+    normalized_meta = TableAttributeNormalizer.normalize_distribution_string(meta_distribution)
+    logger.debug(f"DISTRIBUTED_BY. normalized_conn: {normalized_conn}, normalized_meta: {normalized_meta}")
 
-    # Use generic comparison logic (no default value for distribution)
+    # Use generic comparison logic with default distribution
     if _compare_single_table_attribute(
-        table_info['name'],
-        table_info['schema'],
-        TableInfoKey.DISTRIBUTED_BY, 
-        normalized_meta, 
-        normalized_conn, 
-        default_value=None  # No standard default for distribution
+        table_name,
+        schema,
+        TableInfoKey.DISTRIBUTED_BY,
+        normalized_conn,
+        normalized_meta,
+        default_value=TableReflectionDefaults.get_default_distribution()
     ):
         from starrocks.alembic.ops import AlterTableDistributionOp
 
         # Parse distribution and buckets from original (non-normalized) string
-        distributed_by, buckets = _parse_distribution_string(meta_distribution)
+        distributed_by, buckets = StarRocksTableDefinitionParser.parse_distribution_string(meta_distribution)
 
         ops_list.append(
             AlterTableDistributionOp(
-                table_info['name'],
+                table_name,
                 distributed_by,
                 buckets=buckets,
-                schema=table_info['schema'],
+                schema=schema,
             )
         )
 
 
-def _compare_order_by(conn_table_attributes: Dict[str, Any], meta_table_attributes: Dict[str, Any], ops_list: List[AlterTableOp], table_info: Dict[str, Any]) -> None:
+def _compare_order_by(
+    conn_table_attributes: Dict[str, Any], meta_table_attributes: Dict[str, Any],
+    ops_list: List[AlterTableOp], table_name: str, schema: Optional[str]
+) -> None:
     """Compare ORDER BY changes and add AlterTableOrderOp if needed."""
-    meta_order = meta_table_attributes.get(TableInfoKey.ORDER_BY)
     conn_order = conn_table_attributes.get(TableInfoKey.ORDER_BY)
+    meta_order = meta_table_attributes.get(TableInfoKey.ORDER_BY)
 
     # Normalize both for comparison (handles backticks and list vs string)
-    normalized_meta = _normalize_order_by_string(meta_order) if meta_order else None
-    normalized_conn = _normalize_order_by_string(conn_order) if conn_order else None
-    logger.debug(f"ORDERY BY. normalized_meta: {normalized_meta}, normalized_conn: {normalized_conn}")
-    
-    # Use generic comparison logic (no default value for ORDER BY)
+    normalized_conn = TableAttributeNormalizer.normalize_order_by_string(conn_order) if conn_order else None
+    normalized_meta = TableAttributeNormalizer.normalize_order_by_string(meta_order) if meta_order else None
+    logger.debug(f"ORDERY BY. normalized_conn: {normalized_conn}, normalized_meta: {normalized_meta}")
+
+    # if ORDER BY is not set, we directly recoginize it as no change
+    if not normalized_meta:
+        return
+
+    # Use generic comparison logic with default ORDER BY
     if _compare_single_table_attribute(
-        table_info['name'],
-        table_info['schema'],
-        TableInfoKey.ORDER_BY, 
-        normalized_meta, 
-        normalized_conn, 
-        default_value=None  # No standard default for ORDER BY
+        table_name,
+        schema,
+        TableInfoKey.ORDER_BY,
+        normalized_conn,
+        normalized_meta,
+        default_value=TableReflectionDefaults.DEFAULT_ORDER_BY
     ):
         from starrocks.alembic.ops import AlterTableOrderOp
         ops_list.append(
             AlterTableOrderOp(
-                table_info['name'],
+                table_name,
                 meta_order,  # Use original format
-                schema=table_info['schema'],
+                schema=schema,
             )
         )
 
 
-def _compare_properties(conn_table_attributes: Dict[str, Any], meta_table_attributes: Dict[str, Any],
-                        ops_list: List[AlterTableOp], table_info: Dict[str, Any]) -> None:
+def _compare_properties(
+    conn_table_attributes: Dict[str, Any], meta_table_attributes: Dict[str, Any],
+    ops_list: List[AlterTableOp], table_name: str, schema: Optional[str], run_mode: str
+) -> None:
     """Compare properties changes and add AlterTablePropertiesOp if needed.
 
-    It will generate an AlterTablePropertiesOp if there are any changes in the properties.
-    Because change of any property is just a simple set, it won't trigger any data restructure.
+    - If a property is specified in metadata, it is compared with the database.
+    - If a property is NOT specified in metadata but exists in the database with a NON-DEFAULT value,
+      a change is detected.
+    - The generated operation will set all properties defined in the metadata, effectively resetting
+      any omitted, non-default properties back to their defaults in StarRocks.
     """
-    meta_properties = meta_table_attributes.get(TableInfoKey.PROPERTIES, {})
     conn_properties = conn_table_attributes.get(TableInfoKey.PROPERTIES, {})
+    meta_properties = meta_table_attributes.get(TableInfoKey.PROPERTIES, {})
 
-    # Collect all property keys that might need comparison
-    all_property_keys = set(meta_properties.keys()) | set(conn_properties.keys())
+    normalized_conn = {key.lower(): value for key, value in conn_properties.items()}
+    normalized_meta = {key.lower(): value for key, value in meta_properties.items()}
 
+    if normalized_meta == normalized_conn:
+        return
+
+    # Check for meaningful changes, ignoring defaults
     has_meaningful_change = False
+    all_keys = set(normalized_meta.keys()) | set(normalized_conn.keys())
+    for key in all_keys:
+        conn_value = normalized_conn.get(key)
+        meta_value = normalized_meta.get(key)
+        default_value = TableReflectionDefaults.get_default_properties(run_mode).get(key)
 
-    for key in all_property_keys:
-        meta_value = meta_properties.get(key)
-        conn_value = conn_properties.get(key)
-        default_value = TableReflectionDefaults.DEFAULT_PROPERTIES.get(key)
+        # Convert all to strings for comparison to avoid type issues (e.g., int vs str)
+        conn_str = str(conn_value) if conn_value is not None else None
+        meta_str = str(meta_value) if meta_value is not None else None
+        default_str = str(default_value) if default_value is not None else None
 
-        # Use generic comparison logic
-        if _compare_single_table_attribute(
-                table_info['name'],
-                table_info['schema'],
-                f"PROPERTIES.{key}",
-                str(meta_value) if meta_value is not None else None,
-                str(conn_value) if conn_value is not None else None,
-                default_value
-        ):
-            has_meaningful_change = True
-            break
+        if meta_str is not None:
+            # Case 1 & 2: meta specifies a value.
+            # Change if it differs from conn, or if conn is None.
+            if meta_str != conn_str:
+                has_meaningful_change = True
+                break
+        else:
+            # Case 3 & 4: meta does NOT specify a value.
+            # Change ONLY if conn has a NON-DEFAULT value.
+            if conn_str is not None and conn_str != default_str:
+                full_table_name = f"{schema}.{table_name}" if schema else table_name or "unknown_table"
+                # If metadata doesn't specify a property that exists in DB with a non-default value,
+                # implicitly add it to meta_properties with its default value for the ALTER operation.
+                if default_value is not None:
+                    has_meaningful_change = True
+                    normalized_meta[key] = default_value
+                    logger.warning(
+                        f"Table '{full_table_name}': Property '{key}' in database has non-default value '{conn_str}' "
+                        f"(default: '{default_str}'), but is not specified in metadata. "
+                        f"An ALTER TABLE SET operation will be generated to effectively reset it to its default. "
+                        f"Consider explicitly setting default properties in your metadata to avoid ambiguity."
+                    )
+                else:
+                    # If there's no explicit default, and meta doesn't specify, it means removal.
+                    # The current meta_properties already reflects this omission.
+                    # Add a warning for this case where no default is known.
+                    logger.info(
+                        f"Table '{full_table_name}': Property '{key}' in database has non-default value '{conn_str}', "
+                        f"but no default is defined in TableReflectionDefaults and it's not specified in metadata. "
+                        f"No ALTER TABLE SET operation will be generated automatically. "
+                        f"Please specify this property explicitly in your table definition if you want to manage it."
+                    )
+                    pass  # No change needed to meta_properties, its absence implies removal.
 
+                # has_meaningful_change is already True here
+                break
+    
     if has_meaningful_change:
         from starrocks.alembic.ops import AlterTablePropertiesOp
         ops_list.append(
             AlterTablePropertiesOp(
-                table_info['name'],
-                meta_properties,  # Use user-specified properties
-                schema=table_info['schema'],
+                table_name,
+                normalized_meta,
+                schema=schema,
             )
         )
 
@@ -556,9 +650,10 @@ def _compare_single_table_attribute(
         table_name: Optional[str],
         schema: Optional[str],
         attribute_name: str,
-        meta_value: Optional[str],
         conn_value: Optional[str],
-        default_value: Optional[str] = None
+        meta_value: Optional[str],
+        default_value: Optional[str] = None,
+        support_change: bool = True
 ) -> bool:
     """
     Generic comparison logic for a single table attribute.
@@ -567,45 +662,81 @@ def _compare_single_table_attribute(
         table_name: Table name for logging context
         schema: Schema name for logging context
         attribute_name: Name of the attribute for logging
-        meta_value: Value specified in metadata (None if not specified)
         conn_value: Value reflected from database (None if not present)
+        meta_value: Value specified in metadata (None if not specified)
         default_value: Known default value for this attribute (None if no default)
+        support_change: Whether this attribute supports ALTER operations (default: True)
 
     Returns:
         True if there's a meaningful change that requires ALTER statement
 
+    Raises:
+        NotImplementedError: If support_change=False and a change is detected
+
     Logic:
-        1. If meta specifies value != conn value -> change needed
-        2. If meta specifies value == conn value -> no change
-        3. If meta not specified and conn == default -> no change
+        1. If meta specifies value != (conn value or default value) -> change needed
+        2. If meta specifies value == (conn value or default value) -> no change
+        3. If meta not specified and (conn is None or conn == default) -> no change
         4. If meta not specified and conn != default -> log error, return False (user must decide)
     """
     # Convert values to strings for comparison (handle None gracefully)
-    meta_str = meta_value if meta_value is not None else None
     conn_str = conn_value if conn_value is not None else None
+    meta_str = meta_value if meta_value is not None else None
     default_str = default_value if default_value is not None else None
+
+    full_table_name = f"{schema}.{table_name}" if schema else table_name or "unknown_table"
+    attribute_name: str = attribute_name.upper().replace('_', ' ')
 
     if meta_str is not None:
         # Case 1 & 2: meta_table specifies this attribute
-        if meta_str != (conn_str or ''):
+        if meta_str != (conn_str or default_str):
             # Case 1: meta specified, different from conn -> has change
+            logger.debug(
+                f"Table '{full_table_name}', Attribute '{attribute_name}' "
+                f"has changed from {conn_str or '(not set)'} to {meta_str} with default value {default_str}")
+            if meta_value.lower() == (conn_str or default_str or '').lower():
+                logger.warning(
+                    f"Table '{full_table_name}': Attribute '{attribute_name}' has a case-only difference: "
+                    f"'{conn_value}' (database) vs '{meta_value}' (metadata). "
+                    f"Consider making them consistent for clarity."
+                    f"No ALTER statement will be generated automatically."
+                )
+                return False
+            if not support_change:
+                # This attribute doesn't support ALTER operations
+                error_msg = (
+                    f"StarRocks does not support 'ALTER TABLE {attribute_name}'. "
+                    f"Table '{full_table_name}' has {attribute_name.upper()} '{conn_str or '(not set)'}' in database "
+                    f"but '{meta_str}' in metadata. "
+                    f"Please update your metadata to match the database."
+                )
+                logger.error(error_msg)
+                raise NotImplementedError(error_msg)
             return True
         # Case 2: meta specified, same as conn -> no change
         return False
-
     else:
         # Case 3 & 4: meta_table does NOT specify this attribute
-        if default_str is not None and (conn_str or '') != default_str:
+        if conn_str is not None and conn_str != default_str:
             # Case 4: meta not specified, conn is non-default -> log error, NO automatic change
-            full_table_name = f"{schema}.{table_name}" if schema else table_name or "unknown_table"
-            logger.error(
-                "Table '%s': Attribute '%s' in database has non-default value '%s' (default: '%s'), "
-                "but not specified in metadata. Please specify this attribute explicitly "
-                "in your table definition to avoid unexpected behavior. "
-                "No ALTER statement will be generated automatically.",
-                full_table_name, attribute_name, conn_str, default_str
-            )
-            return False  # Don't generate ALTER - user must decide explicitly
+            if conn_str.lower() == (default_str or '').lower():
+                logger.warning(
+                    f"Table '{full_table_name}': Attribute '{attribute_name}' has a case-only difference: "
+                    f"'{conn_str}' (database) vs '{default_str}' (default). "
+                    f"Consider making them consistent for clarity. "
+                    f"No ALTER statement will be generated automatically."
+                )
+                pass
+            else:
+                error_msg = (
+                    f"Table '{full_table_name}': Attribute '{attribute_name}' "
+                    f"in database has non-default value '{conn_str}' (default: '{default_str}'), "
+                    f"but not specified in metadata. Please specify this attribute explicitly "
+                    "in your table definition to avoid unexpected behavior. "
+                    "No ALTER statement will be generated automatically."
+                )
+                logger.error(error_msg)
+                raise NotImplementedError(error_msg)  # Don't generate ALTER - user must decide explicitly
         # Case 3: meta not specified, conn is default (or no default defined) -> no change
         return False
 
@@ -622,41 +753,36 @@ def _extract_starrocks_dialect_attributes(kwargs: Dict[str, Any]) -> CaseInsensi
     return result
 
 
-def _parse_distribution_string(distribution: str) -> Tuple[str, Optional[int]]:
-    """Parse DISTRIBUTED BY string to extract distribution and buckets.
-
-    Args:
-        distribution: String like "HASH(id) BUCKETS 8" or "HASH(id)"
-
-    Returns:
-        Tuple of (distributed_by, buckets)
+@comparators_dispatch_for_starrocks("column")
+def compare_starrocks_column(
+    autogen_context: AutogenContext,
+    alter_column_op: "AlterColumnOp",
+    schema: Optional[str],
+    tname: "Union[quoted_name, str]",
+    cname: "Union[quoted_name, str]",
+    conn_col: "Column[Any]",
+    metadata_col: "Column[Any]",
+) -> None:
     """
-    if not distribution:
-        return distribution, None
-
-    # Use regex to extract BUCKETS value
-    import re
-    buckets_match = re.search(r'\sBUCKETS\s+(\d+)', distribution, re.IGNORECASE)
-
-    if buckets_match:
-        buckets = int(buckets_match.group(1))
-        # Remove BUCKETS part to get pure distribution
-        distributed_by = re.sub(r'\s+BUCKETS\s+\d+', '', distribution, flags=re.IGNORECASE).strip()
-        return distributed_by, buckets
-    else:
-        return distribution, None
-
-
-def _normalize_distribution_string(distribution: str) -> str:
-    """Normalize distribution string by removing backticks and extra spaces.
-
-    Args:
-        distribution: String like "HASH(`id`)" or "HASH(id)"
-
-    Returns:
-        Normalized string like "HASH(id)"
+    Compare StarRocks-specific column options.
+    
+    Check for changes in StarRocks-specific attributes like aggregate type.
     """
-    return _normalize_column_identifiers(distribution)
+    meta_agg_type = metadata_col.info.get(ColumnAggInfoKeyWithPrefix.AGG_TYPE)
+    conn_agg_type = conn_col.dialect_options.get(ColumnAggInfoKeyWithPrefix.AGG_TYPE)
+
+    if meta_agg_type != conn_agg_type:
+        logger.warning(
+            "StarRocks-specific option '%s' for column '%s' in table '%s' has changed from %s to %s",
+            ColumnAggInfoKey.AGG_TYPE,
+            cname,
+            tname,
+            conn_agg_type,
+            meta_agg_type,
+        )
+        # Update the alter_column_op with the new aggregate type
+        if alter_column_op is not None:
+            alter_column_op.kwargs[ColumnAggInfoKeyWithPrefix.AGG_TYPE] = meta_agg_type
 
 
 def _normalize_order_by_string(order_by: Union[str, List[str], None]) -> str:

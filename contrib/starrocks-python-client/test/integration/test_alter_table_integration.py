@@ -2,7 +2,7 @@
 Integration tests for StarRocks ALTER TABLE comparison logic.
 
 GOAL: Test the end-to-end flow of:
-1. Reflecting real StarRocks table structure 
+1. Reflecting real StarRocks table structure
 2. Comparing with target metadata
 3. Generating correct ALTER TABLE operations
 
@@ -11,7 +11,7 @@ not just mocked objects.
 
 TEST SCOPE:
 - Focus on the 5 core comparison scenarios
-- Verify reflection + comparison accuracy  
+- Verify reflection + comparison accuracy
 - NOT testing actual ALTER execution (some operations aren't supported)
 
 These tests require a real StarRocks database connection.
@@ -37,18 +37,18 @@ logger = logging.getLogger(__name__)
 class TestAlterTableIntegration:
     """
     Integration tests for ALTER TABLE comparison logic.
-    
+
     Tests table options in StarRocks CREATE TABLE grammar order:
     - Engine changes (not supported, logged as error)
-    - Key changes (not supported, logged as error) 
+    - Key changes (not supported, logged as error)
     - Comment changes (handled by Alembic built-in), but we should check it
     - Partition changes (not supported, logged as error)
     - Distribution changes detection
-    - Order by changes detection  
+    - Order by changes detection
     - Properties changes detection (most common)
     - No changes detection (normalization testing)
     - Multiple changes detection (comprehensive scenario)
-    
+
     Uses real reflected table data instead of mocks.
     """
 
@@ -60,7 +60,7 @@ class TestAlterTableIntegration:
         """Set up test class with StarRocks connection."""
         cls.engine = create_test_engine()
         cls.test_schema = test_default_schema
-        
+
         # Create test schema if it doesn't exist
         with cls.engine.connect() as conn:
             try:
@@ -69,7 +69,7 @@ class TestAlterTableIntegration:
             except Exception as e:
                 pytest.skip(f"Could not create test schema: {e}")
 
-    @classmethod 
+    @classmethod
     def teardown_class(cls) -> None:
         """Clean up test resources."""
         with cls.engine.connect() as conn:
@@ -98,14 +98,14 @@ class TestAlterTableIntegration:
     def test_distribution_change_detection(self) -> None:
         """
         Test: Distribution change detection with real reflection.
-        
+
         Scenario (distribution changes):
         - Changed: distribution from HASH(id) BUCKETS 4 to HASH(user_id) BUCKETS 8
         - No change: properties remain the same
         - Expected: 1 AlterTableDistributionOp generated
         """
         table_name = "test_distribution_change"
-        
+
         with self.engine.connect() as conn:
             # Create table with initial distribution
             full_table_name = self._get_full_table_name(table_name)
@@ -113,12 +113,12 @@ class TestAlterTableIntegration:
                 CREATE TABLE {full_table_name} (
                     id INT,
                     user_id INT
-                ) 
+                )
                 DISTRIBUTED BY HASH(id) BUCKETS 4
                 PROPERTIES ("replication_num" = "1")
             """)
             conn.commit()
-            
+
             try:
                 # Reflect actual table
                 metadata_db = MetaData()
@@ -127,7 +127,7 @@ class TestAlterTableIntegration:
                     autoload_with=self.engine,
                     schema=self.test_schema
                 )
-                
+
                 # Target: different distribution
                 metadata_target = MetaData()
                 target_table = Table(
@@ -140,11 +140,11 @@ class TestAlterTableIntegration:
                     },
                     schema=self.test_schema
                 )
-                
+
                 # Compare
                 autogen_context = self._setup_autogen_context()
                 result: list = compare_starrocks_table(autogen_context, reflected_table, target_table)
-                
+
                 # Should detect distribution change
                 assert len(result) == 1
                 from starrocks.alembic.ops import AlterTableDistributionOp
@@ -153,7 +153,7 @@ class TestAlterTableIntegration:
                 assert op.table_name == table_name
                 assert op.distributed_by == "HASH(user_id)"
                 assert op.buckets == 8
-                
+
             finally:
                 conn.exec_driver_sql(f"DROP TABLE IF EXISTS {self.test_schema}.{table_name}")
                 conn.commit()
@@ -161,26 +161,26 @@ class TestAlterTableIntegration:
     def test_order_by_addition_detection(self) -> None:
         """
         Test: ORDER BY addition detection with real reflection.
-        
+
         Scenario (order by changes):
         - Added: ORDER BY created_at (was not present before)
         - No change: distribution and properties remain the same
         - Expected: 1 AlterTableOrderOp generated
         """
         table_name = "test_order_addition"
-        
+
         with self.engine.connect() as conn:
             # Create table without ORDER BY
             conn.exec_driver_sql(f"""
                 CREATE TABLE {self.test_schema}.{table_name} (
                     id INT,
                     created_at DATETIME
-                ) 
+                )
                 DISTRIBUTED BY HASH(id)
                 PROPERTIES ("replication_num" = "1")
             """)
             conn.commit()
-            
+
             try:
                 # Reflect actual table
                 metadata_db = MetaData()
@@ -189,7 +189,7 @@ class TestAlterTableIntegration:
                     autoload_with=self.engine,
                     schema=self.test_schema
                 )
-                
+
                 # Target: add ORDER BY
                 metadata_target = MetaData()
                 target_table = Table(
@@ -203,18 +203,18 @@ class TestAlterTableIntegration:
                     },
                     schema=self.test_schema
                 )
-                
+
                 # Compare
                 autogen_context = self._setup_autogen_context()
                 result = compare_starrocks_table(autogen_context, reflected_table, target_table)
-                
+
                 # Should detect ORDER BY addition
                 assert len(result) == 1
                 from starrocks.alembic.ops import AlterTableOrderOp
                 op = result[0]
                 assert isinstance(op, AlterTableOrderOp)
                 assert op.order_by == "created_at"
-                
+
             finally:
                 conn.exec_driver_sql(f"DROP TABLE IF EXISTS {self.test_schema}.{table_name}")
                 conn.commit()
@@ -237,7 +237,7 @@ class TestAlterTableIntegration:
                 CREATE TABLE {full_table_name} (
                     id INT,
                     name VARCHAR(50)
-                ) 
+                )
                 DISTRIBUTED BY HASH(id)
                 PROPERTIES ("replication_num" = "1")
             """)
@@ -307,26 +307,26 @@ class TestAlterTableIntegration:
     def test_no_changes_detection(self) -> None:
         """
         Test: No changes detection with real reflection.
-        
+
         Scenario (normalization testing):
         - No change: distribution, properties match exactly (after normalization)
         - Backticks and format differences should be ignored
         - Expected: 0 operations generated
         """
         table_name = "test_no_changes"
-        
+
         with self.engine.connect() as conn:
             # Create table
             conn.exec_driver_sql(f"""
                 CREATE TABLE {self.test_schema}.{table_name} (
                     id INT,
                     name VARCHAR(50)
-                ) 
+                )
                 DISTRIBUTED BY HASH(id) BUCKETS 8
                 PROPERTIES ("replication_num" = "1")
             """)
             conn.commit()
-            
+
             try:
                 # Reflect actual table
                 metadata_db = MetaData()
@@ -335,7 +335,7 @@ class TestAlterTableIntegration:
                     autoload_with=self.engine,
                     schema=self.test_schema
                 )
-                
+
                 # For true no-change test, we should match what user would write
                 # that results in the same logical structure
                 metadata_target = MetaData()
@@ -351,24 +351,24 @@ class TestAlterTableIntegration:
                     },
                     schema=self.test_schema
                 )
-                
+
                 # Debug: log what was reflected
                 logger.info("=== REFLECTED TABLE INFO ===")
                 logger.info("reflected_table.kwargs (dict): %s", dict(reflected_table.kwargs))
                 logger.info("target_table.kwargs (dict): %s", dict(target_table.kwargs))
-                
+
                 # Compare
                 autogen_context = self._setup_autogen_context()
                 result: list = compare_starrocks_table(autogen_context, reflected_table, target_table)
-                
+
                 # Debug: log operations generated
                 logger.info("=== OPERATIONS GENERATED ===")
                 for i, op in enumerate(result):
                     logger.info("%d: %s - %s", i, type(op).__name__, op.__dict__)
-                
+
                 # Should detect NO changes
                 assert len(result) == 0, f"Expected no changes, but got: {result}"
-                
+
             finally:
                 conn.exec_driver_sql(f"DROP TABLE IF EXISTS {self.test_schema}.{table_name}")
                 conn.commit()
@@ -376,7 +376,7 @@ class TestAlterTableIntegration:
     def test_multiple_changes_detection(self) -> None:
         """
         Test: Multiple changes detection with real reflection.
-        
+
         Scenario (comprehensive changes in grammar order):
         - Changed: distribution from HASH(id) BUCKETS 4 to RANDOM BUCKETS 8
         - Added: ORDER BY id
@@ -385,19 +385,19 @@ class TestAlterTableIntegration:
         - Expected: 3 operations (AlterTableDistributionOp, AlterTableOrderOp, AlterTablePropertiesOp)
         """
         table_name = "test_multiple_changes"
-        
+
         with self.engine.connect() as conn:
             # Create table with baseline state
             conn.exec_driver_sql(f"""
                 CREATE TABLE {self.test_schema}.{table_name} (
                     id INT,
                     user_id INT
-                ) 
+                )
                 DISTRIBUTED BY HASH(id) BUCKETS 4
                 PROPERTIES ("replication_num" = "1")
             """)
             conn.commit()
-            
+
             try:
                 # Reflect actual table
                 metadata_db = MetaData()
@@ -406,7 +406,7 @@ class TestAlterTableIntegration:
                     autoload_with=self.engine,
                     schema=self.test_schema
                 )
-                
+
                 # Target: multiple changes
                 metadata_target = MetaData()
                 target_table = Table(
@@ -423,14 +423,14 @@ class TestAlterTableIntegration:
                     },
                     schema=self.test_schema
                 )
-                
+
                 # Compare
                 autogen_context: Mock = self._setup_autogen_context()
                 result: list = compare_starrocks_table(autogen_context, reflected_table, target_table)
-                
+
                 # Should detect 3 changes
                 assert len(result) == 3
-                
+
                 from starrocks.alembic.ops import (
                     AlterTableDistributionOp, AlterTableOrderOp, AlterTablePropertiesOp
                 )
@@ -442,7 +442,7 @@ class TestAlterTableIntegration:
                 assert order_op.order_by == "id"
                 properties_op: AlterTablePropertiesOp = result[2]
                 assert properties_op.properties == {"replication_num": "2", "storage_medium": "SSD"}
-                
+
             finally:
                 conn.exec_driver_sql(f"DROP TABLE IF EXISTS {self.test_schema}.{table_name}")
                 conn.commit()

@@ -2,7 +2,7 @@ from alembic import context
 from sqlalchemy import engine_from_config, pool
 
 # Import our custom Alembic integration to register comparators
-import starrocks.alembic
+import starrocks.alembic  # noqa: F401
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
@@ -33,7 +33,7 @@ def run_migrations_online() -> None:
             connection=connection,
             target_metadata=target_metadata,
             # This is needed to register our custom compare logic
-            compare_type=True, 
+            compare_type=True,
             compare_server_default=True,
         )
 

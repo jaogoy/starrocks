@@ -1,3 +1,16 @@
+class TableEngine:
+    OLAP = "OLAP"
+
+    DEFAULT = OLAP
+
+
+class TableDistribution:
+    HASH = "HASH"
+    RANDOM = "RANDOM"
+
+    DEFAULT = RANDOM
+
+
 class TableType:
     PRIMARY_KEY = "PRIMARY KEY"
     DUPLICATE_KEY = "DUPLICATE KEY"

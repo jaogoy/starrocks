@@ -7,7 +7,7 @@ from sqlalchemy import (
 
 from test.test_utils import _normalize_sql
 import pytest
-from starrocks.params import ColumnAggInfoKey, ColumnAggInfoKeyWithPrefix
+from starrocks.params import ColumnAggInfoKeyWithPrefix, TableInfoKeyWithPrefix
 from starrocks.types import ColumnAggType
 
 
@@ -31,10 +31,10 @@ class TestCreateTableCompiler:
                     starrocks_distributed_by='HASH(k1)')
         sql = self._compile_table(tbl)
         expected = """
-            CREATE TABLE engine_comment_tbl(k1 INTEGER) 
-            ENGINE=OLAP 
-            DUPLICATE KEY(k1) 
-            COMMENT 'A simple table comment.' 
+            CREATE TABLE engine_comment_tbl(k1 INTEGER)
+            ENGINE=OLAP
+            DUPLICATE KEY(k1)
+            COMMENT 'A simple table comment.'
             DISTRIBUTED BY HASH(k1)
         """
         assert _normalize_sql(sql) == _normalize_sql(expected)
@@ -46,8 +46,8 @@ class TestCreateTableCompiler:
                         starrocks_duplicate_key='k1', starrocks_distributed_by='HASH(k1)')
         sql = self._compile_table(tbl_dup)
         expected_dup = """
-            CREATE TABLE key_duplicate_tbl(k1 INTEGER) 
-            DUPLICATE KEY(k1) 
+            CREATE TABLE key_duplicate_tbl(k1 INTEGER)
+            DUPLICATE KEY(k1)
             DISTRIBUTED BY HASH(k1)
         """
         assert _normalize_sql(sql) == _normalize_sql(expected_dup)
@@ -57,8 +57,8 @@ class TestCreateTableCompiler:
                         starrocks_aggregate_key='k1', starrocks_distributed_by='HASH(k1)')
         sql = self._compile_table(tbl_agg)
         expected_agg = """
-            CREATE TABLE key_aggregate_tbl(k1 INTEGER) 
-            AGGREGATE KEY(k1) 
+            CREATE TABLE key_aggregate_tbl(k1 INTEGER)
+            AGGREGATE KEY(k1)
             DISTRIBUTED BY HASH(k1)
         """
         assert _normalize_sql(sql) == _normalize_sql(expected_agg)
@@ -68,8 +68,8 @@ class TestCreateTableCompiler:
                            starrocks_unique_key='k1', starrocks_distributed_by='HASH(k1)')
         sql = self._compile_table(tbl_unique)
         expected_unique = """
-            CREATE TABLE key_unique_tbl(k1 INTEGER) 
-            UNIQUE KEY(k1) 
+            CREATE TABLE key_unique_tbl(k1 INTEGER)
+            UNIQUE KEY(k1)
             DISTRIBUTED BY HASH(k1)
         """
         assert _normalize_sql(sql) == _normalize_sql(expected_unique)
@@ -79,8 +79,8 @@ class TestCreateTableCompiler:
                             starrocks_primary_key='k1', starrocks_distributed_by='HASH(k1)')
         sql = self._compile_table(tbl_primary)
         expected_primary = """
-            CREATE TABLE key_primary_tbl(k1 INTEGER) 
-            PRIMARY KEY(k1) 
+            CREATE TABLE key_primary_tbl(k1 INTEGER)
+            PRIMARY KEY(k1)
             DISTRIBUTED BY HASH(k1)
         """
         assert _normalize_sql(sql) == _normalize_sql(expected_primary)
@@ -118,8 +118,8 @@ class TestCreateTableCompiler:
         self.logger.info("Testing Aggregate Key Table DDL")
         tbl = Table('agg_tbl', self.metadata,
                     Column('k1', Integer),
-                    Column('v1', Integer, info={ColumnAggInfoKeyWithPrefix.agg_type: ColumnAggType.SUM}),
-                    Column('v2', String(50), info={ColumnAggInfoKeyWithPrefix.agg_type: ColumnAggType.REPLACE}),
+                    Column('v1', Integer, info={ColumnAggInfoKeyWithPrefix.AGG_TYPE: ColumnAggType.SUM}),
+                    Column('v2', String(50), info={ColumnAggInfoKeyWithPrefix.AGG_TYPE: ColumnAggType.REPLACE}),
                     starrocks_aggregate_key='k1')
         sql = self._compile_table(tbl)
         expected = """
@@ -140,8 +140,8 @@ class TestCreateTableCompiler:
         with pytest.raises(exc.CompileError, match="cannot be both KEY and aggregated"):
             tbl1 = Table('invalid_agg_tbl1', self.metadata,
                          Column('k1', Integer, info={
-                             ColumnAggInfoKeyWithPrefix.is_agg_key: True,
-                             ColumnAggInfoKeyWithPrefix.agg_type: ColumnAggType.SUM
+                             ColumnAggInfoKeyWithPrefix.IS_AGG_KEY: True,
+                             ColumnAggInfoKeyWithPrefix.AGG_TYPE: ColumnAggType.SUM
                          }),
                          starrocks_aggregate_key='k1')
             self._compile_table(tbl1)
@@ -150,7 +150,7 @@ class TestCreateTableCompiler:
         with pytest.raises(exc.CompileError, match="only valid for AGGREGATE KEY tables"):
             tbl2 = Table('invalid_agg_tbl2', self.metadata,
                          Column('k1', Integer),
-                         Column('v1', Integer, info={ColumnAggInfoKeyWithPrefix.agg_type: ColumnAggType.SUM}),
+                         Column('v1', Integer, info={ColumnAggInfoKeyWithPrefix.AGG_TYPE: ColumnAggType.SUM}),
                          starrocks_duplicate_key='k1')
             self._compile_table(tbl2)
 
@@ -161,9 +161,9 @@ class TestCreateTableCompiler:
         # Test case 1: Value column before key column
         with pytest.raises(exc.CompileError, match="all key columns must be defined before any value columns"):
             tbl1 = Table('invalid_order_tbl1', self.metadata,
-                         Column('v1', Integer, info={'starrocks_agg': "SUM"}),
+                         Column('v1', Integer, info={ColumnAggInfoKeyWithPrefix.AGG_TYPE: ColumnAggType.SUM}),
                          Column('k1', Integer),
-                         starrocks_aggregate_key='k1')
+                         **{TableInfoKeyWithPrefix.AGGREGATE_KEY: 'k1'})
             self._compile_table(tbl1)
 
         # Test case 2: Key columns in wrong order compared to starrocks_aggregate_key
@@ -171,8 +171,8 @@ class TestCreateTableCompiler:
             tbl2 = Table('invalid_order_tbl2', self.metadata,
                          Column('k2', Integer),
                          Column('k1', Integer),
-                         Column('v1', Integer, info={'starrocks_agg': "SUM"}),
-                         starrocks_aggregate_key='k1,k2')
+                         Column('v1', Integer, info={ColumnAggInfoKeyWithPrefix.AGG_TYPE: ColumnAggType.SUM}),
+                         **{TableInfoKeyWithPrefix.AGGREGATE_KEY: 'k1,k2'})
             self._compile_table(tbl2)
 
     def test_column_default_value(self):
@@ -329,9 +329,9 @@ class TestCreateTableCompiler:
         sql = self._compile_table(tbl)
         expected = """
             CREATE TABLE comprehensive_table (
-                user_id BIGINT NOT NULL COMMENT 'User ID', 
-                event_date DATE NOT NULL COMMENT 'Event date', 
-                city VARCHAR(50) DEFAULT 'Unknown', 
+                user_id BIGINT NOT NULL COMMENT 'User ID',
+                event_date DATE NOT NULL COMMENT 'Event date',
+                city VARCHAR(50) DEFAULT 'Unknown',
                 revenue DOUBLE DEFAULT '0.0'
             )
             ENGINE=OLAP
@@ -341,9 +341,9 @@ class TestCreateTableCompiler:
             DISTRIBUTED BY HASH(user_id) BUCKETS 32
             ORDER BY(event_date, user_id)
             PROPERTIES(
-                "replication_num" = "1", 
-                "storage_medium" = "SSD", 
-                "bloom_filter_columns" = "city", 
+                "replication_num" = "1",
+                "storage_medium" = "SSD",
+                "bloom_filter_columns" = "city",
                 "dynamic_partition.enable" = "true",
                 "dynamic_partition.time_unit" = "MONTH",
                 "dynamic_partition.end" = "3",

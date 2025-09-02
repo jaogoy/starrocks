@@ -11,18 +11,18 @@ class CaseInsensitiveDict(dict):
             self.update(data)
 
     def __setitem__(self, key: str, value: Any) -> None:
-        lower_key = key.lower()
+        lower_key: str = key.lower()
         if lower_key in self._lower_keys:
             # Remove old entry if exists
-            old_key = self._lower_keys[lower_key]
+            old_key: str = self._lower_keys[lower_key]
             super().__delitem__(old_key)
         self._lower_keys[lower_key] = key
         super().__setitem__(key, value)
 
     def __getitem__(self, key: str) -> Any:
-        lower_key = key.lower()
+        lower_key: str = key.lower()
         if lower_key in self._lower_keys:
-            actual_key = self._lower_keys[lower_key]
+            actual_key: str = self._lower_keys[lower_key]
             return super().__getitem__(actual_key)
         raise KeyError(key)
 
