@@ -17,6 +17,7 @@ from textwrap import dedent
 import logging
 from typing import Any, Dict, Optional
 
+from alembic.ddl.base import format_table_name
 from sqlalchemy import Connection, exc, schema as sa_schema, util, log, text, Row
 
 from sqlalchemy.dialects.mysql.pymysql import MySQLDialect_pymysql
@@ -422,6 +423,17 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
 
         return " ".join(table_opts)
 
+    def _has_column_info_key(self, column: sa_schema.Column, key: str) -> bool:
+        """Check if column has a specific info key (case-insensitive)."""
+        return any(k.lower() == key.lower() for k in column.info.keys())
+    
+    def _get_column_info_value(self, column: sa_schema.Column, key: str, default=None):
+        """Get column info value by key (case-insensitive)."""
+        for k, v in column.info.items():
+            if k.lower() == key.lower():
+                return v
+        return default
+
     def get_column_specification(self, column: sa_schema.Column, **kw: Any) -> str:
         """Builds column DDL for StarRocks, handling StarRocks-specific features.
 
@@ -448,7 +460,7 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
         # name, type, others of a column for the output colspec
         _, idx_type = 0, 1
 
-        # name and type
+        # set name and type first
         colspec: list[str] = [
             self.preparer.format_column(column),
             self.dialect.type_compiler.process(
@@ -456,32 +468,8 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
             ),
         ]
 
-        # aggregation type is only valid for AGGREGATE KEY tables
-        is_agg_table: bool = (
-            TableInfoKeyWithPrefix.AGGREGATE_KEY in (column.table.kwargs or {})
-        )
-        if not is_agg_table and (
-            ColumnAggInfoKeyWithPrefix.is_agg_key in column.info
-            or ColumnAggInfoKeyWithPrefix.agg_type in column.info
-        ):
-            raise exc.CompileError(
-                "Column-level KEY/aggregate markers are only valid for AGGREGATE KEY tables; "
-                "declare starrocks_aggregate_key at table level first."
-            )
-        if ColumnAggInfoKeyWithPrefix.is_agg_key in column.info:
-            colspec.append(ColumnAggType.KEY)
-            if ColumnAggInfoKeyWithPrefix.agg_type in column.info:
-                raise exc.CompileError(
-                    f"Column '{column.name}' cannot be both KEY and aggregated "
-                    f"(has {ColumnAggInfoKeyWithPrefix.agg_type})."
-                )
-        elif ColumnAggInfoKeyWithPrefix.agg_type in column.info:
-            agg_val = str(column.info[ColumnAggInfoKeyWithPrefix.agg_type]).upper()
-            if agg_val not in ColumnAggType.ALLOWED_ITEMS:
-                raise exc.CompileError(
-                    f"Unsupported aggregate type for column '{column.name}': {agg_val}"
-                )
-            colspec.append(agg_val)
+        # Get and set column-level aggregate information
+        self._get_agg_info(column, colspec)
 
         # NULL or NOT NULL. AUTO_INCREMENT columns must be NOT NULL
         if not column.nullable or column.autoincrement is True:
@@ -535,6 +523,38 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
             colspec.append(self.process(column.computed))
 
         return " ".join(colspec)
+
+    def _get_agg_info(self, column: sa_schema.Column, colspec: list[str]) -> dict:
+        """Get aggregate information for a column."""
+        
+        # aggregation type is only valid for AGGREGATE KEY tables
+        table_kwargs = column.table.kwargs or {}
+        is_agg_table: bool = any(
+            k.lower() == TableInfoKeyWithPrefix.AGGREGATE_KEY.lower()
+            for k in table_kwargs.keys()
+        )
+        if not is_agg_table and (
+            self._has_column_info_key(column, ColumnAggInfoKeyWithPrefix.IS_AGG_KEY) or
+                self._has_column_info_key(column, ColumnAggInfoKeyWithPrefix.AGG_TYPE)
+        ):
+            raise exc.CompileError(
+                "Column-level KEY/aggregate markers are only valid for AGGREGATE KEY tables; "
+                "declare starrocks_aggregate_key at table level first."
+            )
+        if self._has_column_info_key(column, ColumnAggInfoKeyWithPrefix.IS_AGG_KEY):
+            colspec.append(ColumnAggType.KEY)
+            if self._has_column_info_key(column, ColumnAggInfoKeyWithPrefix.AGG_TYPE):
+                raise exc.CompileError(
+                    f"Column '{column.name}' cannot be both KEY and aggregated "
+                    f"(has {ColumnAggInfoKeyWithPrefix.AGG_TYPE})."
+                )
+        elif self._has_column_info_key(column, ColumnAggInfoKeyWithPrefix.AGG_TYPE):
+            agg_val = str(self._get_column_info_value(column, ColumnAggInfoKeyWithPrefix.AGG_TYPE)).upper()
+            if agg_val not in ColumnAggType.ALLOWED_ITEMS:
+                raise exc.CompileError(
+                    f"Unsupported aggregate type for column '{column.name}': {agg_val}"
+                )
+            colspec.append(agg_val)
 
     def visit_computed_column(self, generated: sa_schema.Computed, **kw: Any) -> str:
         text = "AS %s" % self.sql_compiler.process(
@@ -657,6 +677,56 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
         mv = drop.element
         return f"DROP MATERIALIZED VIEW IF EXISTS {self.preparer.format_table(mv)}"
 
+    # Visit methods ordered according to StarRocks grammar:
+    # engine → key → partition → distribution → order by → properties
+
+    def visit_alter_table_engine(self, alter, **kw: Any) -> str:
+        """Compile ALTER TABLE ENGINE DDL for StarRocks.
+        Not supported in StarRocks.
+        """
+        table_name = format_table_name(self, alter.table_name, alter.schema)
+        return f"ALTER TABLE {table_name} ENGINE = {alter.engine}"
+
+    def visit_alter_table_key(self, alter, **kw: Any) -> str:
+        """Compile ALTER TABLE KEY DDL for StarRocks.
+        Not supported in StarRocks yet.
+        """
+        table_name = format_table_name(self, alter.table_name, alter.schema)
+        return f"ALTER TABLE {table_name} {alter.key_type} KEY ({alter.key_columns})"
+
+    def visit_alter_table_partition(self, alter, **kw: Any) -> str:
+        """Compile ALTER TABLE PARTITION BY DDL for StarRocks.
+        Not supported in StarRocks yet.
+        """
+        table_name = format_table_name(self, alter.table_name, alter.schema)
+        return f"ALTER TABLE {table_name} PARTITION BY {alter.partition_by}"
+
+    def visit_alter_table_distribution(self, alter, **kw: Any) -> str:
+        """Compile ALTER TABLE DISTRIBUTED BY DDL for StarRocks."""
+        # TODO:
+        table_name = format_table_name(self, alter.table_name, alter.schema)
+        distribution_clause = f"DISTRIBUTED BY {alter.distributed_by}"
+        if alter.buckets is not None:
+            distribution_clause += f" BUCKETS {alter.buckets}"
+        return f"ALTER TABLE {table_name} {distribution_clause}"
+
+    def visit_alter_table_order(self, alter, **kw: Any) -> str:
+        """Compile ALTER TABLE ORDER BY DDL for StarRocks."""
+
+        table_name = format_table_name(self, alter.table_name, alter.schema)
+        return f"ALTER TABLE {table_name} ORDER BY {alter.order_by}"
+
+    def visit_alter_table_properties(self, alter, **kw: Any) -> str:
+        """Compile ALTER TABLE SET (...) DDL for StarRocks."""
+        table_name = format_table_name(self, alter.table_name, alter.schema)
+        
+        # Escape double quotes in property values
+        def escape_value(value: str) -> str:
+            return value.replace('"', '\\"')
+        
+        properties_str = ", ".join([f'"{k}" = "{escape_value(v)}"' for k, v in alter.properties.items()])
+        return f"ALTER TABLE {table_name} SET ({properties_str})"
+
 
 class StarRocksIdentifierPreparer(MySQLIdentifierPreparer):
     # reserved_words = RESERVED_WORDS
@@ -685,6 +755,8 @@ class StarRocksDialect(MySQLDialect_pymysql):
         super(StarRocksDialect, self).__init__(*args, **kwargs)
         self.logger = logging.getLogger(f"{__name__}.StarRocksDialect")
         self.run_mode: Optional[str] = None
+        # Explicitly instantiate the preparer here, ensuring it's an instance
+        self.preparer = self.preparer(self)
 
     def initialize(self, connection: Connection):
         super().initialize(connection)
@@ -848,6 +920,14 @@ class StarRocksDialect(MySQLDialect_pymysql):
             charset=charset,
         )
 
+    def _get_quote_full_table_name(
+        self, table_name: str, schema: Optional[str] = None
+    ) -> str:
+        """Get the fully quoted table name."""
+        full_table_name = self.preparer.quote_identifier(str(table_name))
+        if schema:
+            full_table_name = f"{self.preparer.quote_identifier(str(schema))}.{full_table_name}"
+        return full_table_name
 
     def _get_show_full_columns(
         self, connection: Connection, table_name: str, schema: Optional[str] = None, **kwargs: Any
