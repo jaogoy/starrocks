@@ -14,8 +14,8 @@
 # limitations under the License.
 
 from __future__ import annotations
-import dataclasses
 import json
+import logging
 import re
 from typing import Any, Optional
 
@@ -26,70 +26,10 @@ from sqlalchemy import log, types as sqltypes, util
 from sqlalchemy.engine.reflection import Inspector
 
 from .params import ColumnAggInfoKeyWithPrefix, ColumnSROptionsKey, TableInfoKeyWithPrefix
-from .types import TableModel, ViewSecurityType
+from .reflection_info import ReflectedState, ReflectionViewInfo, ReflectionDistributionInfo
+from .types import TableModel
 
-# kw_only is added in python 3.10
-# https://docs.python.org/3/library/dataclasses.html#dataclasses.dataclass
-@dataclasses.dataclass(**dict(kw_only=True) if 'KW_ONLY' in dataclasses.__all__ else {})
-class ReflectedState(object):
-    """Stores informations about table or view."""
-
-    table_name: Union[str, None] = None
-    columns: list[dict] = dataclasses.field(default_factory=list)
-    table_options: dict[str, str] = dataclasses.field(default_factory=dict)
-    keys: list[dict] = dataclasses.field(default_factory=list)
-    fk_constraints: list[dict] = dataclasses.field(default_factory=list)
-    ck_constraints: list[dict] = dataclasses.field(default_factory=list)
-
-
-@dataclasses.dataclass(kw_only=True)
-class ReflectionViewInfo:
-    """Stores reflection information about a view."""
-    name: str
-    definition: str
-    comment: str | None = None
-    security: str | None = None
-
-
-class ReflectionViewDefaults:
-    """Central place for view reflection default values and normalization."""
-
-    DEFAULT_COMMENT: str = ""
-    DEFAULT_SECURITY: str = ViewSecurityType.NONE
-
-    @classmethod
-    def apply(
-        cls,
-        *,
-        name: str,
-        definition: str,
-        comment: str | None = None,
-        security: str | None = None,
-    ) -> ReflectionViewInfo:
-        """Apply defaults and normalization to reflected view values.
-
-        - comment: default empty string
-        - security: default empty string, uppercase when present
-        """
-        normalized_comment = (comment or cls.DEFAULT_COMMENT)
-        normalized_security = (security or cls.DEFAULT_SECURITY).upper()
-        return ReflectionViewInfo(
-            name=name,
-            definition=definition,
-            comment=normalized_comment,
-            security=normalized_security,
-        )
-
-    @classmethod
-    def apply_info(cls, reflectionViewInfo: ReflectionViewInfo) -> ReflectionViewInfo:
-        """Apply defaults and normalization to reflected view values.
-        """
-        return ReflectionViewInfo(
-            name=reflectionViewInfo.name,
-            definition=reflectionViewInfo.definition,
-            comment=(reflectionViewInfo.comment or cls.DEFAULT_COMMENT),
-            security=(reflectionViewInfo.security or cls.DEFAULT_SECURITY).upper(),
-        )
+logger = logging.getLogger(__name__)
 
 
 class StarRocksInspector(Inspector):
@@ -97,7 +37,7 @@ class StarRocksInspector(Inspector):
         super().__init__(bind)
 
     def get_view(self, view_name: str, schema: Optional[str] = None, **kwargs: Any) -> Optional[ReflectionViewInfo]:
-        return self.dialect.get_view(self.bind, view_name, schema=schema, **kwargs)
+        return self.dialect._get_view_info(self.bind, view_name, schema=schema, **kwargs)
 
     def get_views(self, schema: str | None = None) -> dict[tuple[str | None, str], ReflectionViewInfo]:
         """Batch reflection wrapper for dialect.get_views (prototype)."""
@@ -108,11 +48,35 @@ class StarRocksInspector(Inspector):
 class StarRocksTableDefinitionParser(object):
     """Parses content of information_schema tables to get table information."""
 
+    _BUCKETS_PATTERN = re.compile(r'\sBUCKETS\s+(\d+)', re.IGNORECASE)
+    _BUCKETS_REPLACE_PATTERN = re.compile(r'\s+BUCKETS\s+\d+', re.IGNORECASE)
+
     def __init__(self, dialect, preparer):
         self.dialect = dialect
         self.preparer = preparer
         self._re_csv_int = _re_compile(r"\d+")
         self._re_csv_str = _re_compile(r"\x27(?:\x27\x27|[^\x27])*\x27")
+
+    @staticmethod
+    def parse_distribution_string(distribution: str) -> tuple[str, int | None]:
+        """Parse DISTRIBUTED BY string to extract distribution and buckets.
+        Args:
+            distribution: String like "HASH(id) BUCKETS 8" or "HASH(id)"
+        Returns:
+            Tuple of (distributed_by, buckets)
+        """
+        if not distribution:
+            return distribution, None
+
+        buckets_match = StarRocksTableDefinitionParser._BUCKETS_PATTERN.search(distribution)
+
+        if buckets_match:
+            buckets = int(buckets_match.group(1))
+            # Remove BUCKETS part to get pure distribution
+            distributed_by = StarRocksTableDefinitionParser._BUCKETS_REPLACE_PATTERN.sub('', distribution).strip()
+            return distributed_by, buckets
+        else:
+            return distribution, None
 
     def parse(
         self,
@@ -123,7 +87,7 @@ class StarRocksTableDefinitionParser(object):
         charset: str,
     ) -> ReflectedState:
         return ReflectedState(
-            table_name=table["TABLE_NAME"],
+            table_name=table.TABLE_NAME,
             columns=[
                 self._parse_column(column=column, agg_type=agg_types.get(column.COLUMN_NAME))
                 for column in columns
@@ -193,7 +157,7 @@ class StarRocksTableDefinitionParser(object):
             "comment": column["COLUMN_COMMENT"],
         }
         if agg_type:
-            col_info[ColumnSROptionsKey] = {ColumnAggInfoKeyWithPrefix.agg_type: agg_type}
+            col_info[ColumnSROptionsKey] = {ColumnAggInfoKeyWithPrefix.AGG_TYPE: agg_type}
         return col_info
 
     def _get_key_columns(self, columns: list[_DecodingRow]) -> list[str]:
@@ -222,14 +186,16 @@ class StarRocksTableDefinitionParser(object):
         key_type = self._get_key_type(columns=columns)
         return f"{key_type}({', '.join(quoted_cols)})"
 
-    def _get_distribution_desc(self, table_config: _DecodingRow) -> str:
+    def _get_distribution_info(self, table_config: _DecodingRow) -> ReflectionDistributionInfo:
         """
-        Get distribution from information_schema.tables table.
-        It returns string representation of distribution option.
+        Get distribution from information_schema.tables_config table.
+        It returns ReflectionDistributionInfo representation of distribution option.
         """
-        distribution_cols = table_config.DISTRIBUTE_KEY
-        distribution_str = f'({distribution_cols})' if distribution_cols else ""
-        return f'{table_config.DISTRIBUTE_TYPE}{distribution_str}'
+        return ReflectionDistributionInfo(
+            type=table_config.DISTRIBUTE_TYPE,
+            keys=table_config.DISTRIBUTE_KEY,
+            buckets=table_config.DISTRIBUTE_BUCKET,
+        )
 
     def _parse_table_options(self, table: _DecodingRow, table_config: _DecodingRow, columns: list[_DecodingRow]) -> dict:
         """Parse table options from `information_schema` views."""
@@ -247,10 +213,10 @@ class StarRocksTableDefinitionParser(object):
             opts[TableInfoKeyWithPrefix.PARTITION_BY] = table_config.PARTITION_KEY
 
         if table_config.DISTRIBUTE_KEY:
-            opts[TableInfoKeyWithPrefix.DISTRIBUTED_BY] = self._get_distribution_desc(table_config)
+            opts[TableInfoKeyWithPrefix.DISTRIBUTED_BY] = self._get_distribution_info(table_config)
 
         if table_config.SORT_KEY:
-            columns = [c.strip().strip("`") for c in table_config.SORT_KEY.split(",")]
+            columns = [c.strip() for c in table_config.SORT_KEY.split(",")]
             opts[TableInfoKeyWithPrefix.ORDER_BY] = columns
 
         if table_config.PROPERTIES:
@@ -259,6 +225,6 @@ class StarRocksTableDefinitionParser(object):
                     json.loads(table_config.PROPERTIES or "{}").items()
                 )
             except json.JSONDecodeError:
-                pass  # Ignore if properties are not valid JSON
+                logger.info(f"properties are not valid JSON: {table_config.PROPERTIES}")
 
         return opts

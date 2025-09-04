@@ -1,12 +1,10 @@
-import pytest
-from sqlalchemy.dialects import registry
-import re
 import logging
 
 from starrocks.alembic.render import _add_view, _add_materialized_view
 from starrocks.alembic.ops import CreateViewOp, CreateMaterializedViewOp
 
 logger = logging.getLogger(__name__)
+
 
 class TestRender:
     def setup_method(self, method):

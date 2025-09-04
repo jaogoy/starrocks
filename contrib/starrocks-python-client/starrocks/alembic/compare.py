@@ -10,7 +10,7 @@ from sqlalchemy import Column, quoted_name
 from sqlalchemy.engine.reflection import Inspector
 from sqlalchemy.sql.schema import Table
 
-from starrocks.defaults import TableReflectionDefaults
+from starrocks.defaults import ReflectionTableDefaults
 from starrocks.params import (
     DialectName,
     SRKwargsPrefix,
@@ -413,7 +413,7 @@ def _compare_engine(
 
     normalized_meta = TableAttributeNormalizer.normalize_engine(meta_engine)
     # Reflected table must have a default ENGINE, so we need to normalize it
-    normalized_conn = TableReflectionDefaults.normalize_engine(conn_engine)
+    normalized_conn = ReflectionTableDefaults.normalize_engine(conn_engine)
 
     _compare_single_table_attribute(
         table_name,
@@ -421,7 +421,7 @@ def _compare_engine(
         TableInfoKey.ENGINE,
         normalized_conn,
         normalized_meta,
-        default_value=TableReflectionDefaults.DEFAULT_ENGINE,
+        default_value=ReflectionTableDefaults.engine(),
         support_change=False  # exception handling for engine change
     )
 
@@ -440,7 +440,7 @@ def _compare_key(
     logger.debug(f"KEY. conn_key: {conn_key}, meta_key: {meta_key}")
 
     # Reflected table must have a default KEY, so we need to normalize it
-    normalized_conn = TableReflectionDefaults.normalize_key(conn_key)
+    normalized_conn = ReflectionTableDefaults.normalize_key(conn_key)
     normalized_meta = TableAttributeNormalizer.normalize_key(meta_key)
 
     _compare_single_table_attribute(
@@ -449,7 +449,7 @@ def _compare_key(
         TableInfoKey.KEY,
         normalized_conn,
         normalized_meta,
-        default_value=TableReflectionDefaults.DEFAULT_KEY,
+        default_value=ReflectionTableDefaults.key(),
         support_change=False
     )
 
@@ -478,7 +478,7 @@ def _compare_partition(
         TableInfoKey.PARTITION_BY, 
         normalized_conn, 
         normalized_meta, 
-        default_value=TableReflectionDefaults.DEFAULT_PARTITION_BY,
+        default_value=ReflectionTableDefaults.partition_by(),
         support_change=False
     ):
         from starrocks.alembic.ops import AlterTablePartitionOp
@@ -511,7 +511,7 @@ def _compare_distribution(
         TableInfoKey.DISTRIBUTED_BY,
         normalized_conn,
         normalized_meta,
-        default_value=TableReflectionDefaults.get_default_distribution()
+        default_value=ReflectionTableDefaults.distribution_type()
     ):
         from starrocks.alembic.ops import AlterTableDistributionOp
 
@@ -552,7 +552,7 @@ def _compare_order_by(
         TableInfoKey.ORDER_BY,
         normalized_conn,
         normalized_meta,
-        default_value=TableReflectionDefaults.DEFAULT_ORDER_BY
+        default_value=ReflectionTableDefaults.order_by()
     ):
         from starrocks.alembic.ops import AlterTableOrderOp
         ops_list.append(
@@ -591,7 +591,7 @@ def _compare_properties(
     for key in all_keys:
         conn_value = normalized_conn.get(key)
         meta_value = normalized_meta.get(key)
-        default_value = TableReflectionDefaults.get_default_properties(run_mode).get(key)
+        default_value = ReflectionTableDefaults.properties(run_mode).get(key)
 
         # Convert all to strings for comparison to avoid type issues (e.g., int vs str)
         conn_str = str(conn_value) if conn_value is not None else None
@@ -626,7 +626,7 @@ def _compare_properties(
                     # Add a warning for this case where no default is known.
                     logger.info(
                         f"Table '{full_table_name}': Property '{key}' in database has non-default value '{conn_str}', "
-                        f"but no default is defined in TableReflectionDefaults and it's not specified in metadata. "
+                        f"but no default is defined in ReflectionTableDefaults and it's not specified in metadata. "
                         f"No ALTER TABLE SET operation will be generated automatically. "
                         f"Please specify this property explicitly in your table definition if you want to manage it."
                     )

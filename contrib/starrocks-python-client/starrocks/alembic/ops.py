@@ -467,7 +467,7 @@ def alter_table_partition(operations, op: AlterTablePartitionOp):
 
 @Operations.implementation_for(AlterTableDistributionOp)
 def alter_table_distribution(operations, op: AlterTableDistributionOp):
-    from starrocks.alembic.ddl import AlterTableDistribution
+    from starrocks.sql.ddl import AlterTableDistribution
     operations.execute(
         AlterTableDistribution(
             op.table_name,
@@ -480,7 +480,7 @@ def alter_table_distribution(operations, op: AlterTableDistributionOp):
 
 @Operations.implementation_for(AlterTableOrderOp)
 def alter_table_order(operations, op: AlterTableOrderOp):
-    from starrocks.alembic.ddl import AlterTableOrder
+    from starrocks.sql.ddl import AlterTableOrder
     operations.execute(
         AlterTableOrder(op.table_name, op.order_by, schema=op.schema)
     )
@@ -488,7 +488,7 @@ def alter_table_order(operations, op: AlterTableOrderOp):
 
 @Operations.implementation_for(AlterTablePropertiesOp)
 def alter_table_properties(operations, op: AlterTablePropertiesOp):
-    from starrocks.alembic.ddl import AlterTableProperties
+    from starrocks.sql.ddl import AlterTableProperties
     operations.execute(
         AlterTableProperties(op.table_name, op.properties, schema=op.schema)
     )

@@ -6,7 +6,7 @@ from starrocks.alembic.compare import (
     _normalize_distribution_string,
     _normalize_order_by_string
 )
-from starrocks.defaults import TableReflectionDefaults
+from starrocks.defaults import ReflectionTableDefaults
 
 
 class TestRegexPattern:
@@ -85,17 +85,17 @@ class TestDefaultValues:
     def test_engine_normalization(self):
         """Test engine normalization logic."""
         # Test None -> DEFAULT
-        result = TableReflectionDefaults.normalize_engine(None)
-        assert result == TableReflectionDefaults.DEFAULT_ENGINE
+        result = ReflectionTableDefaults.normalize_engine(None)
+        assert result == ReflectionTableDefaults.engine()
 
         # Test empty string -> DEFAULT
-        result = TableReflectionDefaults.normalize_engine("")
-        assert result == TableReflectionDefaults.DEFAULT_ENGINE
+        result = ReflectionTableDefaults.normalize_engine("")
+        assert result == ReflectionTableDefaults.engine()
 
         # Test DEFAULT -> DEFAULT
-        result = TableReflectionDefaults.normalize_engine(TableReflectionDefaults.DEFAULT_ENGINE)
-        assert result == TableReflectionDefaults.DEFAULT_ENGINE
+        result = ReflectionTableDefaults.normalize_engine(ReflectionTableDefaults.engine())
+        assert result == ReflectionTableDefaults.engine()
 
         # Test other engine -> unchanged
-        result = TableReflectionDefaults.normalize_engine("MYSQL")
+        result = ReflectionTableDefaults.normalize_engine("MYSQL")
         assert result == "MYSQL"

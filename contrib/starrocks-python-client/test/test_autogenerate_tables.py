@@ -3,12 +3,12 @@ from alembic.autogenerate.api import AutogenContext
 from unittest.mock import Mock, PropertyMock
 
 from starrocks.alembic.compare import compare_starrocks_table
-from starrocks.params import TableInfoKeyWithPrefix
-from starrocks.defaults import TableReflectionDefaults
+from starrocks.params import TableInfoKeyWithPrefix, DialectName
+from starrocks.defaults import ReflectionTableDefaults
 
 
 LOG_ATTRIBUTE_NEED_SPECIFIED = "Please specify this attribute explicitly"
-LOG_NO_DEFAULT_VALUE = "but no default is defined in TableReflectionDefaults"
+LOG_NO_DEFAULT_VALUE = "but no default is defined in ReflectionTableDefaults"
 LOG_ALTER_AUTO_GENERATED = "An ALTER TABLE SET operation will be generated"
 LOG_NO_ALERT_AUTO_GENERATED = "No ALTER TABLE SET operation will be generated"
 
@@ -26,7 +26,7 @@ class TestRealTableObjects:
         from unittest.mock import Mock
 
         autogen_context = Mock(spec=AutogenContext)
-        autogen_context.dialect.name = "starrocks"
+        autogen_context.dialect.name = DialectName
 
         # Create real metadata and table objects
         metadata_old = MetaData()
@@ -85,7 +85,7 @@ class TestRealTableObjects:
         from unittest.mock import Mock
         
         autogen_context = Mock(spec=AutogenContext)
-        autogen_context.dialect.name = "starrocks"
+        autogen_context.dialect.name = DialectName
         
         # Use separate MetaData for each table to avoid conflicts
         metadata_conn = MetaData()
@@ -107,7 +107,7 @@ class TestRealTableObjects:
         )
 
         meta_table_kwargs = {
-            'starrocks_KEY': TableReflectionDefaults.DEFAULT_KEY,
+            'starrocks_KEY': ReflectionTableDefaults.key(),
             'starrocks_DISTRIBUTED_BY': 'HASH(`id`)  BUCKETS   8',
             'schema': 'test_db'
         }
@@ -124,6 +124,50 @@ class TestRealTableObjects:
         # No changes should be detected
         assert result == []
 
+    def test_real_table_with_table_args(self):
+        """Test real table properties defined via __table_args__ (simulated by kwargs)."""
+        from sqlalchemy import MetaData, Table, Column, Integer, String
+        from alembic.autogenerate.api import AutogenContext
+        from unittest.mock import Mock
+
+        autogen_context = Mock(spec=AutogenContext)
+        autogen_context.dialect.name = DialectName
+
+        metadata_old = MetaData()
+        metadata_new = MetaData()
+
+        # Table as it exists in database (reflected)
+        # Simulate table reflected from DB, where properties are typically present
+        conn_table = Table(
+            'products', metadata_old,
+            Column('id', Integer),
+            Column('name', String(50)),
+            starrocks_ENGINE='OLAP',
+            starrocks_DISTRIBUTED_BY='HASH(id) BUCKETS 8',
+            starrocks_PROPERTIES={'replication_num': '3', 'compression': 'ZSTD'},
+            schema='test_db'
+        )
+
+        # Table as defined in new metadata (target state), simulating __table_args__
+        # Here we directly pass the starrocks_* kwargs, which is how they would be
+        # ultimately processed even if originating from __table_args__ in an ORM model.
+        meta_table = Table(
+            'products', metadata_new,
+            Column('id', Integer),
+            Column('name', String(50)),
+            starrocks_ENGINE='OLAP',
+            starrocks_DISTRIBUTED_BY='HASH(id) BUCKETS 8',
+            starrocks_PROPERTIES={'replication_num': '3', 'compression': 'LZ4'}, # Changed property
+            schema='test_db'
+        )
+
+        result = compare_starrocks_table(autogen_context, conn_table, meta_table)
+
+        assert len(result) == 1
+        from starrocks.alembic.ops import AlterTablePropertiesOp
+        assert isinstance(result[0], AlterTablePropertiesOp)
+        assert result[0].properties == {'replication_num': '3', 'compression': 'LZ4'}
+
     def test_real_table_unsupported_engine_change(self):
         """Test unsupported ENGINE change using real Table objects."""
         from sqlalchemy import MetaData, Table, Column, Integer
@@ -131,7 +175,7 @@ class TestRealTableObjects:
         from unittest.mock import Mock
 
         autogen_context = Mock(spec=AutogenContext)
-        autogen_context.dialect.name = "starrocks"
+        autogen_context.dialect.name = DialectName
 
         metadata_old = MetaData()
         metadata_new = MetaData()
@@ -161,7 +205,7 @@ class TestRealTableObjects:
         from unittest.mock import Mock
 
         autogen_context = Mock(spec=AutogenContext)
-        autogen_context.dialect.name = "starrocks"
+        autogen_context.dialect.name = DialectName
 
         metadata_old = MetaData()
         metadata_new = MetaData()
@@ -191,7 +235,7 @@ class TestRealTableObjects:
         from unittest.mock import Mock
 
         autogen_context = Mock(spec=AutogenContext)
-        autogen_context.dialect.name = "starrocks"
+        autogen_context.dialect.name = DialectName
 
         metadata_old = MetaData()
         metadata_new = MetaData()
@@ -225,7 +269,7 @@ class TestEngineChanges:
     def test_engine_none_to_default_value(self):
         """Test ENGINE from None to default value ('OLAP')."""
         autogen_context = Mock(spec=AutogenContext)
-        autogen_context.dialect.name = "starrocks"
+        autogen_context.dialect.name = DialectName
 
         conn_table = Mock()  # Table reflected from SR database, no ENGINE explicitly set, implies default OLAP
         type(conn_table).name = PropertyMock(return_value="test_table")
@@ -235,17 +279,17 @@ class TestEngineChanges:
         meta_table = Mock(  # Metadata explicitly sets default OLAP
             kwargs={
                 TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(id)",
-                TableInfoKeyWithPrefix.ENGINE: TableReflectionDefaults.DEFAULT_ENGINE,
+                TableInfoKeyWithPrefix.ENGINE: ReflectionTableDefaults.engine(),
             }
         )
 
-        result = compare_starrocks_table(autogen_context, conn_table, meta_table)
-        assert len(result) == 0
+        ops = compare_starrocks_table(autogen_context, conn_table, meta_table)
+        assert len(ops) == 0
 
     def test_engine_none_to_non_default_value(self):
         """Test ENGINE from None (implicit default OLAP) to a non-default value (MYSQL)."""
         autogen_context = Mock(spec=AutogenContext)
-        autogen_context.dialect.name = "starrocks"
+        autogen_context.dialect.name = DialectName
 
         conn_table = Mock()  # Table reflected from SR database, no ENGINE explicitly set, implies default OLAP
         type(conn_table).name = PropertyMock(return_value="test_table")
@@ -266,7 +310,7 @@ class TestEngineChanges:
     def test_engine_default_to_none(self):
         """Test ENGINE from default value ('OLAP') to None."""
         autogen_context = Mock(spec=AutogenContext)
-        autogen_context.dialect.name = "starrocks"
+        autogen_context.dialect.name = DialectName
 
         conn_table = Mock()  # Table reflected from SR database, explicitly OLAP
         type(conn_table).name = PropertyMock(return_value="test_table")
@@ -289,7 +333,7 @@ class TestEngineChanges:
     def test_engine_non_default_to_none(self):
         """Test ENGINE from a non-default value ('MYSQL') to None."""
         autogen_context = Mock(spec=AutogenContext)
-        autogen_context.dialect.name = "starrocks"
+        autogen_context.dialect.name = DialectName
 
         conn_table = Mock()  # Table reflected from SR database, explicitly MYSQL
         type(conn_table).name = PropertyMock(return_value="test_table")
@@ -312,7 +356,7 @@ class TestEngineChanges:
     def test_engine_change(self):
         """Test ENGINE value changes ('OLAP' to 'MYSQL')."""
         autogen_context = Mock(spec=AutogenContext)
-        autogen_context.dialect.name = "starrocks"
+        autogen_context.dialect.name = DialectName
 
         conn_table = Mock()
         type(conn_table).name = PropertyMock(return_value="test_table")
@@ -342,7 +386,7 @@ class TestEngineChanges:
     def test_engine_no_change(self, conn_engine, meta_engine):
         """Test ENGINE with no change."""
         autogen_context = Mock(spec=AutogenContext)
-        autogen_context.dialect.name = "starrocks"
+        autogen_context.dialect.name = DialectName
 
         conn_table = Mock()
         type(conn_table).name = PropertyMock(return_value="test_table")
@@ -365,7 +409,7 @@ class TestEngineChanges:
     def test_engine_none_to_none(self):
         """Test ENGINE from None to None (no change)."""
         autogen_context = Mock(spec=AutogenContext)
-        autogen_context.dialect.name = "starrocks"
+        autogen_context.dialect.name = DialectName
 
         conn_table = Mock()  # No ENGINE explicitly set in database
         type(conn_table).name = PropertyMock(return_value="test_table")
@@ -386,7 +430,7 @@ class TestKeyChanges:
     def test_key_none_to_default_value(self):
         """Test KEY from None (implicit default DUPLICATE KEY) to default value ('DUPLICATE KEY')."""
         autogen_context = Mock(spec=AutogenContext)
-        autogen_context.dialect.name = "starrocks"
+        autogen_context.dialect.name = DialectName
 
         conn_table = Mock()  # Table reflected from SR database, no KEY explicitly set, implies default DUPLICATE KEY
         type(conn_table).name = PropertyMock(return_value="test_table")
@@ -396,7 +440,7 @@ class TestKeyChanges:
         meta_table = Mock(  # Metadata explicitly sets default DUPLICATE KEY
             kwargs={
                 TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(id)",
-                TableInfoKeyWithPrefix.KEY: TableReflectionDefaults.DEFAULT_KEY,
+                TableInfoKeyWithPrefix.KEY: ReflectionTableDefaults.key(),
             }
         )
 
@@ -406,7 +450,7 @@ class TestKeyChanges:
     def test_key_none_to_non_default_value(self):
         """Test KEY from None (implicit default DUPLICATE KEY) to a non-default value (PRIMARY KEY)."""
         autogen_context = Mock(spec=AutogenContext)
-        autogen_context.dialect.name = "starrocks"
+        autogen_context.dialect.name = DialectName
 
         conn_table = Mock()  # Table reflected from SR database, no KEY explicitly set, implies default DUPLICATE KEY
         type(conn_table).name = PropertyMock(return_value="test_table")
@@ -427,14 +471,14 @@ class TestKeyChanges:
     def test_key_default_to_none(self):
         """Test KEY from default value ('DUPLICATE KEY') to None."""
         autogen_context = Mock(spec=AutogenContext)
-        autogen_context.dialect.name = "starrocks"
+        autogen_context.dialect.name = DialectName
 
         conn_table = Mock()  # Table reflected from SR database, explicitly DUPLICATE KEY
         type(conn_table).name = PropertyMock(return_value="test_table")
         type(conn_table).schema = PropertyMock(return_value="test_db")
         conn_table.kwargs = {
             TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(id)",
-            TableInfoKeyWithPrefix.KEY: TableReflectionDefaults.DEFAULT_KEY,
+            TableInfoKeyWithPrefix.KEY: ReflectionTableDefaults.key(),
         }
 
         meta_table = Mock(  # Metadata does not specify KEY, implies default DUPLICATE KEY
@@ -451,7 +495,7 @@ class TestKeyChanges:
     def test_key_non_default_to_none(self):
         """Test KEY from a non-default value ('PRIMARY KEY') to None."""
         autogen_context = Mock(spec=AutogenContext)
-        autogen_context.dialect.name = "starrocks"
+        autogen_context.dialect.name = DialectName
 
         conn_table = Mock()  # Table reflected from SR database, explicitly PRIMARY KEY
         type(conn_table).name = PropertyMock(return_value="test_table")
@@ -475,7 +519,7 @@ class TestKeyChanges:
     def test_key_change(self):
         """Test KEY value changes ('DUPLICATE KEY' to 'UNIQUE KEY')."""
         autogen_context = Mock(spec=AutogenContext)
-        autogen_context.dialect.name = "starrocks"
+        autogen_context.dialect.name = DialectName
 
         conn_table = Mock()
         type(conn_table).name = PropertyMock(return_value="test_table")
@@ -505,7 +549,7 @@ class TestKeyChanges:
     def test_key_no_change(self, conn_key, meta_key):
         """Test KEY with no change."""
         autogen_context = Mock(spec=AutogenContext)
-        autogen_context.dialect.name = "starrocks"
+        autogen_context.dialect.name = DialectName
 
         conn_table = Mock()
         type(conn_table).name = PropertyMock(return_value="test_table")
@@ -528,7 +572,7 @@ class TestKeyChanges:
     def test_key_none_to_none(self):
         """Test KEY from None to None (no change)."""
         autogen_context = Mock(spec=AutogenContext)
-        autogen_context.dialect.name = "starrocks"
+        autogen_context.dialect.name = DialectName
 
         conn_table = Mock()  # No KEY explicitly set in database
         type(conn_table).name = PropertyMock(return_value="test_table")
@@ -554,7 +598,7 @@ class TestPartitionChanges:
     def test_partition_none_to_value(self):
         """Test PARTITION_BY from None to value."""
         autogen_context = Mock(spec=AutogenContext)
-        autogen_context.dialect.name = "starrocks"
+        autogen_context.dialect.name = DialectName
 
         conn_table = Mock()  # No PARTITION_BY explicitly set in database
         type(conn_table).name = PropertyMock(return_value="test_table")
@@ -575,7 +619,7 @@ class TestPartitionChanges:
     def test_partition_value_to_none(self):
         """Test PARTITION_BY from value to None."""
         autogen_context = Mock(spec=AutogenContext)
-        autogen_context.dialect.name = "starrocks"
+        autogen_context.dialect.name = DialectName
 
         conn_table = Mock()  # Database has PARTITION_BY set
         type(conn_table).name = PropertyMock(return_value="test_table")
@@ -600,7 +644,7 @@ class TestPartitionChanges:
     def test_partition_change(self):
         """Test PARTITION_BY value changes."""
         autogen_context = Mock(spec=AutogenContext)
-        autogen_context.dialect.name = "starrocks"
+        autogen_context.dialect.name = DialectName
 
         conn_table = Mock()
         type(conn_table).name = PropertyMock(return_value="test_table")
@@ -631,7 +675,7 @@ class TestPartitionChanges:
     def test_partition_no_change(self, conn_partition, meta_partition):
         """Test PARTITION_BY no change."""
         autogen_context = Mock(spec=AutogenContext)
-        autogen_context.dialect.name = "starrocks"
+        autogen_context.dialect.name = DialectName
 
         conn_table = Mock()
         type(conn_table).name = PropertyMock(return_value="test_table")
@@ -654,7 +698,7 @@ class TestPartitionChanges:
     def test_partition_none_to_none(self):
         """Test PARTITION_BY from None to None (no change)."""
         autogen_context = Mock(spec=AutogenContext)
-        autogen_context.dialect.name = "starrocks"
+        autogen_context.dialect.name = DialectName
 
         conn_table = Mock()  # No PARTITION_BY explicitly set in database
         type(conn_table).name = PropertyMock(return_value="test_table")
@@ -675,7 +719,7 @@ class TestDistributionChanges:
     def test_distribution_none_to_default_value(self):
         """Test DISTRIBUTED_BY from None to default value ('RANDOM')."""
         autogen_context = Mock(spec=AutogenContext)
-        autogen_context.dialect.name = "starrocks"
+        autogen_context.dialect.name = DialectName
 
         conn_table = Mock()  # No DISTRIBUTED_BY explicitly set in database, implies default RANDOM
         type(conn_table).name = PropertyMock(return_value="test_table")
@@ -684,7 +728,7 @@ class TestDistributionChanges:
 
         meta_table = Mock(  # Metadata explicitly sets default RANDOM
             kwargs={
-                TableInfoKeyWithPrefix.DISTRIBUTED_BY: TableReflectionDefaults.DEFAULT_DISTRIBUTED_BY,
+                TableInfoKeyWithPrefix.DISTRIBUTED_BY: ReflectionTableDefaults.distribution(),
             }
         )
 
@@ -694,7 +738,7 @@ class TestDistributionChanges:
     def test_distribution_none_to_non_default_value(self):
         """Test DISTRIBUTED_BY from None (implicit default RANDOM) to a non-default value."""
         autogen_context = Mock(spec=AutogenContext)
-        autogen_context.dialect.name = "starrocks"
+        autogen_context.dialect.name = DialectName
 
         conn_table = Mock()  # No DISTRIBUTED_BY explicitly set in database
         type(conn_table).name = PropertyMock(return_value="test_table")
@@ -717,12 +761,12 @@ class TestDistributionChanges:
     def test_distribution_default_to_none(self):
         """Test DISTRIBUTED_BY from default value ('RANDOM') to None."""
         autogen_context = Mock(spec=AutogenContext)
-        autogen_context.dialect.name = "starrocks"
+        autogen_context.dialect.name = DialectName
 
         conn_table = Mock()  # Database explicitly has default RANDOM
         type(conn_table).name = PropertyMock(return_value="test_table")
         type(conn_table).schema = PropertyMock(return_value="test_db")
-        conn_table.kwargs = {TableInfoKeyWithPrefix.DISTRIBUTED_BY: TableReflectionDefaults.DEFAULT_DISTRIBUTED_BY}
+        conn_table.kwargs = {TableInfoKeyWithPrefix.DISTRIBUTED_BY: ReflectionTableDefaults.distribution()}
 
         meta_table = Mock(  # Metadata does not specify DISTRIBUTED_BY
             kwargs={}
@@ -734,7 +778,7 @@ class TestDistributionChanges:
     def test_distribution_non_default_to_none(self):
         """Test DISTRIBUTED_BY from a non-default value to None."""
         autogen_context = Mock(spec=AutogenContext)
-        autogen_context.dialect.name = "starrocks"
+        autogen_context.dialect.name = DialectName
 
         conn_table = Mock()  # Database has non-default DISTRIBUTED_BY
         type(conn_table).name = PropertyMock(return_value="test_table")
@@ -752,12 +796,12 @@ class TestDistributionChanges:
     def test_distribution_change(self):
         """Test DISTRIBUTED_BY value changes."""
         autogen_context = Mock(spec=AutogenContext)
-        autogen_context.dialect.name = "starrocks"
+        autogen_context.dialect.name = DialectName
 
         conn_table = Mock()
         type(conn_table).name = PropertyMock(return_value="test_table")
         type(conn_table).schema = PropertyMock(return_value="test_db")
-        conn_table.kwargs = {TableInfoKeyWithPrefix.DISTRIBUTED_BY: "RANDOM"}
+        conn_table.kwargs = {TableInfoKeyWithPrefix.DISTRIBUTED_BY: ReflectionTableDefaults.distribution()}
 
         meta_table = Mock(
             kwargs={
@@ -782,7 +826,7 @@ class TestDistributionChanges:
     def test_distribution_no_change(self, conn_distribution, meta_distribution):
         """Test DISTRIBUTED_BY with no change."""
         autogen_context = Mock(spec=AutogenContext)
-        autogen_context.dialect.name = "starrocks"
+        autogen_context.dialect.name = DialectName
 
         conn_table = Mock()
         type(conn_table).name = PropertyMock(return_value="test_table")
@@ -801,7 +845,7 @@ class TestDistributionChanges:
     def test_distribution_none_to_none(self):
         """Test DISTRIBUTED_BY from None to None (no change)."""
         autogen_context = Mock(spec=AutogenContext)
-        autogen_context.dialect.name = "starrocks"
+        autogen_context.dialect.name = DialectName
 
         conn_table = Mock()  # No DISTRIBUTED_BY explicitly set in database
         type(conn_table).name = PropertyMock(return_value="test_table")
@@ -824,7 +868,7 @@ class TestOrderByChanges:
         Impossible in reality, because ORDER BY is always set when the table is created.
         """
         autogen_context = Mock(spec=AutogenContext)
-        autogen_context.dialect.name = "starrocks"
+        autogen_context.dialect.name = DialectName
 
         conn_table = Mock()  # No ORDER_BY explicitly set in database
         type(conn_table).name = PropertyMock(return_value="test_table")
@@ -846,7 +890,7 @@ class TestOrderByChanges:
         Won't change without explicitly setting ORDER BY.
         """
         autogen_context = Mock(spec=AutogenContext)
-        autogen_context.dialect.name = "starrocks"
+        autogen_context.dialect.name = DialectName
 
         conn_table = Mock()
         type(conn_table).name = PropertyMock(return_value="test_table")
@@ -866,7 +910,7 @@ class TestOrderByChanges:
     def test_order_by_change(self):
         """Test ORDER_BY value changes."""
         autogen_context = Mock(spec=AutogenContext)
-        autogen_context.dialect.name = "starrocks"
+        autogen_context.dialect.name = DialectName
 
         conn_table = Mock()
         type(conn_table).name = PropertyMock(return_value="test_table")
@@ -899,7 +943,7 @@ class TestOrderByChanges:
     def test_order_by_no_change(self, conn_order_by, meta_order_by):
         """Test ORDER_BY no change."""
         autogen_context = Mock(spec=AutogenContext)
-        autogen_context.dialect.name = "starrocks"
+        autogen_context.dialect.name = DialectName
 
         conn_table = Mock()
         type(conn_table).name = PropertyMock(return_value="test_table")
@@ -930,7 +974,7 @@ class TestPropertiesChanges:
     def test_properties_none_to_default_value(self, prop_key, default_value, non_default_value):
         """Test PROPERTIES from None (implicit default) to explicit default value."""
         autogen_context = Mock(spec=AutogenContext)
-        autogen_context.dialect.name = "starrocks"
+        autogen_context.dialect.name = DialectName
 
         conn_table = Mock(kwargs={})  # No properties in DB, implies default
         meta_table = Mock(kwargs={TableInfoKeyWithPrefix.PROPERTIES: {prop_key: default_value}})
@@ -950,7 +994,7 @@ class TestPropertiesChanges:
     def test_properties_none_to_non_default_value(self, prop_key, default_value, non_default_value):
         """Test PROPERTIES from None (implicit default) to explicit non-default value."""
         autogen_context = Mock(spec=AutogenContext)
-        autogen_context.dialect.name = "starrocks"
+        autogen_context.dialect.name = DialectName
 
         conn_table = Mock(kwargs={})  # No properties in DB, implies default
         meta_table = Mock(kwargs={TableInfoKeyWithPrefix.PROPERTIES: {prop_key: non_default_value}})
@@ -967,7 +1011,7 @@ class TestPropertiesChanges:
     def test_properties_default_to_none(self, prop_key, default_value, non_default_value):
         """Test PROPERTIES from explicit default value to None (no op)."""
         autogen_context = Mock(spec=AutogenContext)
-        autogen_context.dialect.name = "starrocks"
+        autogen_context.dialect.name = DialectName
 
         conn_table = Mock(kwargs={TableInfoKeyWithPrefix.PROPERTIES: {prop_key: default_value}})  # DB has explicit default
         meta_table = Mock(kwargs={})  # Metadata has no properties
@@ -982,7 +1026,7 @@ class TestPropertiesChanges:
     def test_properties_none_default_to_none(self, prop_key, default_value, non_default_value, caplog):
         """Test PROPERTIES from implicit default (default value is set to None) to None (no op)."""
         autogen_context = Mock(spec=AutogenContext)
-        autogen_context.dialect.name = "starrocks"
+        autogen_context.dialect.name = DialectName
         caplog.set_level("INFO")
 
         conn_table = Mock(kwargs={TableInfoKeyWithPrefix.PROPERTIES: {prop_key: default_value}})  # DB has explicit default
@@ -996,12 +1040,12 @@ class TestPropertiesChanges:
 
     @pytest.mark.parametrize("prop_key, default_value, non_default_value", [
         ("replication_num", "3", "2"),
-        # ("storage_medium", "HDD", "SSD"),  # can't know the change for there is no default in TableReflectionDefaults
+        # ("storage_medium", "HDD", "SSD"),  # can't know the change for there is no default in ReflectionTableDefaults
     ])
     def test_properties_non_default_to_none(self, prop_key, default_value, non_default_value, caplog):
         """Test PROPERTIES from explicit non-default value to None (generate ALTER to reset to default)."""
         autogen_context = Mock(spec=AutogenContext)
-        autogen_context.dialect.name = "starrocks"
+        autogen_context.dialect.name = DialectName
         caplog.set_level("WARNING")
 
         conn_table = Mock(kwargs={TableInfoKeyWithPrefix.PROPERTIES: {prop_key: non_default_value}})  # DB has non-default value
@@ -1023,7 +1067,7 @@ class TestPropertiesChanges:
     def test_properties_change(self, prop_key, value1, value2):
         """Test PROPERTIES value change."""
         autogen_context = Mock(spec=AutogenContext)
-        autogen_context.dialect.name = "starrocks"
+        autogen_context.dialect.name = DialectName
 
         conn_table = Mock(kwargs={TableInfoKeyWithPrefix.PROPERTIES: {prop_key: value1}})  # DB has value1
         meta_table = Mock(kwargs={TableInfoKeyWithPrefix.PROPERTIES: {prop_key: value2}})  # Metadata has value2
@@ -1041,7 +1085,7 @@ class TestPropertiesChanges:
     def test_properties_no_change(self, prop_key, value):
         """Test PROPERTIES no change."""
         autogen_context = Mock(spec=AutogenContext)
-        autogen_context.dialect.name = "starrocks"
+        autogen_context.dialect.name = DialectName
 
         conn_table = Mock(kwargs={TableInfoKeyWithPrefix.PROPERTIES: {prop_key: value}})  # DB has value
         meta_table = Mock(kwargs={TableInfoKeyWithPrefix.PROPERTIES: {prop_key: value}})  # Metadata has same value
@@ -1057,7 +1101,7 @@ class TestPropertiesChanges:
     def test_properties_no_change2(self, conn_props, meta_props):
         """Test PROPERTIES no change."""
         autogen_context = Mock(spec=AutogenContext)
-        autogen_context.dialect.name = "starrocks"
+        autogen_context.dialect.name = DialectName
 
         conn_table = Mock(kwargs={TableInfoKeyWithPrefix.PROPERTIES: conn_props})  # DB has value
         meta_table = Mock(kwargs={TableInfoKeyWithPrefix.PROPERTIES: meta_props})  # Metadata has same value
@@ -1068,7 +1112,7 @@ class TestPropertiesChanges:
     def test_properties_none_to_none(self):
         """Test PROPERTIES from None to None (no change)."""
         autogen_context = Mock(spec=AutogenContext)
-        autogen_context.dialect.name = "starrocks"
+        autogen_context.dialect.name = DialectName
 
         conn_table = Mock(kwargs={})  # No properties in DB
         meta_table = Mock(kwargs={})  # No properties in metadata
@@ -1079,7 +1123,7 @@ class TestPropertiesChanges:
     def test_properties_multiple_changes(self):
         """Test multiple property changes simultaneously."""
         autogen_context = Mock(spec=AutogenContext)
-        autogen_context.dialect.name = "starrocks"
+        autogen_context.dialect.name = DialectName
 
         conn_props = {"replication_num": "3", "storage_medium": "HDD", "dynamic_partition.enable": "true"}
         meta_props = {"replication_num": "2", "storage_medium": "SSD", "dynamic_partition.enable": "false"}
@@ -1088,10 +1132,72 @@ class TestPropertiesChanges:
         meta_table = Mock(kwargs={TableInfoKeyWithPrefix.PROPERTIES: meta_props})
 
         result = compare_starrocks_table(autogen_context, conn_table, meta_table)
+
         assert len(result) == 1
         from starrocks.alembic.ops import AlterTablePropertiesOp
         assert isinstance(result[0], AlterTablePropertiesOp)
         assert result[0].properties == meta_props
+
+
+class TestORMTableObjects:
+    """Tests using real SQLAlchemy ORM Table objects with __table_args__."""
+
+    def test_orm_table_with_table_args(self):
+        """Test ORM table properties defined via __table_args__ are correctly handled."""
+        from sqlalchemy import Column, Integer, String, MetaData, Table
+        from sqlalchemy.orm import declarative_base
+        from alembic.autogenerate.api import AutogenContext
+        from unittest.mock import Mock
+
+        Base = declarative_base()
+
+        class ORMTestTable(Base):
+            __tablename__ = 'orm_test_table'
+            __table_args__ = {
+                    'schema': 'test_db',
+                    'starrocks_ENGINE': 'OLAP',
+                    'starrocks_DISTRIBUTED_BY': 'HASH(id) BUCKETS 8',
+                    'starrocks_ORDER_BY': 'id, name',
+                    'starrocks_PROPERTIES': {'replication_num': '3', 'storage_medium': 'SSD'}
+            }
+            id = Column(Integer, primary_key=True)
+            name = Column(String(50))
+
+        autogen_context = Mock(spec=AutogenContext)
+        autogen_context.dialect.name = DialectName
+
+        # The Table object from the ORM model (target state)
+        meta_table = ORMTestTable.__table__
+
+        # Simulate table reflected from DB with some differences
+        conn_table = Table(
+            'orm_test_table', MetaData(),
+            Column('id', Integer),
+            Column('name', String(50)),
+            starrocks_ENGINE='OLAP',
+            starrocks_DISTRIBUTED_BY='HASH(id, name) BUCKETS 16', # Changed
+            starrocks_ORDER_BY='id', # Changed
+            starrocks_PROPERTIES={'replication_num': '2', 'compression': 'ZSTD'}, # Changed
+            schema='test_db'
+        )
+
+        result = compare_starrocks_table(autogen_context, conn_table, meta_table)
+
+        assert len(result) == 3
+        from starrocks.alembic.ops import AlterTableDistributionOp, AlterTableOrderOp, AlterTablePropertiesOp
+        op_types = [type(op) for op in result]
+        assert AlterTableDistributionOp in op_types
+        assert AlterTableOrderOp in op_types
+        assert AlterTablePropertiesOp in op_types
+
+        for op in result:
+            if isinstance(op, AlterTableDistributionOp):
+                assert op.distributed_by == "HASH(id)"
+                assert op.buckets == 8
+            elif isinstance(op, AlterTableOrderOp):
+                assert op.order_by == "id, name"
+            elif isinstance(op, AlterTablePropertiesOp):
+                assert op.properties == {'replication_num': '3', 'storage_medium': 'SSD'}
 
 
 class TestComplexScenarios:
@@ -1101,7 +1207,7 @@ class TestComplexScenarios:
         """Test multiple StarRocks table options changes at once."""
         autogen_context = Mock(spec=AutogenContext)
         autogen_context.dialect = Mock()
-        autogen_context.dialect.name = "starrocks"
+        autogen_context.dialect.name = DialectName
 
         conn_table = Mock()
         type(conn_table).name = PropertyMock(return_value="test_table")
@@ -1149,7 +1255,7 @@ class TestComplexScenarios:
         """Test that only supported operations are detected and generated."""
         autogen_context = Mock(spec=AutogenContext)
         autogen_context.dialect = Mock()
-        autogen_context.dialect.name = "starrocks"
+        autogen_context.dialect.name = DialectName
 
         conn_table = Mock()
         type(conn_table).name = PropertyMock(return_value="test_table")

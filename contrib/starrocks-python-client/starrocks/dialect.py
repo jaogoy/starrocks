@@ -15,7 +15,7 @@
 import re
 from textwrap import dedent
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, List
 
 from alembic.ddl.base import format_table_name
 from sqlalchemy import Connection, exc, schema as sa_schema, util, log, text, Row
@@ -44,12 +44,19 @@ from .datatype import (
     DATE, STRING, logger
 )
 from . import reflection as _reflection
-from .sql.ddl import CreateView, DropView, AlterView, CreateMaterializedView, DropMaterializedView
+from .sql.ddl import (
+    CreateView, DropView, AlterView, CreateMaterializedView, DropMaterializedView,
+    AlterTableEngine,
+    AlterTableKey,
+    AlterTablePartition,
+    AlterTableDistribution,
+    AlterTableOrder,
+    AlterTableProperties,
+)
 from .sql.schema import View
 from .reflection import StarRocksInspector
 from .reflection_info import ReflectionViewInfo
 from .defaults import ReflectionViewDefaults
-from typing import List
 from .params import ColumnSROptionsKey, TableInfoKey, TableInfoKeyWithPrefix, ColumnAggInfoKeyWithPrefix
 
 # Register the compiler methods
@@ -256,7 +263,7 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
         text += "\n)%s\n\n" % self.post_create_table(table)
         return text
 
-    def _validate_key_definitions(self, table: sa_schema.Table):
+    def _validate_key_definitions(self, table: sa_schema.Table) -> None:
         """
         Validates key definitions for all StarRocks table types.
 
@@ -299,7 +306,7 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
         if key_type == 'AGGREGATE KEY':
             self._validate_aggregate_key_order(table, key_column_names)
 
-    def _validate_aggregate_key_order(self, table: sa_schema.Table, key_column_names: list[str]):
+    def _validate_aggregate_key_order(self, table: sa_schema.Table, key_column_names: List[str]) -> None:
         """
         Validates column order for AGGREGATE KEY tables.
 
@@ -427,7 +434,7 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
         """Check if column has a specific info key (case-insensitive)."""
         return any(k.lower() == key.lower() for k in column.info.keys())
     
-    def _get_column_info_value(self, column: sa_schema.Column, key: str, default=None):
+    def _get_column_info_value(self, column: sa_schema.Column, key: str, default: Any = None) -> Any:
         """Get column info value by key (case-insensitive)."""
         for k, v in column.info.items():
             if k.lower() == key.lower():
@@ -524,7 +531,7 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
 
         return " ".join(colspec)
 
-    def _get_agg_info(self, column: sa_schema.Column, colspec: list[str]) -> dict:
+    def _get_agg_info(self, column: sa_schema.Column, colspec: list[str]) -> None:
         """Get aggregate information for a column."""
         
         # aggregation type is only valid for AGGREGATE KEY tables
@@ -680,28 +687,28 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
     # Visit methods ordered according to StarRocks grammar:
     # engine → key → partition → distribution → order by → properties
 
-    def visit_alter_table_engine(self, alter, **kw: Any) -> str:
+    def visit_alter_table_engine(self, alter: AlterTableEngine, **kw: Any) -> str:
         """Compile ALTER TABLE ENGINE DDL for StarRocks.
         Not supported in StarRocks.
         """
         table_name = format_table_name(self, alter.table_name, alter.schema)
         return f"ALTER TABLE {table_name} ENGINE = {alter.engine}"
 
-    def visit_alter_table_key(self, alter, **kw: Any) -> str:
+    def visit_alter_table_key(self, alter: AlterTableKey, **kw: Any) -> str:
         """Compile ALTER TABLE KEY DDL for StarRocks.
         Not supported in StarRocks yet.
         """
         table_name = format_table_name(self, alter.table_name, alter.schema)
         return f"ALTER TABLE {table_name} {alter.key_type} KEY ({alter.key_columns})"
 
-    def visit_alter_table_partition(self, alter, **kw: Any) -> str:
+    def visit_alter_table_partition(self, alter: AlterTablePartition, **kw: Any) -> str:
         """Compile ALTER TABLE PARTITION BY DDL for StarRocks.
         Not supported in StarRocks yet.
         """
         table_name = format_table_name(self, alter.table_name, alter.schema)
         return f"ALTER TABLE {table_name} PARTITION BY {alter.partition_by}"
 
-    def visit_alter_table_distribution(self, alter, **kw: Any) -> str:
+    def visit_alter_table_distribution(self, alter: AlterTableDistribution, **kw: Any) -> str:
         """Compile ALTER TABLE DISTRIBUTED BY DDL for StarRocks."""
         # TODO:
         table_name = format_table_name(self, alter.table_name, alter.schema)
@@ -710,13 +717,13 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
             distribution_clause += f" BUCKETS {alter.buckets}"
         return f"ALTER TABLE {table_name} {distribution_clause}"
 
-    def visit_alter_table_order(self, alter, **kw: Any) -> str:
+    def visit_alter_table_order(self, alter: AlterTableOrder, **kw: Any) -> str:
         """Compile ALTER TABLE ORDER BY DDL for StarRocks."""
 
         table_name = format_table_name(self, alter.table_name, alter.schema)
         return f"ALTER TABLE {table_name} ORDER BY {alter.order_by}"
 
-    def visit_alter_table_properties(self, alter, **kw: Any) -> str:
+    def visit_alter_table_properties(self, alter: AlterTableProperties, **kw: Any) -> str:
         """Compile ALTER TABLE SET (...) DDL for StarRocks."""
         table_name = format_table_name(self, alter.table_name, alter.schema)
         
@@ -758,7 +765,7 @@ class StarRocksDialect(MySQLDialect_pymysql):
         # Explicitly instantiate the preparer here, ensuring it's an instance
         self.preparer = self.preparer(self)
 
-    def initialize(self, connection: Connection):
+    def initialize(self, connection: Connection) -> None:
         super().initialize(connection)
         if self.run_mode is None:
             self.run_mode = self._get_run_mode(connection)
@@ -832,8 +839,8 @@ class StarRocksDialect(MySQLDialect_pymysql):
             return s.replace("'", "\\'")
         
         st: str = dedent(f"""
-            SELECT *
-            FROM information_schema.{inf_sch_table}
+            SELECT * 
+            FROM information_schema.{inf_sch_table} 
             WHERE {" AND ".join([f"{k} = '{escape_single_quote(v)}'"
                                  for k, v in kwargs.items()])}
         """)

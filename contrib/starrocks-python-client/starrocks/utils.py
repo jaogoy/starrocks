@@ -1,4 +1,7 @@
-from typing import Any, Dict, Optional, Union, Mapping, Iterator
+import re
+from typing import Any, Dict, Optional, Union, Mapping, Iterator, List
+
+from starrocks.reflection_info import ReflectionDistributionInfo
 
 
 class CaseInsensitiveDict(dict):
@@ -42,3 +45,114 @@ class CaseInsensitiveDict(dict):
         else:
             for key, value in other:
                 self[key] = value
+
+
+class TableAttributeNormalizer:
+    """A class to normalize StarRocks attributes for comparison."""
+
+    # Pre-compiled regex patterns for better performance
+    _BACKTICKS_PATTERN = re.compile(r'`([^`]+)`')
+    _WHITESPACE_PATTERN = re.compile(r'\s+')
+    # Matches spaces around opening parenthesis
+    _OPEN_PAREN_SPACE_PATTERN = re.compile(r'\s*(\()\s*')
+    # Matches spaces around closing parenthesis
+    _CLOSE_PAREN_SPACE_PATTERN = re.compile(r'\s*(\))\s*')
+    _COMMA_SPACE_PATTERN = re.compile(r'\s*,\s*')
+
+    @staticmethod
+    def strip_identifier_backticks(sql_text: str) -> str:
+        """Remove MySQL-style identifier quotes (`) while preserving string literals."""
+        in_quote = False
+        quote_char = None
+        escaped = False
+        out: list[str] = []
+
+        for ch in sql_text:
+            if in_quote:
+                out.append(ch)
+                if escaped:
+                    escaped = False
+                elif ch == "\\":
+                    escaped = True
+                elif ch == quote_char:
+                    in_quote = False
+                    quote_char = None
+                continue
+
+            if ch in ("'", '"'):
+                in_quote = True
+                quote_char = ch
+                out.append(ch)
+            elif ch == "`":
+                # Drop identifier quote when not in string literal
+                continue
+            else:
+                out.append(ch)
+
+        return "".join(out)
+
+    @staticmethod
+    def normalize_sql(sql_text: Optional[str]) -> Optional[str]:
+        """A normalizer for SQL text for diffing."""
+        if sql_text is None:
+            return None
+        sql_text = re.sub(r"--.*?(?:\n|$)", " ", sql_text)
+        sql_text = TableAttributeNormalizer.strip_identifier_backticks(sql_text)
+        sql_text = re.sub(r"\s+", " ", sql_text).strip().lower()
+        return sql_text
+
+    @staticmethod
+    def normalize_engine(engine: str) -> str:
+        return TableAttributeNormalizer._simple_normalize(engine)
+
+    @staticmethod
+    def normalize_key(key: str) -> str:
+        return TableAttributeNormalizer._simple_normalize(key)
+
+    @staticmethod
+    def _simple_normalize(value: str) -> str:
+        return value.upper().strip() if value else None
+
+    @staticmethod
+    def normalize_partition_string(partition: str) -> str:
+        """Normalize partition string by removing backticks and extra spaces.
+        Because there may be column names in this string, we don't simply lowercase it.
+        """
+        return TableAttributeNormalizer.normalize_column_identifiers(partition)
+
+    @staticmethod
+    def normalize_distribution_string(distribution: Union[ReflectionDistributionInfo, str]) -> str:
+        """Normalize distribution string by removing backticks and extra spaces.
+        Because there may be column names in this string, we don't simply lowercase it.
+        """
+        return TableAttributeNormalizer.normalize_column_identifiers(
+            distribution.to_string() if isinstance(distribution, ReflectionDistributionInfo) else distribution
+        )
+
+    @staticmethod
+    def normalize_order_by_string(order_by: Union[str, List[str], None]) -> str:
+        """Normalize ORDER BY string by removing backticks and standardizing format.
+        Because there may be column names in this string, we don't simply lowercase it.
+        """
+        if isinstance(order_by, list):
+            order_by = ', '.join(str(item) for item in order_by)
+        elif order_by is None:
+            return ''
+        return TableAttributeNormalizer.normalize_column_identifiers(str(order_by))
+
+    @staticmethod
+    def normalize_column_identifiers(text: str) -> str:
+        """Normalize column identifiers by removing backticks, standardizing spaces, and removing spaces inside parentheses.
+        Because there may be column names in this string, we don't simply lowercase it.
+        """
+        if not text:
+            return text
+        normalized: str = TableAttributeNormalizer._BACKTICKS_PATTERN.sub(r'\1', text)
+        normalized = TableAttributeNormalizer._WHITESPACE_PATTERN.sub(' ', normalized).strip()
+        # Remove spaces immediately around opening parenthesis
+        normalized = TableAttributeNormalizer._OPEN_PAREN_SPACE_PATTERN.sub(r'\1', normalized)
+        # Remove spaces immediately around closing parenthesis
+        normalized = TableAttributeNormalizer._CLOSE_PAREN_SPACE_PATTERN.sub(r'\1', normalized)
+        # Standardize spaces around commas within parentheses
+        normalized = TableAttributeNormalizer._COMMA_SPACE_PATTERN.sub(', ', normalized)
+        return normalized

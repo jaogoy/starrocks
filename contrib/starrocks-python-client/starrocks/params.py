@@ -1,9 +1,7 @@
 from .types import TableType
 
 
-DialectName = 'starrocks'
-
-
+DialectName: str = 'starrocks'
 SRKwargsPrefix = 'starrocks_'
 """Prefix for StarRocks-specific kwargs."""
 

@@ -1,14 +1,15 @@
+class SystemRunMode:
+    SHARED_DATA = "shared_data"
+    SHARED_NOTHING = "shared_nothing"
+
+
 class TableEngine:
     OLAP = "OLAP"
-
-    DEFAULT = OLAP
 
 
 class TableDistribution:
     HASH = "HASH"
     RANDOM = "RANDOM"
-
-    DEFAULT = RANDOM
 
 
 class TableType:
@@ -17,10 +18,13 @@ class TableType:
     AGGREGATE_KEY = "AGGREGATE KEY"
     UNIQUE_KEY = "UNIQUE KEY"
 
-    DEFAULT = DUPLICATE_KEY
-
     # For validation and mapping
     ALL_KEY_TYPES = {PRIMARY_KEY, DUPLICATE_KEY, AGGREGATE_KEY, UNIQUE_KEY}
+
+
+class TableKey(TableType):
+    """Alias name for TableType."""
+    pass
 
 
 class TableModel:
