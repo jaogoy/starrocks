@@ -31,15 +31,23 @@ class TableModel:
     """ Table type in information_schema.tables_config.TABLE_MODEL
     """
     DUP_KEYS = "DUP_KEYS"
+    DUP_KEYS2 = "DUPLICATE_KEYS"
     AGG_KEYS = "AGG_KEYS"
+    AGG_KEYS2 = "AGGREGATE_KEYS"
     PRI_KEYS = "PRI_KEYS"
+    PRI_KEYS2 = "PRIMARY_KEYS"
     UNQ_KEYS = "UNQ_KEYS"
+    UNQ_KEYS2 = "UNIQUE_KEYS"
 
     TO_TYPE_MAP = {
         DUP_KEYS: TableType.DUPLICATE_KEY,
+        DUP_KEYS2: TableType.DUPLICATE_KEY,
         AGG_KEYS: TableType.AGGREGATE_KEY,
+        AGG_KEYS2: TableType.AGGREGATE_KEY,
         PRI_KEYS: TableType.PRIMARY_KEY,
+        PRI_KEYS2: TableType.PRIMARY_KEY,
         UNQ_KEYS: TableType.UNIQUE_KEY,
+        UNQ_KEYS2: TableType.UNIQUE_KEY,
     }
 
 
@@ -83,12 +91,14 @@ class ViewSecurityType:
     Use these constants in View.info["security"].
     """
 
-    NONE = ""
+    EMPTY = ""
+    NONE = "NONE"
     INVOKER = "INVOKER"
     DEFINER = "DEFINER"
 
     # Allowed set for validation
     ALLOWED_ITEMS = {
+        EMPTY,
         NONE,
         INVOKER,
         DEFINER,

@@ -104,7 +104,7 @@ class ReflectionViewDefaults:
     
     @classmethod
     def security(cls) -> str:
-        return ViewSecurityType.DEFINER
+        return ViewSecurityType.EMPTY
 
     @classmethod
     def apply(

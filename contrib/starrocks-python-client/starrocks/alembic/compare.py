@@ -435,11 +435,12 @@ def _compare_key(
     Note: StarRocks does not support ALTER TABLE KEY, so this will raise an error
     if a change is detected.
     """
-    conn_key = conn_table_attributes.get(TableInfoKey.KEY)
-    meta_key = meta_table_attributes.get(TableInfoKey.KEY)
+    conn_key = _get_table_key_type(conn_table_attributes)
+    meta_key = _get_table_key_type(meta_table_attributes)
     logger.debug(f"KEY. conn_key: {conn_key}, meta_key: {meta_key}")
 
     # Reflected table must have a default KEY, so we need to normalize it
+    # Actually, the conn key must not be None, because it is inspected from database.
     normalized_conn = ReflectionTableDefaults.normalize_key(conn_key)
     normalized_meta = TableAttributeNormalizer.normalize_key(meta_key)
 
@@ -452,6 +453,15 @@ def _compare_key(
         default_value=ReflectionTableDefaults.key(),
         support_change=False
     )
+
+def _get_table_key_type(table_attributes: Dict[str, Any]) -> str:
+    """Get table key type. like 'PRIMARY KEY (id, name)'"""
+    for key_type in TableInfoKey.KEY_KWARG_MAP:
+        key_columns = table_attributes.get(key_type)
+        if key_columns:
+            key_columns = TableAttributeNormalizer.remove_outer_parentheses(key_columns)
+            return f"{TableInfoKey.KEY_KWARG_MAP[key_type]} ({key_columns})"
+    return None
 
 
 def _compare_partition(
@@ -680,9 +690,9 @@ def _compare_single_table_attribute(
         4. If meta not specified and conn != default -> log error, return False (user must decide)
     """
     # Convert values to strings for comparison (handle None gracefully)
-    conn_str = conn_value if conn_value is not None else None
-    meta_str = meta_value if meta_value is not None else None
-    default_str = default_value if default_value is not None else None
+    conn_str = str(conn_value) if conn_value is not None else None
+    meta_str = str(meta_value) if meta_value is not None else None
+    default_str = str(default_value) if default_value is not None else None
 
     full_table_name = f"{schema}.{table_name}" if schema else table_name or "unknown_table"
     attribute_name: str = attribute_name.upper().replace('_', ' ')
@@ -693,7 +703,8 @@ def _compare_single_table_attribute(
             # Case 1: meta specified, different from conn -> has change
             logger.debug(
                 f"Table '{full_table_name}', Attribute '{attribute_name}' "
-                f"has changed from {conn_str or '(not set)'} to {meta_str} with default value {default_str}")
+                f"has changed from '{conn_str or '(not set)'}' to '{meta_str}' "
+                f"with default value '{default_str}'")
             if meta_value.lower() == (conn_str or default_str or '').lower():
                 logger.warning(
                     f"Table '{full_table_name}': Attribute '{attribute_name}' has a case-only difference: "
@@ -773,12 +784,12 @@ def compare_starrocks_column(
 
     if meta_agg_type != conn_agg_type:
         logger.warning(
-            "StarRocks-specific option '%s' for column '%s' in table '%s' has changed from %s to %s",
+            "StarRocks-specific option '%s' for column '%s' in table '%s' has changed from '%s' to '%s'",
             ColumnAggInfoKey.AGG_TYPE,
             cname,
             tname,
-            conn_agg_type,
-            meta_agg_type,
+            conn_agg_type or '(not set)',
+            meta_agg_type or '(not set)',
         )
         # Update the alter_column_op with the new aggregate type
         if alter_column_op is not None:

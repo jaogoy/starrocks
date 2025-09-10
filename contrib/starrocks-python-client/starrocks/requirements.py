@@ -139,15 +139,15 @@ class Requirements(SuiteRequirements):
         """target dialect supports representation of Python
         datetime.time() with microsecond objects."""
 
-        return exclusions.closed()  # Not supported on Starrocks (no time type)    
-    
+        return exclusions.closed()  # Not supported on Starrocks (no time type)
+
     @property
     def time_microseconds(self):
         """target dialect supports representation of Python
         datetime.time() with microsecond objects."""
 
         return exclusions.closed()  # Not supported on Starrocks (no time type)
-    
+
     @property
     def implements_get_lastrowid(self):
         """target dialect implements the executioncontext.get_lastrowid()
@@ -155,22 +155,22 @@ class Requirements(SuiteRequirements):
         """
 
         return exclusions.closed()
-    
+
     @property
     def reflect_table_options(self):
         """Target database must support reflecting table_options."""
-        
+
         return exclusions.open()
-    
+
     @property
     def comment_reflection(self):
         """Indicates if the database support table comment reflection"""
         return exclusions.open()
-    
+
     @property
     def sane_rowcount(self):
         return exclusions.closed()  # TODO: Check if that is expected
-    
+
     @property
     def views(self):
         """Target database must support VIEWs."""
@@ -187,18 +187,18 @@ from sqlalchemy.testing.suite.test_dialect import ExceptionTest
 from sqlalchemy.testing.suite.test_select import FetchLimitOffsetTest, LikeFunctionsTest
 from sqlalchemy.testing.suite.test_ddl import LongNameBlowoutTest
 from sqlalchemy.testing.suite.test_types import (
-    DateTest, 
-    DateTimeCoercedToDateTimeTest, 
-    DateTimeTest, 
-    JSONTest, 
-    NumericTest, 
+    DateTest,
+    DateTimeCoercedToDateTimeTest,
+    DateTimeTest,
+    JSONTest,
+    NumericTest,
     StringTest,
     BinaryTest,
     EnumTest,
 )
 from sqlalchemy.testing.suite.test_reflection import (
-    BizarroCharacterFKResolutionTest, 
-    ComponentReflectionTest, 
+    BizarroCharacterFKResolutionTest,
+    ComponentReflectionTest,
     CompositeKeyReflectionTest,
     HasIndexTest,
     HasTableTest,

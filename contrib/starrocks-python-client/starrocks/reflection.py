@@ -25,22 +25,39 @@ from sqlalchemy.dialects.mysql.reflection import _re_compile
 from sqlalchemy import log, types as sqltypes, util
 from sqlalchemy.engine.reflection import Inspector
 
-from .params import ColumnAggInfoKeyWithPrefix, ColumnSROptionsKey, TableInfoKeyWithPrefix
+from .params import ColumnAggInfoKeyWithPrefix, ColumnSROptionsKey, SRKwargsPrefix, TableInfoKeyWithPrefix, TableInfoKey
 from .reflection_info import ReflectedState, ReflectionViewInfo, ReflectionDistributionInfo
-from .types import TableModel
+from .types import TableModel, TableType, TableEngine
 
 logger = logging.getLogger(__name__)
 
 
 class StarRocksInspector(Inspector):
+    """
+    The StarRocksInspector provides a custom inspector for the StarRocks dialect,
+    allowing for reflection of StarRocks-specific database objects like views.
+    """
     def __init__(self, bind):
         super().__init__(bind)
 
     def get_view(self, view_name: str, schema: Optional[str] = None, **kwargs: Any) -> Optional[ReflectionViewInfo]:
-        return self.dialect._get_view_info(self.bind, view_name, schema=schema, **kwargs)
+        """
+        Retrieves information about a specific view.
+
+        :param view_name: The name of the view to inspect.
+        :param schema: The schema of the view; defaults to the default schema name if None.
+        :param kwargs: Additional arguments passed to the dialect's get_view method.
+        :return: A ReflectionViewInfo object, or None if the view does not exist.
+        """
+        return self.dialect.get_view(self.bind, view_name, schema=schema, **kwargs)
 
     def get_views(self, schema: str | None = None) -> dict[tuple[str | None, str], ReflectionViewInfo]:
-        """Batch reflection wrapper for dialect.get_views (prototype)."""
+        """
+        Retrieves a dictionary of all views in a given schema.
+
+        :param schema: The schema to inspect; defaults to the default schema name if None.
+        :return: A dictionary mapping (schema, view_name) to ReflectionViewInfo objects.
+        """
         return self.dialect.get_views(self.bind, schema=schema)
 
 
@@ -57,35 +74,25 @@ class StarRocksTableDefinitionParser(object):
         self._re_csv_int = _re_compile(r"\d+")
         self._re_csv_str = _re_compile(r"\x27(?:\x27\x27|[^\x27])*\x27")
 
-    @staticmethod
-    def parse_distribution_string(distribution: str) -> tuple[str, int | None]:
-        """Parse DISTRIBUTED BY string to extract distribution and buckets.
-        Args:
-            distribution: String like "HASH(id) BUCKETS 8" or "HASH(id)"
-        Returns:
-            Tuple of (distributed_by, buckets)
-        """
-        if not distribution:
-            return distribution, None
-
-        buckets_match = StarRocksTableDefinitionParser._BUCKETS_PATTERN.search(distribution)
-
-        if buckets_match:
-            buckets = int(buckets_match.group(1))
-            # Remove BUCKETS part to get pure distribution
-            distributed_by = StarRocksTableDefinitionParser._BUCKETS_REPLACE_PATTERN.sub('', distribution).strip()
-            return distributed_by, buckets
-        else:
-            return distribution, None
-
     def parse(
         self,
         table: _DecodingRow,
-        table_config: _DecodingRow,
+        table_config: dict[str, Any],
         columns: list[_DecodingRow],
         agg_types: dict[str, str],
         charset: str,
     ) -> ReflectedState:
+        """
+        Parses the raw reflection data into a structured ReflectedState object.
+
+        :param table: A row from `information_schema.tables`.
+        :param table_config: A dictionary representing a row from `information_schema.tables_config`,
+                             augmented with the 'PARTITION_CLAUSE'.
+        :param columns: A list of rows from `information_schema.columns`.
+        :param agg_types: A dictionary mapping column names to their aggregation types.
+        :param charset: The character set of the table.
+        :return: A ReflectedState object containing the parsed table information.
+        """
         return ReflectedState(
             table_name=table.TABLE_NAME,
             columns=[
@@ -102,6 +109,25 @@ class StarRocksTableDefinitionParser(object):
                 "name": None,
             }],
         )
+
+
+    def _parse_column(self, column: _DecodingRow, agg_type: str | None = None) -> dict:
+        """
+        Parse column from information_schema.columns table.
+        It returns dictionary with column informations expected by sqlalchemy.
+        """
+        col_info = {
+            "name": column["COLUMN_NAME"],
+            "type": self._parse_column_type(column=column),
+            "nullable": column["IS_NULLABLE"] == "YES",
+            "default": column["COLUMN_DEFAULT"],
+            "autoincrement": None,  # TODO: This is not specified
+            "computed": {"sqltext": column["GENERATION_EXPRESSION"]},
+            "comment": column["COLUMN_COMMENT"],
+        }
+        if agg_type:
+            col_info[ColumnSROptionsKey] = {ColumnAggInfoKeyWithPrefix.AGG_TYPE: agg_type}
+        return col_info
 
     def _parse_column_type(self, column: _DecodingRow) -> Any:
         """
@@ -142,38 +168,6 @@ class StarRocksTableDefinitionParser(object):
             type_instance = col_type(*type_args, **type_kw)
         return type_instance
 
-    def _parse_column(self, column: _DecodingRow, agg_type: str | None = None) -> dict:
-        """
-        Parse column from information_schema.columns table.
-        It returns dictionary with column informations expected by sqlalchemy.
-        """
-        col_info = {
-            "name": column["COLUMN_NAME"],
-            "type": self._parse_column_type(column=column),
-            "nullable": column["IS_NULLABLE"] == "YES",
-            "default": column["COLUMN_DEFAULT"],
-            "autoincrement": None,  # TODO: This is not specified
-            "computed": {"sqltext": column["GENERATION_EXPRESSION"]},
-            "comment": column["COLUMN_COMMENT"],
-        }
-        if agg_type:
-            col_info[ColumnSROptionsKey] = {ColumnAggInfoKeyWithPrefix.AGG_TYPE: agg_type}
-        return col_info
-
-    def _get_key_columns(self, columns: list[_DecodingRow]) -> list[str]:
-        """
-        Get list of key columns (COLUMN_KEY) from information_schema.columns table.
-        It returns list of column names that are part of key.
-        """
-        sorted_columns = sorted(columns, key=lambda col: col["ORDINAL_POSITION"])
-        return [c["COLUMN_NAME"] for c in sorted_columns if c["COLUMN_KEY"]]
-
-    def _get_key_type(self, table_config: _DecodingRow) -> str:
-        """
-        Get key type from information_schema.tables_config table.
-        """
-        return TableModel.TO_TYPE_MAP.get(table_config.TABLE_MODEL, "")
-
     def _get_key_desc(self, columns: list[_DecodingRow]) -> str:
         """
         Get key description from information_schema.columns table.
@@ -186,45 +180,113 @@ class StarRocksTableDefinitionParser(object):
         key_type = self._get_key_type(columns=columns)
         return f"{key_type}({', '.join(quoted_cols)})"
 
-    def _get_distribution_info(self, table_config: _DecodingRow) -> ReflectionDistributionInfo:
+    def _get_key_columns(self, columns: list[_DecodingRow]) -> list[str]:
+        """
+        Get list of key columns (COLUMN_KEY) from information_schema.columns table.
+        It returns list of column names that are part of key.
+
+        Currently, we can't extract the key columns from information_schema.tables_config.
+        """
+        sorted_columns = sorted(columns, key=lambda col: col.ORDINAL_POSITION)
+        return [c.COLUMN_NAME for c in sorted_columns if c.COLUMN_KEY]
+
+    def _get_key_type(self, table_config: dict[str, Any]) -> str:
+        """
+        Get key type from information_schema.tables_config table.
+        """
+        return TableModel.TO_TYPE_MAP.get(table_config.get('TABLE_MODEL'), "")
+
+    @staticmethod
+    def parse_distribution_string(distribution: str) -> tuple[str, int | None]:
+        """Parse DISTRIBUTED BY string to extract distribution and buckets.
+        Args:
+            distribution: String like "HASH(id) BUCKETS 8" or "HASH(id)"
+        Returns:
+            Tuple of (distributed_by, buckets)
+        """
+        if not distribution:
+            return distribution, None
+
+        buckets_match = StarRocksTableDefinitionParser._BUCKETS_PATTERN.search(distribution)
+
+        if buckets_match:
+            buckets = int(buckets_match.group(1))
+            # Remove BUCKETS part to get pure distribution
+            distributed_by = StarRocksTableDefinitionParser._BUCKETS_REPLACE_PATTERN.sub('', distribution).strip()
+            return distributed_by, buckets
+        else:
+            return distribution, None
+
+    def _get_distribution_info(self, table_config: dict[str, Any]) -> ReflectionDistributionInfo:
         """
         Get distribution from information_schema.tables_config table.
         It returns ReflectionDistributionInfo representation of distribution option.
         """
         return ReflectionDistributionInfo(
-            type=table_config.DISTRIBUTE_TYPE,
-            keys=table_config.DISTRIBUTE_KEY,
-            buckets=table_config.DISTRIBUTE_BUCKET,
+            type=table_config.get('DISTRIBUTE_TYPE'),
+            columns=table_config.get('DISTRIBUTE_KEY'),
+            buckets=table_config.get('DISTRIBUTE_BUCKET'),
         )
 
-    def _parse_table_options(self, table: _DecodingRow, table_config: _DecodingRow, columns: list[_DecodingRow]) -> dict:
-        """Parse table options from `information_schema` views."""
+    def _parse_table_options(self, table: _DecodingRow, table_config: dict[str, Any], columns: list[_DecodingRow]) -> dict:
+        """
+        Parse table options from `information_schema` views,
+        and generate the table options with `starrocks_` prefix, which will be used to reflect a Table().
+        Then, these options will be exactly the same as the options of a sqlalchemy.Table()
+        which is created by users manually, for both sqlalchemy.Table() or ORM styles.
+
+        :param table: A row from `information_schema.tables`.
+        :param table_config: A dictionary representing a row from `information_schema.tables_config`,
+                             augmented with the 'PARTITION_CLAUSE'.
+        :param columns: A list of rows from `information_schema.columns`.
+        :return: A dictionary of StarRocks-specific table options with the 'starrocks_' prefix.
+        """
         opts = {}
 
-        # TODO: check whether there need be a `starrocks_primary_key = (c1, c2)` in the opts
-
-        if table_config.TABLE_ENGINE:
-            opts[TableInfoKeyWithPrefix.ENGINE] = table_config.TABLE_ENGINE.upper()
+        if table_config.get('TABLE_ENGINE'):
+            logger.debug(f"table_config.TABLE_ENGINE: {table_config.get('TABLE_ENGINE')}")
+            if table_config.get('TABLE_ENGINE') != TableEngine.OLAP:
+                raise NotImplementedError(f"Table engine {table_config.get('TABLE_ENGINE')} is not supported now.")
+            opts[TableInfoKeyWithPrefix.ENGINE] = table_config.get('TABLE_ENGINE').upper()
 
         if table.TABLE_COMMENT:
+            logger.debug(f"table.TABLE_COMMENT: {table.TABLE_COMMENT}") 
             opts[TableInfoKeyWithPrefix.COMMENT] = table.TABLE_COMMENT
 
-        if table_config.PARTITION_KEY:
-            opts[TableInfoKeyWithPrefix.PARTITION_BY] = table_config.PARTITION_KEY
+        # Get key type from information_schema.tables_config.TABLE_MODEL,
+        # and key columns from information_schema.columns.COLUMN_KEY
+        logger.debug(f"table_config.TABLE_MODEL: {table_config.get('TABLE_MODEL')}")
+        if table_config.get('TABLE_MODEL'):
+            key_type_str = TableInfoKey.MODEL_TO_KEY_MAP.get(table_config.get('TABLE_MODEL'))
+            if key_type_str:
+                key_columns_str = ", ".join(self._get_key_columns(columns))
+                prefixed_key = f"{SRKwargsPrefix}{key_type_str}"
+                opts[prefixed_key] = key_columns_str
 
-        if table_config.DISTRIBUTE_KEY:
-            opts[TableInfoKeyWithPrefix.DISTRIBUTED_BY] = self._get_distribution_info(table_config)
+        partition_clause = table_config.get('PARTITION_CLAUSE')
+        if partition_clause:
+            opts[TableInfoKeyWithPrefix.PARTITION_BY] = partition_clause
+        elif table_config.get('PARTITION_KEY'):
+            # Fallback for older StarRocks versions or if SHOW CREATE TABLE fails
+            logger.debug(f"table_config.PARTITION_KEY: {table_config.get('PARTITION_KEY')}")
+            opts[TableInfoKeyWithPrefix.PARTITION_BY] = table_config.get('PARTITION_KEY')
 
-        if table_config.SORT_KEY:
-            columns = [c.strip() for c in table_config.SORT_KEY.split(",")]
-            opts[TableInfoKeyWithPrefix.ORDER_BY] = columns
+        if table_config.get('DISTRIBUTE_KEY'):
+            logger.debug(f"table_config.DISTRIBUTE_KEY: {table_config.get('DISTRIBUTE_KEY')}")
+            opts[TableInfoKeyWithPrefix.DISTRIBUTED_BY] = str(self._get_distribution_info(table_config))
 
-        if table_config.PROPERTIES:
+        if table_config.get('SORT_KEY'):
+            logger.debug(f"table_config.SORT_KEY: {table_config.get('SORT_KEY')}")
+            # columns = [c.strip() for c in table_config.get('SORT_KEY').split(",")]
+            opts[TableInfoKeyWithPrefix.ORDER_BY] = table_config.get('SORT_KEY')
+
+        if table_config.get('PROPERTIES'):
+            logger.debug(f"table_config.PROPERTIES: {table_config.get('PROPERTIES')}")
             try:
                 opts[TableInfoKeyWithPrefix.PROPERTIES] = dict(
-                    json.loads(table_config.PROPERTIES or "{}").items()
+                    json.loads(table_config.get('PROPERTIES') or "{}").items()
                 )
             except json.JSONDecodeError:
-                logger.info(f"properties are not valid JSON: {table_config.PROPERTIES}")
+                logger.info(f"properties are not valid JSON: {table_config.get('PROPERTIES')}")
 
         return opts

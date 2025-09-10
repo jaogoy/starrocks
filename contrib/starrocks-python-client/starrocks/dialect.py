@@ -29,6 +29,7 @@ from sqlalchemy.dialects.mysql.base import (
     MySQLIdentifierPreparer,
     _DecodingRow,
 )
+from sqlalchemy.orm import properties
 from sqlalchemy.sql import sqltypes
 from sqlalchemy.sql.expression import Delete, Select
 from sqlalchemy.engine import reflection
@@ -37,7 +38,8 @@ from sqlalchemy.dialects.mysql.types import (
 )
 from sqlalchemy.dialects.mysql.json import JSON
 
-from starrocks.types import ColumnAggType, SystemRunMode
+from starrocks.types import ColumnAggType, SystemRunMode, TableType
+from starrocks.utils import TableAttributeNormalizer
 
 from .datatype import (
     LARGEINT, HLL, BITMAP, PERCENTILE, ARRAY, MAP, STRUCT,
@@ -45,7 +47,7 @@ from .datatype import (
 )
 from . import reflection as _reflection
 from .sql.ddl import (
-    CreateView, DropView, AlterView, CreateMaterializedView, DropMaterializedView,
+    AlterMaterializedView, CreateView, DropView, AlterView, CreateMaterializedView, DropMaterializedView,
     AlterTableEngine,
     AlterTableKey,
     AlterTablePartition,
@@ -55,9 +57,9 @@ from .sql.ddl import (
 )
 from .sql.schema import View
 from .reflection import StarRocksInspector
-from .reflection_info import ReflectionViewInfo
+from .reflection_info import ReflectedState, ReflectionViewInfo
 from .defaults import ReflectionViewDefaults
-from .params import ColumnSROptionsKey, TableInfoKey, TableInfoKeyWithPrefix, ColumnAggInfoKeyWithPrefix
+from .params import ColumnSROptionsKey, SRKwargsPrefix, TableInfoKey, TableInfoKeyWithPrefix, ColumnAggInfoKeyWithPrefix
 
 # Register the compiler methods
 # The @compiles decorator is the public API for registering new SQL constructs.
@@ -82,6 +84,8 @@ from .params import ColumnSROptionsKey, TableInfoKey, TableInfoKeyWithPrefix, Co
 #
 #
 ##############################################################################################
+
+logger = logging.getLogger(__name__)
 
 # starrocks supported data types
 ischema_names = {
@@ -204,7 +208,6 @@ class StarRocksSQLCompiler(MySQLCompiler):
 class StarRocksDDLCompiler(MySQLDDLCompiler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.logger = logging.getLogger(f"{__name__}.StarRocksDDLCompiler")
 
     def visit_create_table(self, create: sa_schema.CreateTable, **kw: Any) -> str:
         table = create.element
@@ -223,8 +226,7 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
         # StarRocks-specific validation for all key types
         self._validate_key_definitions(table)
 
-        create_table_suffix: str = self.create_table_suffix(table)
-        if create_table_suffix:
+        if create_table_suffix := self.create_table_suffix(table):
             text += create_table_suffix + " "
 
         text += "("
@@ -235,6 +237,14 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
         first_pk = False
         for create_column in create.columns:
             column = create_column.element
+            if column.primary_key:
+                logger.warning(
+                    "Column '%s' in table '%s' has primary_key=True, which is not supported by the StarRocks dialect "
+                    "and will be ignored. Please define the primary key on the Table object using the "
+                    "'starrocks_PRIMARY_KEY' keyword argument.",
+                    column.name,
+                    self._get_simple_full_table_name(table.name, table.schema),
+                )
             try:
                 processed = self.process(
                     create_column, first_pk=column.primary_key and not first_pk
@@ -248,7 +258,7 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
             except exc.CompileError as ce:
                 raise exc.CompileError(
                     "(in table '%s', column '%s'): %s"
-                    % (table.description, column.name, ce.args[0])
+                    % (self._get_simple_full_table_name(table.name, table.schema), column.name, ce.args[0])
                 ) from ce
 
         # N.B. Primary Key is specified in post_create_table
@@ -260,8 +270,11 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
         # if const:
         #     text += separator + "\t" + const
 
-        text += "\n)%s\n\n" % self.post_create_table(table)
+        text += "\n)%s\n" % self.post_create_table(table, **kw)
         return text
+    
+    def _get_simple_full_table_name(self, table_name: str, schema: Optional[str] = None) -> str:
+        return f"{schema}.{table_name}" if schema else table_name
 
     def _validate_key_definitions(self, table: sa_schema.Table) -> None:
         """
@@ -303,7 +316,7 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
             )
 
         # 2. Specific Check: For AGGREGATE KEY tables, validate column order.
-        if key_type == 'AGGREGATE KEY':
+        if key_type == TableType.AGGREGATE_KEY:
             self._validate_aggregate_key_order(table, key_column_names)
 
     def _validate_aggregate_key_order(self, table: sa_schema.Table, key_column_names: List[str]) -> None:
@@ -350,7 +363,7 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
                     f"key column '{col_list[last_key_col_index].name}'."
                 )
 
-    def post_create_table(self, table: sa_schema.Table) -> str:
+    def post_create_table(self, table: sa_schema.Table, **kw: Any) -> str:
         """
         Builds table-level clauses for a CREATE TABLE statement.
 
@@ -358,7 +371,7 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
         kwargs on the `Table` object. It is responsible for constructing clauses
         that appear after the column definitions, such as:
         - `ENGINE`
-        - `PRIMARY KEY`, `DUPLICATE KEY`, `AGGREGATE KEY`, `UNIQUE KEY`
+        - `KEY`: `PRIMARY KEY`, `DUPLICATE KEY`, `AGGREGATE KEY`, `UNIQUE KEY`
         - `COMMENT`
         - `PARTITION BY`
         - `DISTRIBUTED BY`
@@ -375,60 +388,80 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
         table_opts: list[str] = []
 
         # Extract StarRocks-specific table options from kwargs without the dialect prefix (starrocks_)
-        opts: dict[str, Any] = dict(
-            (k[len(self.dialect.name) + 1:].upper(), v)
-            for k, v in table.kwargs.items()
-            if k.startswith("%s_" % self.dialect.name)
-        )
+        opts: dict[str, Any] = self._extract_table_options(table)
 
+        # ENGINE
+        if engine := opts.get(TableInfoKey.ENGINE):
+            table_opts.append(f'ENGINE={engine}')
+
+        # Key / Table Type (Primary key, Duplicate key, Aggregate key, Unique key)
+        if key_desc := self._get_create_table_key_desc(opts):
+            table_opts.append(key_desc)
+
+        # Comment
         if table.comment is not None:
-            opts["COMMENT"] = table.comment
-
-        if 'ENGINE' in opts:
-            table_opts.append(f'ENGINE={opts["ENGINE"]}')
-
-        # Key Types (Primary, Duplicate, Aggregate, Unique)
-        for tbl_type_key_str, table_type in TableInfoKey.KEY_KWARG_MAP.items():
-            kwarg_upper = tbl_type_key_str.upper()
-            if kwarg_upper in opts:
-                table_opts.append(f'{table_type}({opts[kwarg_upper]})')
-
-        if "COMMENT" in opts:
-            comment = self.sql_compiler.render_literal_value(
-                opts["COMMENT"], sqltypes.String()
-            )
+            opts[TableInfoKey.COMMENT] = table.comment
+        if comment := opts.get(TableInfoKey.COMMENT):
+            comment = self.sql_compiler.render_literal_value(comment, sqltypes.String())
             table_opts.append(f"COMMENT {comment}")
 
         # Partition
-        if 'PARTITION_BY' in opts:
-            table_opts.append(f'PARTITION BY {opts["PARTITION_BY"]}')
+        # TODO: there are 3 types of partitioning with different restrictions, we need to support all of them.
+        if partition_by := opts.get(TableInfoKey.PARTITION_BY):
+            table_opts.append(f'PARTITION BY {partition_by}')
 
         # Distribution
-        if 'DISTRIBUTED_BY' in opts:
-            dist_str = f'DISTRIBUTED BY {opts["DISTRIBUTED_BY"]}'
-            if 'BUCKETS' in opts:
-                dist_str += f' BUCKETS {opts["BUCKETS"]}'
-            table_opts.append(dist_str)
+        if distributed_by := opts.get(TableInfoKey.DISTRIBUTED_BY):
+            table_opts.append(f'DISTRIBUTED BY {distributed_by}')
 
         # Order By
-        if 'ORDER_BY' in opts:
-            table_opts.append(f'ORDER BY({opts["ORDER_BY"]})')
+        if order_by := opts.get(TableInfoKey.ORDER_BY):
+            order_by = TableAttributeNormalizer.remove_outer_parentheses(order_by)
+            table_opts.append(f'ORDER BY ({order_by})')
 
-        if "PROPERTIES" in opts:
-            props_val = opts["PROPERTIES"]
-            if isinstance(props_val, dict):
-                props_items = props_val.items()
-            elif isinstance(props_val, list):
-                props_items = props_val
+        # Properties
+        if properties := opts.get(TableInfoKey.PROPERTIES):
+            if isinstance(properties, dict):
+                props_items = properties.items()
+            elif isinstance(properties, list):
+                props_items = properties
             else:
                 raise exc.CompileError(
-                    f"Unsupported type for PROPERTIES: {type(props_val)}"
+                    f"Unsupported type for PROPERTIES: {type(properties)}"
                 )
 
             props = ",\n".join([f'\t"{k}"="{v}"' for k, v in props_items])
             table_opts.append(f"PROPERTIES(\n{props}\n)")
 
-        return " ".join(table_opts)
+        return "\n".join(table_opts)
+    
+    def _extract_table_options(self, table: sa_schema.Table) -> dict[str, Any]:
+        """Extract table options, without the prefix `starrocks_`."""
+        opts: dict[str, Any] = dict(
+            (k[len(SRKwargsPrefix):].upper(), v) for k, v in table.kwargs.items()
+                if k.startswith(SRKwargsPrefix)
+        )
+        logger.debug(f"extract table options from table: {table.name}, schema: {table.schema}, options: {opts}")
+        for k in opts.keys():
+            if k not in TableInfoKey.ALL:
+                raise exc.CompileError(f"Unsupported table option: {k}")
+
+        return opts
+
+    def _get_create_table_key_desc(self, opts: dict[str, Any]) -> str:
+        """Visit create table key."""
+        # Key / Table Type (Primary key, Duplicate key, Aggregate key, Unique key)
+        once = False  # only one key type is allowed
+        key_desc = ""
+        for tbl_type_key_str, table_type in TableInfoKey.KEY_KWARG_MAP.items():
+            kwarg_upper = tbl_type_key_str.upper()
+            if kwarg_upper in opts:
+                if once:
+                    raise exc.CompileError(f"Multiple key types found: {tbl_type_key_str}")
+                once = True
+                key_columns = TableAttributeNormalizer.remove_outer_parentheses(opts[kwarg_upper])
+                key_desc = f"{table_type} ({key_columns})"
+        return key_desc
 
     def _has_column_info_key(self, column: sa_schema.Column, key: str) -> bool:
         """Check if column has a specific info key (case-insensitive)."""
@@ -572,22 +605,14 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
     def visit_primary_key_constraint(self, constraint: sa_schema.PrimaryKeyConstraint, **kw: Any) -> str:
         if len(constraint) == 0:
             return ""
-        text = ""
-        # if constraint.name is not None:
-        #     formatted_name = self.preparer.format_constraint(constraint)
-        #     if formatted_name is not None:
-        #         text += "CONSTRAINT %s " % formatted_name
-        text += "PRIMARY KEY "
-        text += "(%s)" % ", ".join(
-            self.preparer.quote(c.name)
-            for c in (
-                constraint.columns_autoinc_first
-                if constraint._implicit_generated
-                else constraint.columns
-            )
+
+        logger.warning(
+            "PrimaryKeyConstraint detected for table '%s'. This is not supported by the StarRocks dialect "
+            "and will be ignored. Please define the primary key on the Table object using the "
+            "'starrocks_PRIMARY_KEY' keyword argument.",
+            self._get_simple_full_table_name(constraint.table.name, constraint.table.schema)
         )
-        text += self.define_constraint_deferrability(constraint)
-        return text
+        return ""
 
     def visit_set_table_comment(self, create: sa_schema.SetTableComment, **kw: Any) -> str:
         return "ALTER TABLE %s COMMENT=%s" % (
@@ -601,6 +626,38 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
         return "ALTER TABLE %s COMMENT=''" % (
             self.preparer.format_table(create.element)
         )
+
+    def visit_alter_view(self, alter: AlterView, **kw: Any) -> str:
+        view = alter.element
+        text = f"ALTER VIEW {self.preparer.format_table(view)}\n"
+
+        if view.columns:
+            text += self._get_view_column_clauses(view)
+
+        # StarRocks does not support altering COMMENT or SECURITY via ALTER VIEW.
+        # TODO: we can optimize it when StarRocks supports it in the future
+        # Only redefine the SELECT statement.
+        text += f"AS\n{view.definition}"
+
+        logger.debug("Compiled SQL for AlterView: \n%s", text)
+        return text
+
+    def _get_view_column_clauses(self, view: View) -> str:
+        """Helper method to format the column clauses for a CREATE VIEW statement."""
+        column_clauses: list[str] = []
+        for c in view.columns:
+            if isinstance(c, dict):
+                col_name: str = self.preparer.quote(c['name'])
+                if 'comment' in c:
+                    comment: str = self.sql_compiler.render_literal_value(
+                        c['comment'], sqltypes.String()
+                    )
+                    column_clauses.append(f'\t{col_name} COMMENT {comment}')
+                else:
+                    column_clauses.append(f'\t{col_name}')
+            else:
+                column_clauses.append(f'\t{self.preparer.quote(c)}')
+        return " (\n%s\n)" % ",\n".join(column_clauses)
 
     def visit_create_view(self, create: CreateView, **kw: Any) -> str:
         view = create.element
@@ -627,44 +684,16 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
 
         text += f"AS\n{view.definition}"
 
-        self.dialect.logger.debug("Compiled SQL for CreateView: \n%s", text)
+        logger.debug("Compiled SQL for CreateView: \n%s", text)
         return text
-
-    def visit_alter_view(self, alter: AlterView, **kw: Any) -> str:
-        view = alter.element
-        text = f"ALTER VIEW {self.preparer.format_table(view)}\n"
-
-        if view.columns:
-            text += self._get_view_column_clauses(view)
-
-        # StarRocks does not support altering COMMENT or SECURITY via ALTER VIEW.
-        # TODO: we can optimize it when StarRocks supports it in the future
-        # Only redefine the SELECT statement.
-        text += f"AS\n{view.definition}"
-
-        self.dialect.logger.debug("Compiled SQL for AlterView: \n%s", text)
-        return text
-
-    def _get_view_column_clauses(self, view: View) -> str:
-        """Helper method to format the column clauses for a CREATE VIEW statement."""
-        column_clauses: list[str] = []
-        for c in view.columns:
-            if isinstance(c, dict):
-                col_name: str = self.preparer.quote(c['name'])
-                if 'comment' in c:
-                    comment: str = self.sql_compiler.render_literal_value(
-                        c['comment'], sqltypes.String()
-                    )
-                    column_clauses.append(f'\t{col_name} COMMENT {comment}')
-                else:
-                    column_clauses.append(f'\t{col_name}')
-            else:
-                column_clauses.append(f'\t{self.preparer.quote(c)}')
-        return " (\n%s\n)" % ",\n".join(column_clauses)
 
     def visit_drop_view(self, drop: DropView, **kw: Any) -> str:
         view = drop.element
         return f"DROP VIEW IF EXISTS {self.preparer.format_table(view)}"
+
+    def visit_alter_materialized_view(self, alter: AlterMaterializedView, **kw: Any) -> str:
+        mv = alter.element
+        return f"ALTER MATERIALIZED VIEW {self.preparer.format_table(mv)} {alter.alter_type} {alter.alter_by}"
 
     def visit_create_materialized_view(self, create: CreateMaterializedView, **kw: Any) -> str:
         mv = create.element
@@ -743,6 +772,11 @@ class StarRocksIdentifierPreparer(MySQLIdentifierPreparer):
 @log.class_logger
 class StarRocksDialect(MySQLDialect_pymysql):
     name = "starrocks"
+
+    # Used to get the partition info from the SHOW CREATE TABLE statement
+    # Use regex to find the PARTITION BY clause. It can be multi-line.
+    _PARTITION_BY_PATTERN = re.compile(r"PARTITION BY\s+(.*?)(?:\s+DISTRIBUTED BY|\s+ORDER BY|\s+PROPERTIES|;|$)", re.DOTALL | re.IGNORECASE)
+
     # Caching
     # Warnings are generated by SQLAlchemy if this flag is not explicitly set
     # and tests are needed before being enabled
@@ -760,7 +794,6 @@ class StarRocksDialect(MySQLDialect_pymysql):
 
     def __init__(self, *args, **kwargs):
         super(StarRocksDialect, self).__init__(*args, **kwargs)
-        self.logger = logging.getLogger(f"{__name__}.StarRocksDialect")
         self.run_mode: Optional[str] = None
         # Explicitly instantiate the preparer here, ensuring it's an instance
         self.preparer = self.preparer(self)
@@ -817,7 +850,7 @@ class StarRocksDialect(MySQLDialect_pymysql):
                 return SystemRunMode.SHARED_NOTHING
         except exc.DBAPIError as e:
             # Log the error but don't fail the entire operation
-            self.logger.warning(f"Failed to get run_mode: {e}")
+            logger.warning(f"Failed to get run_mode: {e}")
             # Default to shared_nothing if query fails
             return SystemRunMode.SHARED_NOTHING
 
@@ -842,8 +875,10 @@ class StarRocksDialect(MySQLDialect_pymysql):
             SELECT * 
             FROM information_schema.{inf_sch_table} 
             WHERE {" AND ".join([f"{k} = '{escape_single_quote(v)}'"
-                                 for k, v in kwargs.items()])}
+                                 for k, v in kwargs.items()
+                                 if k and v])}
         """)
+        logger.debug(f"query for information_schema.{inf_sch_table}: {st}")
         rp: Any = None
         try:
             rp = connection.execution_options(
@@ -867,7 +902,7 @@ class StarRocksDialect(MySQLDialect_pymysql):
     @reflection.cache
     def _setup_parser(
         self, connection: Connection, table_name: str, schema: Optional[str] = None, **kwargs: Any
-    ) -> Any:
+    ) -> ReflectedState:
         charset: Optional[str] = self._connection_charset
         parser: _reflection.StarRocksTableDefinitionParser = self._tabledef_parser
 
@@ -900,7 +935,8 @@ class StarRocksDialect(MySQLDialect_pymysql):
             raise exc.InvalidRequestError(
                 f"Multiple tables found with name {table_name} in schema {schema}"
             )
-        logger.debug(f"reflected table config for table: {table_name}, table_config: {dict(table_config_rows[0])}")
+        table_config_row = table_config_rows[0]
+        logger.debug(f"reflected table config for table: {table_name}, table_config: {dict(table_config_row)}")
 
         column_rows: list[_DecodingRow] = self._read_from_information_schema(
             connection=connection,
@@ -919,9 +955,15 @@ class StarRocksDialect(MySQLDialect_pymysql):
             for row in full_column_rows
         }
 
+        partition_clause = self._get_partition_clause_from_create_table(connection, table_name, schema)
+        # Add the partition info into table_config row for convenience
+        # But the row object is immutable, so we convert it to a dictionary to modify it.
+        table_config_dict = dict(table_config_rows[0])
+        table_config_dict['PARTITION_CLAUSE'] = partition_clause
+
         return parser.parse(
             table=table_rows[0],
-            table_config=table_config_rows[0],
+            table_config=table_config_dict,
             columns=column_rows,
             agg_types=column_2_agg_type,
             charset=charset,
@@ -936,6 +978,31 @@ class StarRocksDialect(MySQLDialect_pymysql):
             full_table_name = f"{self.preparer.quote_identifier(str(schema))}.{full_table_name}"
         return full_table_name
 
+    def _get_partition_clause_from_create_table(self, connection: Connection, table_name: str,
+                                                schema: Optional[str] = None) -> Optional[str]:
+        """
+        Get the PARTITION BY clause from the SHOW CREATE TABLE statement.
+        Because we can't get the partition info from any information_schema views.
+        """
+        full_table_name = self._get_quote_full_table_name(table_name, schema)
+        try:
+            st = f"SHOW CREATE TABLE {full_table_name}"
+            result = connection.execute(text(st)).first()
+            if not result:
+                return None
+
+            create_table_str = result[1]  # 'Create Table' column
+
+            # Use regex to find the PARTITION BY clause. It can be multi-line.
+            match = self._PARTITION_BY_PATTERN.search(create_table_str)
+            if match:
+                partition_clause = match.group(1).strip()
+                return partition_clause
+            return None
+        except exc.DBAPIError as e:
+            logger.warning(f"Could not get partition info from SHOW CREATE TABLE for table {full_table_name}: {e}")
+            return None
+
     def _get_show_full_columns(
         self, connection: Connection, table_name: str, schema: Optional[str] = None, **kwargs: Any
     ) -> list[Row]:
@@ -945,69 +1012,14 @@ class StarRocksDialect(MySQLDialect_pymysql):
         """
         full_table_name = self._get_quote_full_table_name(table_name, schema)
         try:
-            return connection.execute(text(f"SHOW FULL COLUMNS FROM {full_table_name}")).fetchall()
+            st: str = f"SHOW FULL COLUMNS FROM {full_table_name}"
+            logger.debug(f"query special column info by using: {st}")
+            return connection.execute(text(st)).fetchall()
         except exc.DBAPIError as e:
             # 1146: Table ... doesn't exist
             if e.orig and e.orig.args[0] == 1146:
                 raise exc.NoSuchTableError(table_name) from e
             raise
-
-    def _get_table_options(
-        self, connection: Connection, table_name: str, schema: Optional[str] = None, **kwargs: Any
-    ) -> dict[str, Any]:
-        """
-        Retrieves table options from the StarRocks information_schema.tables_config table.
-
-        Args:
-            connection: The SQLAlchemy connection object.
-            table_name: The name of the table.
-            schema: The schema name.
-            **kwargs: Additional keyword arguments.
-
-        Returns:
-            A dictionary of table options.
-        """
-
-        try:
-            rows = self._read_from_information_schema(
-                connection,
-                "tables_config",
-                table_schema=schema,
-                table_name=table_name,
-            )
-            if not rows:
-                return {}
-            return {
-                row.Key.upper(): row.Value
-                for row in rows
-            }
-        except exc.DBAPIError as e:
-            if self._extract_error_code(e.orig) == 1146:
-                raise exc.NoSuchTableError(table_name) from e
-            raise
-
-    def _show_table_indexes(
-        self, connection: Connection, table: sa_schema.Table, charset: Optional[str] = None,
-        full_name: Optional[str] = None
-    ) -> list[Any]:
-        """Run SHOW INDEX FROM for a ``Table``."""
-
-        if full_name is None:
-            full_name = self.identifier_preparer.format_table(table)
-        st = "SHOW INDEX FROM %s" % full_name
-
-        rp: Any = None
-        try:
-            rp = connection.execution_options(
-                skip_user_error_events=True
-            ).exec_driver_sql(st)
-        except exc.DBAPIError as e:
-            if self._extract_error_code(e.orig) == 1146:
-                raise exc.NoSuchTableError(full_name) from e
-            else:
-                raise
-        index_results: list[Any] = self._compat_fetchall(rp, charset=charset)
-        return index_results
 
     @reflection.cache
     def get_indexes(
@@ -1035,7 +1047,7 @@ class StarRocksDialect(MySQLDialect_pymysql):
             elif flavor is None:
                 pass
             else:
-                self.logger.info(
+                logger.info(
                     "Converting unknown KEY type %s to a plain KEY", flavor
                 )
                 pass
@@ -1120,7 +1132,7 @@ class StarRocksDialect(MySQLDialect_pymysql):
     @reflection.cache
     def _get_view_info(
         self, connection: Connection, view_name: str, schema: Optional[str] = None, **kwargs: Any
-    ) -> Optional["ReflectionViewInfo"]:
+    ) -> Optional[ReflectionViewInfo]:
         """Gets all information about a view.
 
         Note: comment is currently not fetched from information_schema and defaults to empty.
@@ -1141,10 +1153,10 @@ class StarRocksDialect(MySQLDialect_pymysql):
                 comment="",
                 security=view_details.SECURITY_TYPE.upper(),
             )
-            # self.logger.debug(
-            #     "_get_view_info fetched: schema=%s, name=%s, security=%s, definition=(%s)",
-            #     schema, rv.name, rv.security, rv.definition
-            # )
+            logger.debug(
+                "_get_view_info fetched: schema=%s, name=%s, security=%s, definition=(%s)",
+                schema, rv.name, rv.security, rv.definition
+            )
             return rv
         except Exception:
             return None
@@ -1156,7 +1168,7 @@ class StarRocksDialect(MySQLDialect_pymysql):
         view_info = self._get_view_info(connection, view_name, schema, **kwargs)
         if not view_info:
             return None
-        self.logger.debug(
+        logger.debug(
             "get_view normalized: schema=%s, name=%s, security=%s, definition=(%s)",
             schema, view_info.name, view_info.security, view_info.definition
         )

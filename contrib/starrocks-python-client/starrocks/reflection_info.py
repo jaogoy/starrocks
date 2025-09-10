@@ -38,12 +38,12 @@ class ReflectionMVInfo:
 class ReflectionDistributionInfo:
     """Stores reflection information about a view."""
     type: str
-    keys: Optional[list[str], str]
+    columns: Optional[list[str], str]
     buckets: int
 
-    def to_string(self) -> str:
+    def __str__(self) -> str:
         """Convert to string representation of distribution option."""
-        distribution_cols = ', '.join(self.keys) if isinstance(self.keys, list) else str(self.keys)
+        distribution_cols = ', '.join(self.columns) if isinstance(self.columns, list) else str(self.columns)
         distribution_str = f'({distribution_cols})' if distribution_cols else ""
         buckets_str = f' BUCKETS {self.buckets}' if self.buckets and str(self.buckets) != "0" else ""
         return f'{self.type}{distribution_str} {buckets_str}'

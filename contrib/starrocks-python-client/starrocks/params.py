@@ -1,4 +1,4 @@
-from .types import TableType
+from .types import TableType, TableModel
 
 
 DialectName: str = 'starrocks'
@@ -10,6 +10,7 @@ class TableInfoKey:
     """Centralizes starrocks_ prefixed kwargs for Table objects. Clean names without prefix."""
 
     # Individual key kwargs for clarity
+    KEY = 'KEY'  # Not in the options, but used for comparison
     PRIMARY_KEY = 'PRIMARY_KEY'
     DUPLICATE_KEY = 'DUPLICATE_KEY'
     AGGREGATE_KEY = 'AGGREGATE_KEY'
@@ -22,15 +23,30 @@ class TableInfoKey:
         AGGREGATE_KEY: TableType.AGGREGATE_KEY,
         UNIQUE_KEY: TableType.UNIQUE_KEY,
     }
+    MODEL_TO_KEY_MAP = {
+        TableModel.PRI_KEYS: PRIMARY_KEY,
+        TableModel.PRI_KEYS2: PRIMARY_KEY,
+        TableModel.UNQ_KEYS: UNIQUE_KEY,
+        TableModel.UNQ_KEYS2: UNIQUE_KEY,
+        TableModel.DUP_KEYS: DUPLICATE_KEY,
+        TableModel.DUP_KEYS2: DUPLICATE_KEY,
+        TableModel.AGG_KEYS: AGGREGATE_KEY,
+        TableModel.AGG_KEYS2: AGGREGATE_KEY,
+    }
 
     # Other table-level kwargs
     ENGINE = 'ENGINE'
-    KEY = 'KEY'
+    COMMENT = 'COMMENT'
     PARTITION_BY = 'PARTITION_BY'
     DISTRIBUTED_BY = 'DISTRIBUTED_BY'
     BUCKETS = 'BUCKETS'
     ORDER_BY = 'ORDER_BY'
     PROPERTIES = 'PROPERTIES'
+
+
+TableInfoKey.ALL = {
+    k for k, v in vars(TableInfoKey).items() if not callable(v) and not k.startswith("__")
+}
 
 
 class ColumnAggInfoKey:
@@ -62,13 +78,18 @@ class TableInfoKeyWithPrefix:
     }
 
     # Other table-level kwargs
-    KEY = 'starrocks_KEY'
     ENGINE = 'starrocks_ENGINE'
+    COMMENT = 'starrocks_COMMENT'
     PARTITION_BY = 'starrocks_PARTITION_BY'
     DISTRIBUTED_BY = 'starrocks_DISTRIBUTED_BY'
     BUCKETS = 'starrocks_BUCKETS'
     ORDER_BY = 'starrocks_ORDER_BY'
     PROPERTIES = 'starrocks_PROPERTIES'
+
+
+TableInfoKeyWithPrefix.ALL = {
+    k for k, v in vars(TableInfoKeyWithPrefix).items() if not callable(v) and not k.startswith("__")
+}
 
 
 class ColumnAggInfoKeyWithPrefix:

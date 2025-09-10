@@ -26,7 +26,7 @@
     *   **状态:** ✅ 已完成
     *   **任务:** 扩展 `starrocks/compiler.py` 中的 `StarRocksDDLCompiler`，使其能根据模型生成正确的 DDL。
     *   **细节:**
-        *   **`visit_create_table`**: 解析 `Table` 对象中的 `starrocks_*` 参数，生成 `DUPLICATE KEY`, `PARTITION BY`, `DISTRIBUTED BY`, `ORDER BY` 和 `PROPERTIES` 子句。
+        *   **`visit_create_table`**: 解析 `Table` 对象中的 `starrocks_*` 参数，生成 `ENGINE`, `KEY`(DUPLICATE KEY 等), `PARTITION BY`, `DISTRIBUTED BY`, `ORDER BY` 和 `PROPERTIES` 子句。
         *   **`visit_create_view` & `visit_create_materialized_view`**: 根据 `View`/`MV` 对象生成 `CREATE` 语句。
         *   **`visit_drop_view` & `visit_drop_materialized_view`**: 生成对应的 `DROP` 语句。
     *   **验收标准:** SQLAlchemy 的 DDL 执行 (`metadata.create_all()`) 能够正确创建包含 StarRocks 特性的表、视图和物化视图。

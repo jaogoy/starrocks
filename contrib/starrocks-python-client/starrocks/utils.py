@@ -58,6 +58,7 @@ class TableAttributeNormalizer:
     # Matches spaces around closing parenthesis
     _CLOSE_PAREN_SPACE_PATTERN = re.compile(r'\s*(\))\s*')
     _COMMA_SPACE_PATTERN = re.compile(r'\s*,\s*')
+    _OUTER_PAREN_PATTERN = re.compile(r'^\s*\(\s*(.*?)\s*\)\s*$')
 
     @staticmethod
     def strip_identifier_backticks(sql_text: str) -> str:
@@ -107,7 +108,7 @@ class TableAttributeNormalizer:
 
     @staticmethod
     def normalize_key(key: str) -> str:
-        return TableAttributeNormalizer._simple_normalize(key)
+        return TableAttributeNormalizer.normalize_column_identifiers(key)
 
     @staticmethod
     def _simple_normalize(value: str) -> str:
@@ -126,7 +127,7 @@ class TableAttributeNormalizer:
         Because there may be column names in this string, we don't simply lowercase it.
         """
         return TableAttributeNormalizer.normalize_column_identifiers(
-            distribution.to_string() if isinstance(distribution, ReflectionDistributionInfo) else distribution
+            str(distribution) if isinstance(distribution, ReflectionDistributionInfo) else distribution
         )
 
     @staticmethod
@@ -138,7 +139,9 @@ class TableAttributeNormalizer:
             order_by = ', '.join(str(item) for item in order_by)
         elif order_by is None:
             return ''
-        return TableAttributeNormalizer.normalize_column_identifiers(str(order_by))
+        else:
+            order_by = TableAttributeNormalizer.remove_outer_parentheses(str(order_by))
+        return TableAttributeNormalizer.normalize_column_identifiers(order_by)
 
     @staticmethod
     def normalize_column_identifiers(text: str) -> str:
@@ -156,3 +159,9 @@ class TableAttributeNormalizer:
         # Standardize spaces around commas within parentheses
         normalized = TableAttributeNormalizer._COMMA_SPACE_PATTERN.sub(', ', normalized)
         return normalized
+
+    @staticmethod
+    def remove_outer_parentheses(text: str) -> str:
+        """Remove outer parentheses from text."""
+        match = TableAttributeNormalizer._OUTER_PAREN_PATTERN.match(text)
+        return match.group(1) if match else text.strip()

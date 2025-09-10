@@ -37,12 +37,14 @@ Our current primary goal is to **enhance support for StarRocks-specific features
 Please follow these standards and procedures when assisting with development:
 
 - **Design First**: Before any coding, please provide a design outline that includes:
-  1.  **Implementation Approach**: Describe how you will implement the feature.
-  2.  **Code Change Points**: Identify which files and functions need modification.
-  3.  **Test Cases**: List the test cases that will be added or modified to verify the functionality.
-  [[memory:8065643]]
+
+  1. **Implementation Approach**: Describe how you will implement the feature.
+  2. **Code Change Points**: Identify which files and functions need modification.
+  3. **Test Cases**: List the test cases that will be added or modified to verify the functionality.
+     [[memory:8065643]]
 
 - **Coding Standards**:
+
   - **Code Style**: Follow PEP 8, Flake8, and Ruff standards.
   - **Type Annotations**: All functions, methods, and complex variable declarations should have explicit type annotations. Historical code should also be gradually annotated. [[memory:8065598]]
   - **Docstrings**: Write clear, Google-style docstrings for all modules, classes, and functions. In the docstrings of specific test classes (e.g., `TestAlterTableIntegration`), please follow this field order: `engine`, `key`, `comment`, `partition`, `distribution`, `order by`, `properties`. [[memory:8012332]]
@@ -56,7 +58,30 @@ Please follow these standards and procedures when assisting with development:
   - **Review**: I expect to review the test cases you write or modify before you implement the code to pass them. [[memory:8065598]]
   - **Running Tests**: Use the `pytest test/` command to run all tests.
 
-## 4. Environment & Dependencies
+## 4. Documentation Standards
+
+To ensure the project's design, testing strategies, and usage are well-documented and kept up-to-date, we will maintain a set of living documents under the `docs/` directory. This practice is crucial for developers, reviewers, and the AI assistant to have a shared understanding of the project.
+
+The AI assistant is expected to help draft and update these documents as part of the development workflow.
+
+- **Key Documents**:
+
+  - `docs/design/`: Contains the high-level architecture and detailed design of important modules, functions, and workflows.
+  - `docs/test/`: Outlines the testing strategy, including test ideas, key test cases, and coverage goals.
+  - `docs/usage_guide/`: Provides comprehensive usage guides and detailed API references for all user-facing features.
+
+- **Documentation Workflow**:
+
+  1. **Design Phase**: When proposing a new feature or a significant change, the design outline created under the "Design First" principle should be used to create or update the corresponding design document in `docs/design/`.
+  2. **Testing Phase**: New test cases and testing strategies should be documented in `docs/test/` before or during implementation.
+  3. **Implementation Phase**: Once an implementation is complete, the corresponding usage guide in `docs/usage_guide/` must be updated to reflect the changes and provide clear instructions for users.
+
+- **How to Use This Information**:
+  - **For Development**: Refer to `docs/design/` when implementing new features to ensure alignment with the intended architecture.
+  - **For Testing**: Use `docs/design/` and `docs/test/` as references for writing comprehensive and relevant test cases.
+  - **For Users**: `docs/usage_guide/` is the primary source of truth for understanding how to use the client.
+
+## 5. Environment & Dependencies
 
 - **Dependency Management**: Project dependencies are managed via `setup.py`.
 - **Local Development**: A running StarRocks instance is typically required for integration testing. Connection information is usually configured via environment variables.
