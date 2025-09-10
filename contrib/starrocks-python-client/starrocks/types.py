@@ -51,6 +51,12 @@ class TableModel:
     }
 
 
+class PartitionType:
+    RANGE = "RANGE"
+    LIST = "LIST"
+    EXPRESSION = "EXPRESSION"
+
+
 class ColumnAggType:
     """Supported StarRocks aggregate functions for value columns.
 

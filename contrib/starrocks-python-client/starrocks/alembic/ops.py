@@ -361,22 +361,22 @@ class AlterTablePartitionOp(ops.AlterTableOp):
     def __init__(
         self,
         table_name: str,
-        partition_by: str,
+        partition_method: str,
         schema: Optional[str] = None,
     ):
         super().__init__(table_name, schema=schema)
-        self.partition_by = partition_by
+        self.partition_method = partition_method
 
     @classmethod
     def alter_table_partition(
         cls,
         operations: Operations,
         table_name: str,
-        partition_by: str,
+        partition_method: str,
         schema: Optional[str] = None,
     ):
         """Invoke an ALTER TABLE PARTITION BY operation for StarRocks."""
-        op = cls(table_name, partition_by, schema=schema)
+        op = cls(table_name, partition_method, schema=schema)
         return operations.invoke(op)
 
 
@@ -387,12 +387,12 @@ class AlterTableDistributionOp(ops.AlterTableOp):
     def __init__(
         self,
         table_name: str,
-        distributed_by: str,
+        distribution_method: str,
         buckets: Optional[int] = None,
         schema: Optional[str] = None,
     ):
         super().__init__(table_name, schema=schema)
-        self.distributed_by = distributed_by
+        self.distribution_method = distribution_method
         self.buckets = buckets
 
     @classmethod
@@ -400,12 +400,12 @@ class AlterTableDistributionOp(ops.AlterTableOp):
         cls,
         operations: Operations,
         table_name: str,
-        distributed_by: str,
+        distribution_method: str,
         buckets: Optional[int] = None,
         schema: Optional[str] = None,
     ):
         """Invoke an ALTER TABLE DISTRIBUTED BY operation for StarRocks."""
-        op = cls(table_name, distributed_by, buckets, schema=schema)
+        op = cls(table_name, distribution_method, buckets, schema=schema)
         return operations.invoke(op)
 
 
@@ -471,7 +471,7 @@ def alter_table_distribution(operations, op: AlterTableDistributionOp):
     operations.execute(
         AlterTableDistribution(
             op.table_name,
-            op.distributed_by,
+            op.distribution_method,
             buckets=op.buckets,
             schema=op.schema
         )

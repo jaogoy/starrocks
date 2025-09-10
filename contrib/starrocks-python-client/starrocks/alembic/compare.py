@@ -12,6 +12,7 @@ from sqlalchemy.sql.schema import Table
 
 from starrocks.defaults import ReflectionTableDefaults
 from starrocks.params import (
+    AlterTableEnablement,
     DialectName,
     SRKwargsPrefix,
     ColumnAggInfoKey,
@@ -20,7 +21,7 @@ from starrocks.params import (
 )
 
 from starrocks.reflection import StarRocksTableDefinitionParser
-from starrocks.reflection_info import ReflectionViewInfo
+from starrocks.reflection_info import ReflectionViewInfo, ReflectionDistributionInfo, ReflectionPartitionInfo
 from starrocks.sql.schema import MaterializedView, View
 
 from starrocks.alembic.ops import (
@@ -422,7 +423,7 @@ def _compare_engine(
         normalized_conn,
         normalized_meta,
         default_value=ReflectionTableDefaults.engine(),
-        support_change=False  # exception handling for engine change
+        support_change=AlterTableEnablement.ENGINE
     )
 
 
@@ -451,8 +452,8 @@ def _compare_key(
         normalized_conn,
         normalized_meta,
         default_value=ReflectionTableDefaults.key(),
-        default_value_cmp_func=_compare_key_with_defaults,
-        support_change=False
+        equal_to_default_cmp_func=_compare_key_with_defaults,
+        support_change=AlterTableEnablement.KEY
     )
 
 def _get_table_key_type(table_attributes: Dict[str, Any]) -> str:
@@ -495,6 +496,37 @@ def _compare_key_with_defaults(
     return conn_norm.startswith(default_norm)
 
 
+def _compare_partition_method(
+    conn_partition: Optional[ReflectionPartitionInfo | str],
+    default_partition: Optional[str]
+) -> bool:
+    """
+    Compare two ReflectionPartitionInfo objects for equality.
+
+    This comparison deliberately ignores pre-created partition info (e.g., `VALUES
+    LESS THAN (...)`) and only compares the partitioning scheme itself (type and
+    the column list or expression list).
+
+    Args:
+        conn_partition: The partition info reflected from the database.
+        meta_partition: The partition info from the target metadata.
+
+    Returns:
+        True if the partitioning schemes are considered equal, False otherwise.
+    """
+    if conn_partition is None:
+        return default_partition is None
+    if default_partition is None:
+        return conn_partition is None
+
+    # If the partition info is a string, it's the partition_by expression, not a ReflectionPartitionInfo object
+    if isinstance(conn_partition, ReflectionPartitionInfo):
+        conn_partition = conn_partition.partition_method
+        
+    # Only compare the partition_method.
+    return conn_partition == default_partition
+
+
 def _compare_partition(
     conn_table_attributes: Dict[str, Any], meta_table_attributes: Dict[str, Any],
     ops_list: List[AlterTableOp], table_name: str, schema: Optional[str]
@@ -504,14 +536,15 @@ def _compare_partition(
     meta_partition = meta_table_attributes.get(TableInfoKey.PARTITION_BY)
     logger.debug(f"PARTITION_BY. conn_partition: {conn_partition}, meta_partition: {meta_partition}")
 
-    normalized_conn = TableAttributeNormalizer.normalize_partition_string(conn_partition)
-    normalized_meta = TableAttributeNormalizer.normalize_partition_string(meta_partition)
+    # Parse the partition info if it's a string
+    if isinstance(conn_partition, str):
+        conn_partition = StarRocksTableDefinitionParser.parse_partition_clause(conn_partition)
+    if isinstance(meta_partition, str):
+        meta_partition = StarRocksTableDefinitionParser.parse_partition_clause(meta_partition)
 
-    # TODO: currently we don't support ALTER TABLE PARTITION BY, and it needs to inspect the
-    # partition info from database by using 'SHOW CREATE TABLE', but we haven't implemented it yet.
-    # so we just ignore the partition change for now.
-    if not normalized_meta:
-        return
+    # Normalize the partition method, such as 'RANGE(dt)', 'LIST(dt, col2)', which is used to be compared.
+    normalized_conn = TableAttributeNormalizer.normalize_partition_method(conn_partition)
+    normalized_meta = TableAttributeNormalizer.normalize_partition_method(meta_partition)
 
     if _compare_single_table_attribute(
         table_name,
@@ -520,13 +553,14 @@ def _compare_partition(
         normalized_conn, 
         normalized_meta, 
         default_value=ReflectionTableDefaults.partition_by(),
-        support_change=False
+        support_change=AlterTableEnablement.PARTITION_BY,
+        equal_to_default_cmp_func=_compare_partition_method
     ):
         from starrocks.alembic.ops import AlterTablePartitionOp
         ops_list.append(
             AlterTablePartitionOp(
                 table_name,
-                meta_partition,
+                meta_partition.partition_method,
                 schema=schema,
             )
         )
@@ -539,6 +573,10 @@ def _compare_distribution(
     """Compare distribution changes and add AlterTableDistributionOp if needed."""
     conn_distribution = conn_table_attributes.get(TableInfoKey.DISTRIBUTED_BY)
     meta_distribution = meta_table_attributes.get(TableInfoKey.DISTRIBUTED_BY)
+    if isinstance(conn_distribution, str):
+        conn_distribution = StarRocksTableDefinitionParser.parse_distribution(conn_distribution)
+    if isinstance(meta_distribution, str):
+        meta_distribution = StarRocksTableDefinitionParser.parse_distribution(meta_distribution)
 
     # Normalize both strings for comparison (handles backticks)
     normalized_conn = TableAttributeNormalizer.normalize_distribution_string(conn_distribution)
@@ -552,18 +590,16 @@ def _compare_distribution(
         TableInfoKey.DISTRIBUTED_BY,
         normalized_conn,
         normalized_meta,
-        default_value=ReflectionTableDefaults.distribution_type()
+        default_value=ReflectionTableDefaults.distribution_type(),
+        support_change=AlterTableEnablement.DISTRIBUTED_BY
     ):
         from starrocks.alembic.ops import AlterTableDistributionOp
-
-        # Parse distribution and buckets from original (non-normalized) string
-        distributed_by, buckets = StarRocksTableDefinitionParser.parse_distribution_string(meta_distribution)
 
         ops_list.append(
             AlterTableDistributionOp(
                 table_name,
-                distributed_by,
-                buckets=buckets,
+                meta_distribution.distribution_method,
+                meta_distribution.buckets,
                 schema=schema,
             )
         )
@@ -593,7 +629,8 @@ def _compare_order_by(
         TableInfoKey.ORDER_BY,
         normalized_conn,
         normalized_meta,
-        default_value=ReflectionTableDefaults.order_by()
+        default_value=ReflectionTableDefaults.order_by(),
+        support_change=AlterTableEnablement.ORDER_BY
     ):
         from starrocks.alembic.ops import AlterTableOrderOp
         ops_list.append(
@@ -694,7 +731,7 @@ def _compare_single_table_attribute(
         conn_value: Optional[str],
         meta_value: Optional[str],
         default_value: Optional[str] = None,
-        default_value_cmp_func: Optional[Callable[[Any, Any], bool]] = None,
+        equal_to_default_cmp_func: Optional[Callable[[Any, Any], bool]] = None,
         support_change: bool = True
 ) -> bool:
     """
@@ -708,7 +745,7 @@ def _compare_single_table_attribute(
         meta_value: Value specified in metadata (None if not specified).
         default_value: Known default value for this attribute (None if no default).
         support_change: Whether this attribute supports ALTER operations.
-        default_value_cmp_func: An optional function to perform a custom comparison
+        equal_to_default_cmp_func: An optional function to perform a custom comparison
             between the connection value and the default value. If provided, this is
             used when `meta_value` is None.
 
@@ -768,7 +805,7 @@ def _compare_single_table_attribute(
         # Case 3 & 4: meta_table does NOT specify this attribute
         if conn_str != default_str:
             # If custom comparison function is provided, use it for default comparison
-            if default_value_cmp_func and default_value_cmp_func(conn_value, default_value):
+            if equal_to_default_cmp_func and equal_to_default_cmp_func(conn_value, default_value):
                 logger.debug(
                     f"Table '{full_table_name}': Attribute '{attribute_name}' in database is considered "
                     f"equal to default '{default_str}' via custom comparison function."

@@ -3,6 +3,8 @@ from __future__ import annotations
 import dataclasses
 from typing import Optional
 
+from starrocks.params import TableInfoKey
+
 
 @dataclasses.dataclass(**dict(kw_only=True) if 'KW_ONLY' in dataclasses.__all__ else {})
 class ReflectedState(object):
@@ -34,16 +36,53 @@ class ReflectionMVInfo:
     security: str | None = None
 
 
+@dataclasses.dataclass(kw_only=True, frozen=True)
+class ReflectionPartitionInfo:
+    """
+    Stores structured reflection information about a table's partitioning scheme.
+
+    Attributes:
+        type: The partitioning type (e.g., 'RANGE', 'LIST', 'EXPRESSION').
+        partition_by: The whole partitioning expression string 
+            (e.g., 'RANGE(id, name)', 'date_trunc('day', dt)', 'id, col1, col2').
+        pre_created_partitions: A string containing the full DDL for all
+            pre-created partitions (e.g.,
+            "(PARTITION p1 VALUES LESS THAN ('100'), PARTITION p2 VALUES LESS THAN ('200'))").
+    """
+    type: str
+    partition_method: str
+    pre_created_partitions: Optional[str] = None
+
+    def __str__(self) -> str:
+        if self.pre_created_partitions:
+            return f"{self.partition_method} {self.pre_created_partitions}"
+        return f"{self.partition_method}"
+
+    def __repr__(self) -> str:
+        return repr(str(self))
+
+
 @dataclasses.dataclass(kw_only=True)
 class ReflectionDistributionInfo:
     """Stores reflection information about a view."""
-    type: str
-    columns: Optional[list[str], str]
-    buckets: int
+    type: str | None
+    """The distribution type string like 'HASH' or 'RANDOM'."""
+    columns: Optional[list[str], str] | None
+    """The distribution columns string like 'id' or 'id, name'."""
+    distribution_method: str | None
+    """The distribution method string like 'HASH(id)' or 'RANDOM' without BUCKETS.
+    It will be used first if it's not None."""
+    buckets: int | None
+    """The buckets count."""
 
     def __str__(self) -> str:
         """Convert to string representation of distribution option."""
-        distribution_cols = ', '.join(self.columns) if isinstance(self.columns, list) else str(self.columns)
-        distribution_str = f'({distribution_cols})' if distribution_cols else ""
         buckets_str = f' BUCKETS {self.buckets}' if self.buckets and str(self.buckets) != "0" else ""
-        return f'{self.type}{distribution_str} {buckets_str}'
+        if not self.distribution_method:
+            distribution_cols = ', '.join(self.columns) if isinstance(self.columns, list) else self.columns
+            distribution_cols_str = f'({distribution_cols})' if distribution_cols else ""
+            self.distribution_method = f'{self.type}{distribution_cols_str}'
+        return f'{self.distribution_method}{buckets_str}'
+
+    def __repr__(self) -> str:
+        return repr(str(self))

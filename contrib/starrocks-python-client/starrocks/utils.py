@@ -1,7 +1,16 @@
 import re
 from typing import Any, Dict, Optional, Union, Mapping, Iterator, List
 
-from starrocks.reflection_info import ReflectionDistributionInfo
+from sqlalchemy.exc import StatementError
+
+from starrocks.reflection_info import ReflectionDistributionInfo, ReflectionPartitionInfo
+
+
+class SQLParseError(StatementError):
+    """A parse error occurred during execution of a SQL statement."""
+
+    def __init__(self, message: str, statement: Optional[str]):
+        super().__init__(message, statement)
 
 
 class CaseInsensitiveDict(dict):
@@ -93,58 +102,65 @@ class TableAttributeNormalizer:
         return "".join(out)
 
     @staticmethod
-    def normalize_sql(sql_text: Optional[str]) -> Optional[str]:
+    def normalize_sql(sql_text: Optional[str]) -> str | None:
         """A normalizer for SQL text for diffing."""
-        if sql_text is None:
-            return None
+        if not sql_text:
+            return sql_text
         sql_text = re.sub(r"--.*?(?:\n|$)", " ", sql_text)
         sql_text = TableAttributeNormalizer.strip_identifier_backticks(sql_text)
         sql_text = re.sub(r"\s+", " ", sql_text).strip().lower()
         return sql_text
 
     @staticmethod
-    def normalize_engine(engine: str) -> str:
+    def normalize_engine(engine: str) -> str | None:
         return TableAttributeNormalizer._simple_normalize(engine)
 
     @staticmethod
-    def normalize_key(key: str) -> str:
+    def normalize_key(key: str) -> str | None:
         return TableAttributeNormalizer.normalize_column_identifiers(key)
 
     @staticmethod
     def _simple_normalize(value: str) -> str:
-        return value.upper().strip() if value else None
+        return value.upper().strip() if value else value
 
     @staticmethod
-    def normalize_partition_string(partition: str) -> str:
+    def normalize_partition_method(partition: Union[ReflectionPartitionInfo, str]) -> str:
         """Normalize partition string by removing backticks and extra spaces.
         Because there may be column names in this string, we don't simply lowercase it.
+        If the partition is a ReflectionPartitionInfo object, return the partition_method only.
         """
-        return TableAttributeNormalizer.normalize_column_identifiers(partition)
+        if not partition:
+            return partition
+        return TableAttributeNormalizer.normalize_column_identifiers(
+            partition.partition_method if isinstance(partition, ReflectionPartitionInfo) else partition
+        )
 
     @staticmethod
     def normalize_distribution_string(distribution: Union[ReflectionDistributionInfo, str]) -> str:
         """Normalize distribution string by removing backticks and extra spaces.
         Because there may be column names in this string, we don't simply lowercase it.
+        If the distribution is a ReflectionDistributionInfo object, return the string representation only.
         """
+        if not distribution:
+            return distribution
         return TableAttributeNormalizer.normalize_column_identifiers(
             str(distribution) if isinstance(distribution, ReflectionDistributionInfo) else distribution
         )
 
     @staticmethod
-    def normalize_order_by_string(order_by: Union[str, List[str], None]) -> str:
+    def normalize_order_by_string(order_by: Union[str, List[str], None]) -> str | None:
         """Normalize ORDER BY string by removing backticks and standardizing format.
         Because there may be column names in this string, we don't simply lowercase it.
         """
-        if isinstance(order_by, list):
+        if not order_by:
+            return order_by
+        elif isinstance(order_by, list):
             order_by = ', '.join(str(item) for item in order_by)
-        elif order_by is None:
-            return ''
-        else:
-            order_by = TableAttributeNormalizer.remove_outer_parentheses(str(order_by))
+        order_by = TableAttributeNormalizer.remove_outer_parentheses(order_by)
         return TableAttributeNormalizer.normalize_column_identifiers(order_by)
 
     @staticmethod
-    def normalize_column_identifiers(text: str) -> str:
+    def normalize_column_identifiers(text: str) -> str | None:
         """Normalize column identifiers by removing backticks, standardizing spaces, and removing spaces inside parentheses.
         Because there may be column names in this string, we don't simply lowercase it.
         """
@@ -165,3 +181,28 @@ class TableAttributeNormalizer:
         """Remove outer parentheses from text."""
         match = TableAttributeNormalizer._OUTER_PAREN_PATTERN.match(text)
         return match.group(1) if match else text.strip()
+
+
+def find_matching_parenthesis(text: str, start_index: int = 0) -> int:
+    """
+    Finds the index of the matching closing parenthesis for a given starting parenthesis.
+    
+    Args:
+        text: The string to search within.
+        start_index: The index of the opening parenthesis.
+        
+    Returns:
+        The index of the matching closing parenthesis, or -1 if not found.
+
+    Note:
+        The first byte is '(', we need to skip it.
+    """
+    open_paren_count = 1
+    for i in range(start_index + 1, len(text)):
+        if text[i] == '(':
+            open_paren_count += 1
+        elif text[i] == ')':
+            open_paren_count -= 1
+            if open_paren_count == 0:
+                return i
+    return -1

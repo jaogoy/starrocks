@@ -17,7 +17,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from typing import Any, Optional
+from typing import Any, Optional, Union
 
 from sqlalchemy.dialects.mysql.types import DATETIME, TIME, TIMESTAMP
 from sqlalchemy.dialects.mysql.base import _DecodingRow
@@ -25,9 +25,14 @@ from sqlalchemy.dialects.mysql.reflection import _re_compile
 from sqlalchemy import log, types as sqltypes, util
 from sqlalchemy.engine.reflection import Inspector
 
+from starrocks.defaults import ReflectionTableDefaults
+
+from . import utils
+from .utils import SQLParseError
+
 from .params import ColumnAggInfoKeyWithPrefix, ColumnSROptionsKey, SRKwargsPrefix, TableInfoKeyWithPrefix, TableInfoKey
-from .reflection_info import ReflectedState, ReflectionViewInfo, ReflectionDistributionInfo
-from .types import TableModel, TableType, TableEngine
+from .reflection_info import ReflectedState, ReflectionViewInfo, ReflectionDistributionInfo, ReflectionPartitionInfo
+from .types import PartitionType, TableModel, TableType, TableEngine
 
 logger = logging.getLogger(__name__)
 
@@ -110,7 +115,6 @@ class StarRocksTableDefinitionParser(object):
             }],
         )
 
-
     def _parse_column(self, column: _DecodingRow, agg_type: str | None = None) -> dict:
         """
         Parse column from information_schema.columns table.
@@ -168,7 +172,7 @@ class StarRocksTableDefinitionParser(object):
             type_instance = col_type(*type_args, **type_kw)
         return type_instance
 
-    def _get_key_desc(self, columns: list[_DecodingRow]) -> str:
+    def _get_key_desc(self, table_config: dict[str, Any], columns: list[_DecodingRow]) -> str:
         """
         Get key description from information_schema.columns table.
         It returns string representation of key description.
@@ -177,8 +181,14 @@ class StarRocksTableDefinitionParser(object):
             self.preparer.quote_identifier(col)
             for col in self._get_key_columns(columns=columns)
         ]
-        key_type = self._get_key_type(columns=columns)
+        key_type = self._get_key_type(table_config=table_config)
         return f"{key_type}({', '.join(quoted_cols)})"
+
+    def _get_key_type(self, table_config: dict[str, Any]) -> str:
+        """
+        Get key type from information_schema.tables_config table.
+        """
+        return TableModel.TO_TYPE_MAP.get(table_config.get('TABLE_MODEL'), "")
 
     def _get_key_columns(self, columns: list[_DecodingRow]) -> list[str]:
         """
@@ -190,32 +200,89 @@ class StarRocksTableDefinitionParser(object):
         sorted_columns = sorted(columns, key=lambda col: col.ORDINAL_POSITION)
         return [c.COLUMN_NAME for c in sorted_columns if c.COLUMN_KEY]
 
-    def _get_key_type(self, table_config: dict[str, Any]) -> str:
+    @staticmethod
+    def parse_partition_clause(partition_clause: str) -> ReflectionPartitionInfo | None:
         """
-        Get key type from information_schema.tables_config table.
+        Parses a raw PARTITION BY clause string into a structured ReflectionPartitionInfo object.
+
+        This method handles RANGE, LIST, and expression partitioning schemes. It
+        extracts the partition type, or expression used for partitioning,
+        and any pre-defined partition clauses
+        (e.g., `(PARTITION p1 VALUES LESS THAN ('100'), PARTITION p2 VALUES LESS THAN ('200'))`).
+
+        Args:
+            partition_clause: The raw string of the PARTITION BY clause from a
+                `SHOW CREATE TABLE` statement.
+
+        Returns:
+            A `ReflectionPartitionInfo` object containing the parsed details.
         """
-        return TableModel.TO_TYPE_MAP.get(table_config.get('TABLE_MODEL'), "")
+        if not partition_clause:
+            return None
+
+        clause_upper = partition_clause.strip().upper()
+        partition_method: str
+        pre_created_partitions: Optional[str] = None
+
+        # Check for RANGE or LIST partitioning
+        if clause_upper.startswith(PartitionType.RANGE) or clause_upper.startswith(PartitionType.LIST):
+            partition_type = PartitionType.RANGE if clause_upper.startswith(PartitionType.RANGE) else PartitionType.LIST
+
+            # Find the end of the RANGE/LIST(...) part using robust parenthesis matching
+            open_paren_index = partition_clause.find('(')
+            if open_paren_index != -1:
+                close_paren_index = utils.find_matching_parenthesis(partition_clause, open_paren_index)
+                if close_paren_index != -1:
+                    partition_method = partition_clause[:close_paren_index + 1].strip()
+                    rest = partition_clause[close_paren_index + 1:].strip()
+                    if rest:
+                        pre_created_partitions = rest
+                else:  # Fallback for mismatched parentheses
+                    raise SQLParseError(f"Invalid partition clause, mismatched parentheses: {partition_clause}")
+            else:  # Fallback for no parentheses
+                raise SQLParseError(f"Invalid partition clause, no columns specified: {partition_clause}")
+        else:
+            # If not RANGE or LIST, it's an expression-based partition
+            partition_type = PartitionType.EXPRESSION
+            partition_method = partition_clause
+
+        return ReflectionPartitionInfo(
+            type=partition_type,
+            partition_method=partition_method,
+            pre_created_partitions=pre_created_partitions
+        )
 
     @staticmethod
-    def parse_distribution_string(distribution: str) -> tuple[str, int | None]:
-        """Parse DISTRIBUTED BY string to extract distribution and buckets.
+    def parse_distribution_clause(distribution: str) -> ReflectionDistributionInfo | None:
+        """Parse DISTRIBUTED BY string to extract distribution method and buckets.
         Args:
             distribution: String like "HASH(id) BUCKETS 8" or "HASH(id)"
         Returns:
-            Tuple of (distributed_by, buckets)
+            ReflectionDistributionInfo object
         """
-        if not distribution:
-            return distribution, None
-
         buckets_match = StarRocksTableDefinitionParser._BUCKETS_PATTERN.search(distribution)
 
         if buckets_match:
             buckets = int(buckets_match.group(1))
             # Remove BUCKETS part to get pure distribution
-            distributed_by = StarRocksTableDefinitionParser._BUCKETS_REPLACE_PATTERN.sub('', distribution).strip()
-            return distributed_by, buckets
+            distribution_method = StarRocksTableDefinitionParser._BUCKETS_REPLACE_PATTERN.sub('', distribution).strip()
         else:
-            return distribution, None
+            buckets = None
+            distribution_method = distribution
+        
+        return ReflectionDistributionInfo(
+            type=None,
+            columns=None,
+            distribution_method=distribution_method,
+            buckets=buckets,
+        )
+    
+    @staticmethod
+    def parse_distribution(distribution: Optional[Union[ReflectionDistributionInfo, str]]
+                           ) -> ReflectionDistributionInfo | None:
+        if not distribution or isinstance(distribution, ReflectionDistributionInfo):
+            return distribution
+        return StarRocksTableDefinitionParser.parse_distribution_clause(distribution)
 
     def _get_distribution_info(self, table_config: dict[str, Any]) -> ReflectionDistributionInfo:
         """
@@ -225,6 +292,7 @@ class StarRocksTableDefinitionParser(object):
         return ReflectionDistributionInfo(
             type=table_config.get('DISTRIBUTE_TYPE'),
             columns=table_config.get('DISTRIBUTE_KEY'),
+            distribution_method=None,
             buckets=table_config.get('DISTRIBUTE_BUCKET'),
         )
 
@@ -265,11 +333,11 @@ class StarRocksTableDefinitionParser(object):
 
         partition_clause = table_config.get('PARTITION_CLAUSE')
         if partition_clause:
-            opts[TableInfoKeyWithPrefix.PARTITION_BY] = partition_clause
+            opts[TableInfoKeyWithPrefix.PARTITION_BY] = self.parse_partition_clause(partition_clause)
         elif table_config.get('PARTITION_KEY'):
             # Fallback for older StarRocks versions or if SHOW CREATE TABLE fails
             logger.debug(f"table_config.PARTITION_KEY: {table_config.get('PARTITION_KEY')}")
-            opts[TableInfoKeyWithPrefix.PARTITION_BY] = table_config.get('PARTITION_KEY')
+            opts[TableInfoKeyWithPrefix.PARTITION_BY] = self.parse_partition_clause(table_config.get('PARTITION_KEY'))
 
         if table_config.get('DISTRIBUTE_KEY'):
             logger.debug(f"table_config.DISTRIBUTE_KEY: {table_config.get('DISTRIBUTE_KEY')}")

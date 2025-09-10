@@ -20,13 +20,16 @@ Set STARROCKS_URL environment variable to run these tests.
 Example: STARROCKS_URL=starrocks://user:pass@localhost:9030/test_db
 """
 
+import textwrap
 import pytest
 import logging
 from sqlalchemy import MetaData, Table, Column, Integer, String, Engine
 from unittest.mock import Mock
 from typing import Optional
 
-from starrocks.params import TableInfoKeyWithPrefix
+from starrocks.params import AlterTableEnablement, TableInfoKeyWithPrefix
+from starrocks.types import PartitionType
+from test import test_utils
 from test.conftest_sr import create_test_engine, test_default_schema
 from starrocks.alembic.compare import compare_starrocks_table
 
@@ -151,9 +154,79 @@ class TestAlterTableIntegration:
                 op: AlterTableDistributionOp = result[0]
                 assert isinstance(op, AlterTableDistributionOp)
                 assert op.table_name == table_name
-                assert op.distributed_by == "HASH(user_id)"
+                assert op.distribution_method == "HASH(user_id)"
                 assert op.buckets == 8
 
+            finally:
+                conn.exec_driver_sql(f"DROP TABLE IF EXISTS {self.test_schema}.{table_name}")
+                conn.commit()
+
+    def test_partition_change_detection(self) -> None:
+        """
+        Test: Partition change detection with real reflection.
+
+        Scenario (partition changes):
+        - Changed: from RANGE partition by from_unixtime(dt) to RANGE partition by dt with one partition.
+        - Expected: 1 AlterTablePartitionOp generated.
+        """
+        table_name = "test_partition_change"
+
+        with self.engine.connect() as conn:
+            # Create table with no partitioning initially
+            conn.exec_driver_sql(textwrap.dedent(f"""
+                CREATE TABLE {table_name} (
+                    id INT,
+                    dt INT
+                )
+                PARTITION BY RANGE( from_unixtime(dt ) ) (
+                    PARTITION p1 VALUES [('2023-01-01'), ('2023-02-01'))
+                )
+                DISTRIBUTED BY HASH(id) BUCKETS 4
+                PROPERTIES ("replication_num" = "1")
+            """))
+            conn.commit()
+
+            try:
+                # Reflect actual table
+                metadata_db = MetaData()
+                reflected_table = Table(
+                    table_name, metadata_db,
+                    autoload_with=self.engine,
+                    schema=self.test_schema
+                )
+                partition_info = reflected_table.kwargs.get(TableInfoKeyWithPrefix.PARTITION_BY)
+                assert partition_info.type == PartitionType.RANGE
+                assert test_utils.normalize_sql(partition_info.partition_method) == "RANGE(from_unixtime(dt))"
+                assert test_utils.normalize_sql(partition_info.pre_created_partitions) \
+                        == test_utils.normalize_sql("(PARTITION p1 VALUES [('2023-01-01 00:00:00'), ('2023-02-01 00:00:00')))")
+
+                # Target: add RANGE partition
+                metadata_target = MetaData()
+                target_table = Table(
+                    table_name, metadata_target,
+                    Column('id', Integer),
+                    Column('dt', Integer), # Use int for date column in metadata for simplicity
+                    **{
+                        "starrocks_PARTITION_BY": "RANGE(dt) (PARTITION p1 VALUES [('2025-01-01'), ('2025-02-01')))",
+                        "starrocks_DISTRIBUTED_BY": "HASH(id) BUCKETS 4",
+                        "starrocks_PROPERTIES": {"replication_num": "1"},
+                    },
+                    schema=self.test_schema
+                )
+
+                # Compare
+                AlterTableEnablement.PARTITION_BY = True  # Enable partition comparison
+                autogen_context = self._setup_autogen_context()
+                result: list = compare_starrocks_table(autogen_context, reflected_table, target_table)
+                AlterTableEnablement.PARTITION_BY = False  # Disable back to default
+
+                # Should detect partition change
+                assert len(result) == 1
+                from starrocks.alembic.ops import AlterTablePartitionOp
+                op: AlterTablePartitionOp = result[0]
+                assert isinstance(op, AlterTablePartitionOp)
+                assert op.table_name == table_name
+                assert op.partition_method == "RANGE(dt)"
             finally:
                 conn.exec_driver_sql(f"DROP TABLE IF EXISTS {self.test_schema}.{table_name}")
                 conn.commit()
@@ -436,7 +509,7 @@ class TestAlterTableIntegration:
                 )
                 # op_types: list = [type(op) for op in result]
                 distribution_op: AlterTableDistributionOp = result[0]
-                assert distribution_op.distributed_by == "RANDOM"
+                assert distribution_op.distribution_method == "RANDOM"
                 assert distribution_op.buckets == 8
                 order_op: AlterTableOrderOp = result[1]
                 assert order_op.order_by == "id"

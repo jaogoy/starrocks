@@ -6,6 +6,18 @@ SRKwargsPrefix = 'starrocks_'
 """Prefix for StarRocks-specific kwargs."""
 
 
+class AlterTableEnablement:
+    """Enablement for ALTER TABLE operations."""
+    ENGINE = False
+    KEY = False
+    TABLE_TYPE = KEY
+    COMMENT = True
+    PARTITION_BY = False
+    DISTRIBUTED_BY = True
+    ORDER_BY = True
+    PROPERTIES = True
+
+
 class TableInfoKey:
     """Centralizes starrocks_ prefixed kwargs for Table objects. Clean names without prefix."""
 
