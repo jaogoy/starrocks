@@ -5,7 +5,7 @@ from sqlalchemy import (
     Table, MetaData, Column, Integer, String, Date, DateTime, BigInteger, Double
 )
 
-from test.test_utils import _normalize_sql
+from test.test_utils import normalize_sql
 import pytest
 from starrocks.params import ColumnAggInfoKeyWithPrefix, TableInfoKeyWithPrefix
 from starrocks.types import ColumnAggType
@@ -37,7 +37,7 @@ class TestCreateTableCompiler:
             COMMENT 'A simple table comment.'
             DISTRIBUTED BY HASH(k1)
         """
-        assert _normalize_sql(sql) == _normalize_sql(expected)
+        assert normalize_sql(sql) == normalize_sql(expected)
 
     def test_key_descriptions(self):
         self.logger.info("Testing Key Description clauses")
@@ -50,7 +50,7 @@ class TestCreateTableCompiler:
             DUPLICATE KEY(k1)
             DISTRIBUTED BY HASH(k1)
         """
-        assert _normalize_sql(sql) == _normalize_sql(expected_dup)
+        assert normalize_sql(sql) == normalize_sql(expected_dup)
 
         # AGGREGATE KEY
         tbl_agg = Table('key_aggregate_tbl', self.metadata, Column('k1', Integer),
@@ -61,7 +61,7 @@ class TestCreateTableCompiler:
             AGGREGATE KEY(k1)
             DISTRIBUTED BY HASH(k1)
         """
-        assert _normalize_sql(sql) == _normalize_sql(expected_agg)
+        assert normalize_sql(sql) == normalize_sql(expected_agg)
 
         # UNIQUE KEY
         tbl_unique = Table('key_unique_tbl', self.metadata, Column('k1', Integer),
@@ -72,7 +72,7 @@ class TestCreateTableCompiler:
             UNIQUE KEY(k1)
             DISTRIBUTED BY HASH(k1)
         """
-        assert _normalize_sql(sql) == _normalize_sql(expected_unique)
+        assert normalize_sql(sql) == normalize_sql(expected_unique)
 
         # PRIMARY KEY
         tbl_primary = Table('key_primary_tbl', self.metadata, Column('k1', Integer),
@@ -83,7 +83,7 @@ class TestCreateTableCompiler:
             PRIMARY KEY(k1)
             DISTRIBUTED BY HASH(k1)
         """
-        assert _normalize_sql(sql) == _normalize_sql(expected_primary)
+        assert normalize_sql(sql) == normalize_sql(expected_primary)
 
     def test_column_comment(self):
         self.logger.info("Testing Column Comment clause")
@@ -92,7 +92,7 @@ class TestCreateTableCompiler:
                     starrocks_distributed_by='HASH(k1)')
         sql = self._compile_table(tbl)
         expected = "CREATE TABLE col_comment_tbl(k1 INTEGER COMMENT 'This is a column comment.') DISTRIBUTED BY HASH(k1)"
-        assert _normalize_sql(sql) == _normalize_sql(expected)
+        assert normalize_sql(sql) == normalize_sql(expected)
 
     def test_column_attributes(self):
         self.logger.info("Testing various column attributes")
@@ -112,7 +112,7 @@ class TestCreateTableCompiler:
             PRIMARY KEY(k1)
             DISTRIBUTED BY HASH(k1)
         """
-        assert _normalize_sql(sql) == _normalize_sql(expected)
+        assert normalize_sql(sql) == normalize_sql(expected)
 
     def test_aggregate_key_table(self):
         self.logger.info("Testing Aggregate Key Table DDL")
@@ -130,7 +130,7 @@ class TestCreateTableCompiler:
             )
             AGGREGATE KEY(k1)
         """
-        assert _normalize_sql(sql) == _normalize_sql(expected)
+        assert normalize_sql(sql) == normalize_sql(expected)
 
     def test_aggregate_key_validation(self):
         self.logger.info("Testing AGGREGATE KEY validation")
@@ -189,7 +189,7 @@ class TestCreateTableCompiler:
             )
             DISTRIBUTED BY HASH(k1)
         """
-        assert _normalize_sql(sql) == _normalize_sql(expected)
+        assert normalize_sql(sql) == normalize_sql(expected)
 
     def test_generated_column(self):
         self.logger.info("Testing generated column DDL")
@@ -208,7 +208,7 @@ class TestCreateTableCompiler:
             )
             DISTRIBUTED BY HASH(k1)
         """
-        assert _normalize_sql(sql) == _normalize_sql(expected)
+        assert normalize_sql(sql) == normalize_sql(expected)
 
     def test_partition_descriptions(self):
         self.logger.info("Testing Partition Description clauses")
@@ -218,66 +218,66 @@ class TestCreateTableCompiler:
                           starrocks_partition_by='RANGE(event_date) (PARTITION p2023 VALUES LESS THAN ("2024-01-01"))')
         sql = self._compile_table(tbl_range)
         expected = "CREATE TABLE p_range_tbl(event_date DATE) PARTITION BY RANGE(event_date)(PARTITION p2023 VALUES LESS THAN(\"2024-01-01\"))"
-        assert _normalize_sql(sql) == _normalize_sql(expected)
+        assert normalize_sql(sql) == normalize_sql(expected)
 
         # Multi-column RANGE partition
         tbl_range_multi = Table('p_range_multi_tbl', self.metadata, Column('k1', Integer), Column('k2', Integer),
                                 starrocks_partition_by='RANGE(k1, k2) (PARTITION p1 VALUES LESS THAN (100, 200))')
         sql = self._compile_table(tbl_range_multi)
         expected = "CREATE TABLE p_range_multi_tbl(k1 INTEGER,k2 INTEGER) PARTITION BY RANGE(k1,k2)(PARTITION p1 VALUES LESS THAN(100,200))"
-        assert _normalize_sql(sql) == _normalize_sql(expected)
+        assert normalize_sql(sql) == normalize_sql(expected)
 
         # LIST partition
         tbl_list = Table('p_list_tbl', self.metadata, Column('city', String(50)),
                          starrocks_partition_by='LIST(city) (PARTITION p_north VALUES IN ("Beihai", "Dalian"))')
         sql = self._compile_table(tbl_list)
         expected = "CREATE TABLE p_list_tbl(city VARCHAR(50)) PARTITION BY LIST(city)(PARTITION p_north VALUES IN(\"Beihai\",\"Dalian\"))"
-        assert _normalize_sql(sql) == _normalize_sql(expected)
+        assert normalize_sql(sql) == normalize_sql(expected)
 
         # Please keep it. It is a special case that is recoganized as a RANGE partition.
         tbl_expr_single = Table('p_range_date_trunc_tbl', self.metadata, Column('event_time', DateTime),
                                 starrocks_partition_by="date_trunc('month', event_time)")
         sql = self._compile_table(tbl_expr_single)
         expected = "CREATE TABLE p_range_date_trunc_tbl(event_time DATETIME) PARTITION BY date_trunc('month',event_time)"
-        assert _normalize_sql(sql) == _normalize_sql(expected)
+        assert normalize_sql(sql) == normalize_sql(expected)
 
         # Expression partition (single function)
         tbl_expr_single = Table('p_expr_single_tbl', self.metadata, Column('event_time', DateTime),
                                 starrocks_partition_by="to_date(event_time)")
         sql = self._compile_table(tbl_expr_single)
         expected = "CREATE TABLE p_expr_single_tbl(event_time DATETIME) PARTITION BY to_date(event_time)"
-        assert _normalize_sql(sql) == _normalize_sql(expected)
+        assert normalize_sql(sql) == normalize_sql(expected)
 
         # Expression partition (multiple functions and columns)
         tbl_expr_multi = Table('p_expr_multi_tbl', self.metadata, Column('event_time', DateTime), Column('id', Integer),
                                starrocks_partition_by="date_trunc('day', event_time), id % 10")
         sql = self._compile_table(tbl_expr_multi)
         expected = "CREATE TABLE p_expr_multi_tbl(event_time DATETIME,id INTEGER) PARTITION BY date_trunc('day',event_time),id % 10"
-        assert _normalize_sql(sql) == _normalize_sql(expected)
+        assert normalize_sql(sql) == normalize_sql(expected)
 
         # Batch partition
         tbl_batch = Table('p_batch_tbl', self.metadata, Column('datekey', Integer),
                           starrocks_partition_by='RANGE(datekey) (START ("1") END ("5") EVERY (1))')
         sql = self._compile_table(tbl_batch)
         expected = "CREATE TABLE p_batch_tbl(datekey INTEGER) PARTITION BY RANGE(datekey)(START(\"1\")END(\"5\")EVERY(1))"
-        assert _normalize_sql(sql) == _normalize_sql(expected)
+        assert normalize_sql(sql) == normalize_sql(expected)
 
     def test_distribution_descriptions(self):
         self.logger.info("Testing Distribution Description clauses")
 
         # HASH distribution
         tbl_hash = Table('dist_hash_tbl', self.metadata, Column('user_id', Integer),
-                         starrocks_distributed_by='HASH(user_id)', starrocks_buckets=10)
+                         starrocks_distributed_by='HASH(user_id) BUCKETS 10')
         sql = self._compile_table(tbl_hash)
         expected = "CREATE TABLE dist_hash_tbl(user_id INTEGER) DISTRIBUTED BY HASH(user_id) BUCKETS 10"
-        assert _normalize_sql(sql) == _normalize_sql(expected)
+        assert normalize_sql(sql) == normalize_sql(expected)
 
         # RANDOM distribution
         tbl_random = Table('dist_random_tbl', self.metadata, Column('log_id', BigInteger),
-                           starrocks_distributed_by='RANDOM', starrocks_buckets=4)
+                           starrocks_distributed_by='RANDOM BUCKETS 4')
         sql = self._compile_table(tbl_random)
         expected = "CREATE TABLE dist_random_tbl(log_id BIGINT) DISTRIBUTED BY RANDOM BUCKETS 4"
-        assert _normalize_sql(sql) == _normalize_sql(expected)
+        assert normalize_sql(sql) == normalize_sql(expected)
 
     def test_order_by(self):
         self.logger.info("Testing ORDER BY clause")
@@ -285,7 +285,7 @@ class TestCreateTableCompiler:
                     starrocks_order_by='k1, k2', starrocks_distributed_by='HASH(k1)')
         sql = self._compile_table(tbl)
         expected = "CREATE TABLE orderby_tbl(k1 INTEGER, k2 VARCHAR(50)) DISTRIBUTED BY HASH(k1) ORDER BY(k1, k2)"
-        assert _normalize_sql(sql) == _normalize_sql(expected)
+        assert normalize_sql(sql) == normalize_sql(expected)
 
     def test_properties(self):
         self.logger.info("Testing PROPERTIES clause")
@@ -299,7 +299,7 @@ class TestCreateTableCompiler:
                 "storage_medium" = "SSD"
             )
         """
-        assert _normalize_sql(expected) in _normalize_sql(sql)
+        assert normalize_sql(expected) in normalize_sql(sql)
 
     def test_comprehensive_table(self):
         self.logger.info("Testing comprehensive CREATE TABLE statement")
@@ -313,8 +313,7 @@ class TestCreateTableCompiler:
             starrocks_aggregate_key='user_id, event_date',
             comment='A comprehensive table',
             starrocks_partition_by='RANGE(event_date) (START ("2023-01-01") END ("2024-01-01") EVERY (INTERVAL 1 MONTH))',
-            starrocks_distributed_by='HASH(user_id)',
-            starrocks_buckets=32,
+            starrocks_distributed_by='HASH(user_id) BUCKETS 32',
             starrocks_order_by='event_date, user_id',
             starrocks_properties={
                 "replication_num": "1",
@@ -350,5 +349,5 @@ class TestCreateTableCompiler:
                 "dynamic_partition.prefix" = "p"
             )
         """
-        assert _normalize_sql(sql) == _normalize_sql(expected)
+        assert normalize_sql(sql) == normalize_sql(expected)
 

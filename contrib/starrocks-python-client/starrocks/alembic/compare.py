@@ -1,6 +1,6 @@
 import logging
 from functools import wraps
-from typing import Any, Dict, List, Optional, Set, Tuple, Union
+from typing import Any, Dict, List, Optional, Set, Tuple, Union, Callable
 
 from alembic.autogenerate import comparators
 from alembic.autogenerate.api import AutogenContext
@@ -451,6 +451,7 @@ def _compare_key(
         normalized_conn,
         normalized_meta,
         default_value=ReflectionTableDefaults.key(),
+        default_value_cmp_func=_compare_key_with_defaults,
         support_change=False
     )
 
@@ -462,6 +463,36 @@ def _get_table_key_type(table_attributes: Dict[str, Any]) -> str:
             key_columns = TableAttributeNormalizer.remove_outer_parentheses(key_columns)
             return f"{TableInfoKey.KEY_KWARG_MAP[key_type]} ({key_columns})"
     return None
+
+
+def _compare_key_with_defaults(
+    conn_value: Optional[str], default_value: Optional[str]
+) -> bool:
+    """
+    Compare key / table type, considering that the reflected default might be more specific.
+
+    For example, a default of 'DUPLICATE KEY' should match a connection value of
+    'DUPLICATE KEY(id, dt)'.
+
+    Args:
+        conn_value: The key attribute value reflected from the database.
+        default_value: The known default value for the key attribute.
+
+    Returns:
+        True if the connection value is considered equal to the default (e.g., it starts
+        with the default), False otherwise.
+    """
+    if conn_value is None:
+        return default_value is None
+    if default_value is None:
+        return conn_value is None
+
+    # Normalize by converting to uppercase and removing extra spaces
+    conn_norm = conn_value.upper()
+    default_norm = default_value.upper()
+
+    # Check if conn_value starts with the default_value, ignoring case and spaces
+    return conn_norm.startswith(default_norm)
 
 
 def _compare_partition(
@@ -663,22 +694,26 @@ def _compare_single_table_attribute(
         conn_value: Optional[str],
         meta_value: Optional[str],
         default_value: Optional[str] = None,
+        default_value_cmp_func: Optional[Callable[[Any, Any], bool]] = None,
         support_change: bool = True
 ) -> bool:
     """
     Generic comparison logic for a single table attribute.
 
     Args:
-        table_name: Table name for logging context
-        schema: Schema name for logging context
-        attribute_name: Name of the attribute for logging
-        conn_value: Value reflected from database (None if not present)
-        meta_value: Value specified in metadata (None if not specified)
-        default_value: Known default value for this attribute (None if no default)
-        support_change: Whether this attribute supports ALTER operations (default: True)
+        table_name: Table name for logging context.
+        schema: Schema name for logging context.
+        attribute_name: Name of the attribute for logging.
+        conn_value: Value reflected from database (None if not present).
+        meta_value: Value specified in metadata (None if not specified).
+        default_value: Known default value for this attribute (None if no default).
+        support_change: Whether this attribute supports ALTER operations.
+        default_value_cmp_func: An optional function to perform a custom comparison
+            between the connection value and the default value. If provided, this is
+            used when `meta_value` is None.
 
     Returns:
-        True if there's a meaningful change that requires ALTER statement
+        True if there's a meaningful change that requires an ALTER statement.
 
     Raises:
         NotImplementedError: If support_change=False and a change is detected
@@ -727,8 +762,19 @@ def _compare_single_table_attribute(
         # Case 2: meta specified, same as conn -> no change
         return False
     else:
+        # Case 3.1: both conn and meta are None
+        if conn_str is None:
+            return False
         # Case 3 & 4: meta_table does NOT specify this attribute
-        if conn_str is not None and conn_str != default_str:
+        if conn_str != default_str:
+            # If custom comparison function is provided, use it for default comparison
+            if default_value_cmp_func and default_value_cmp_func(conn_value, default_value):
+                logger.debug(
+                    f"Table '{full_table_name}': Attribute '{attribute_name}' in database is considered "
+                    f"equal to default '{default_str}' via custom comparison function."
+                )
+                return False
+
             # Case 4: meta not specified, conn is non-default -> log error, NO automatic change
             if conn_str.lower() == (default_str or '').lower():
                 logger.warning(

@@ -1,7 +1,7 @@
 import re
 
 
-def _normalize_sql(sql: str) -> str:
+def normalize_sql(sql: str) -> str:
     """Normalizes a SQL string for comparison."""
     # Remove comments
     sql = re.sub(r'--.*\n', '', sql)
@@ -16,5 +16,6 @@ def _normalize_sql(sql: str) -> str:
     sql = re.sub(r'\s*=\s*', '=', sql)
     # Remove all paired backticks around identifiers
     sql = re.sub(r'`([^`]+)`', r'\1', sql)
+    sql = re.sub(r'\'', '"', sql)
 
     return sql.strip()

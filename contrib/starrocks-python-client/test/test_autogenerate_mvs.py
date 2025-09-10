@@ -19,6 +19,7 @@ class TestAutogenerateMV:
             'include_name': None,
         }
         self.mock_autogen_context.dialect = Mock()
+        self.mock_autogen_context.dialect.name = 'starrocks'
         self.mock_autogen_context.dialect.default_schema_name = None
 
     def test_create_mv_autogenerate(self):

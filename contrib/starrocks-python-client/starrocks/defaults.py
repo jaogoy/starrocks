@@ -130,14 +130,14 @@ class ReflectionViewDefaults:
         )
 
     @classmethod
-    def apply_info(cls, reflectionViewInfo: ReflectionViewInfo) -> ReflectionViewInfo:
+    def apply_info(cls, reflection_view_info: ReflectionViewInfo) -> ReflectionViewInfo:
         """Apply defaults and normalization to reflected view values.
         """
         return ReflectionViewInfo(
-            name=reflectionViewInfo.name,
-            definition=reflectionViewInfo.definition,
-            comment=(reflectionViewInfo.comment or cls.DEFAULT_COMMENT),
-            security=(reflectionViewInfo.security or cls.DEFAULT_SECURITY).upper(),
+            name=reflection_view_info.name,
+            definition=reflection_view_info.definition,
+            comment=(reflection_view_info.comment or cls.comment()),
+            security=(reflection_view_info.security or cls.security()).upper(),
         )
 
 

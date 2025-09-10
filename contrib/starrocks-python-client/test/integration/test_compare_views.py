@@ -12,7 +12,7 @@ from starrocks.alembic.ops import CreateViewOp, AlterViewOp
 from starrocks.datatype import logger
 from starrocks.sql.schema import View
 from test import conftest_sr
-from test.test_utils import _normalize_sql
+from test.test_utils import normalize_sql
 
 
 class TestIntegrationViews:
@@ -107,6 +107,6 @@ class TestIntegrationViews:
                 view_info = inspector.get_view(view_name)
                 assert view_info is not None
                 logger.info(f"view_info.definition: {view_info.definition}")
-                assert _normalize_sql("SELECT 2 AS new_c1, 3 AS new_c2") == _normalize_sql(view_info.definition)
+                assert normalize_sql("SELECT 2 AS new_c1, 3 AS new_c2") == normalize_sql(view_info.definition)
             finally:
                 conn.execute(text(f"DROP VIEW IF EXISTS {view_name}"))

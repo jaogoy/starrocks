@@ -3,8 +3,10 @@ from alembic.autogenerate.api import AutogenContext
 from unittest.mock import Mock, PropertyMock
 
 from starrocks.alembic.compare import compare_starrocks_table
-from starrocks.params import TableInfoKeyWithPrefix, DialectName
+from starrocks.params import SRKwargsPrefix, TableInfoKeyWithPrefix, DialectName
 from starrocks.defaults import ReflectionTableDefaults
+from starrocks.types import TableType
+from starrocks.utils import TableAttributeNormalizer
 
 
 LOG_ATTRIBUTE_NEED_SPECIFIED = "Please specify this attribute explicitly"
@@ -213,14 +215,14 @@ class TestRealTableObjects:
         conn_table = Table(
             'users', metadata_old,
             Column('id', Integer),
-            starrocks_KEY='DUPLICATE KEY',
+            starrocks_DUPLICATE_KEY='id',
             schema='test_db'
         )
 
         meta_table = Table(
             'users', metadata_new,
             Column('id', Integer),
-            starrocks_KEY='PRIMARY KEY',
+            starrocks_PRIMARY_KEY='id',
             schema='test_db'
         )
 
@@ -432,6 +434,11 @@ class TestKeyChanges:
         autogen_context = Mock(spec=AutogenContext)
         autogen_context.dialect.name = DialectName
 
+        # set default key to 'DUPLICATE KEY (id)' instead of only 'DUPLICATE KEY'
+        def default_key(cls):
+            return f"{TableType.DUPLICATE_KEY}(id)"
+        ReflectionTableDefaults.key = classmethod(default_key)
+
         conn_table = Mock()  # Table reflected from SR database, no KEY explicitly set, implies default DUPLICATE KEY
         type(conn_table).name = PropertyMock(return_value="test_table")
         type(conn_table).schema = PropertyMock(return_value="test_db")
@@ -440,7 +447,7 @@ class TestKeyChanges:
         meta_table = Mock(  # Metadata explicitly sets default DUPLICATE KEY
             kwargs={
                 TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(id)",
-                TableInfoKeyWithPrefix.KEY: ReflectionTableDefaults.key(),
+                TableInfoKeyWithPrefix.DUPLICATE_KEY: 'id',
             }
         )
 
@@ -460,7 +467,7 @@ class TestKeyChanges:
         meta_table = Mock(  # Metadata sets a non-default KEY
             kwargs={
                 TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(id)",
-                TableInfoKeyWithPrefix.KEY: "PRIMARY KEY",
+                TableInfoKeyWithPrefix.PRIMARY_KEY: "id",
             }
         )
 
@@ -478,7 +485,7 @@ class TestKeyChanges:
         type(conn_table).schema = PropertyMock(return_value="test_db")
         conn_table.kwargs = {
             TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(id)",
-            TableInfoKeyWithPrefix.KEY: ReflectionTableDefaults.key(),
+            TableInfoKeyWithPrefix.DUPLICATE_KEY: 'id',
         }
 
         meta_table = Mock(  # Metadata does not specify KEY, implies default DUPLICATE KEY
@@ -502,7 +509,7 @@ class TestKeyChanges:
         type(conn_table).schema = PropertyMock(return_value="test_db")
         conn_table.kwargs = {
             TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(id)",
-            TableInfoKeyWithPrefix.KEY: "PRIMARY KEY",
+            TableInfoKeyWithPrefix.PRIMARY_KEY: "id",
         }
 
         meta_table = Mock(  # Metadata does not specify KEY
@@ -526,13 +533,13 @@ class TestKeyChanges:
         type(conn_table).schema = PropertyMock(return_value="test_db")
         conn_table.kwargs = {
             TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(id)",
-            TableInfoKeyWithPrefix.KEY: "DUPLICATE KEY",
+            TableInfoKeyWithPrefix.DUPLICATE_KEY: "id",
         }
 
         meta_table = Mock(
             kwargs={
                 TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(id)",
-                TableInfoKeyWithPrefix.KEY: "UNIQUE KEY",
+                TableInfoKeyWithPrefix.UNIQUE_KEY: "id",
             }
         )
 
@@ -540,13 +547,13 @@ class TestKeyChanges:
             compare_starrocks_table(autogen_context, conn_table, meta_table)
         assert "StarRocks does not support 'ALTER TABLE KEY'" in str(exc_info.value)
 
-    @pytest.mark.parametrize("conn_key, meta_key", [
-        ("UNIQUE KEY", "UNIQUE KEY"),
-        ("UNIQUE KEY", "unique key"),
-        ("unique key", "UNIQUE KEY"),
-        ("DUPLICATE KEY(id, name)", "duplicate key(id, name)"),
+    @pytest.mark.parametrize("conn_key, conn_key_columns, meta_key, meta_key_columns", [
+        ("UNIQUE_KEY", "id", "UNIQUE_key", "id"),
+        ("UNIQUE_KEY", " ( id ) ", "unique_key", "id"),
+        ("unique_key", "id", "UNIQUE_KEY", "id"),
+        ("DUPLICATE_KEY", "(id, name)", "duplicate_key", "(id, name)"),
     ])
-    def test_key_no_change(self, conn_key, meta_key):
+    def test_key_no_change(self, conn_key, conn_key_columns, meta_key, meta_key_columns):
         """Test KEY with no change."""
         autogen_context = Mock(spec=AutogenContext)
         autogen_context.dialect.name = DialectName
@@ -554,15 +561,18 @@ class TestKeyChanges:
         conn_table = Mock()
         type(conn_table).name = PropertyMock(return_value="test_table")
         type(conn_table).schema = PropertyMock(return_value="test_db")
+
+        conn_key_str = f"{SRKwargsPrefix}{conn_key}"
         conn_table.kwargs = {
             TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(id)",
-            TableInfoKeyWithPrefix.KEY: conn_key,
+            conn_key_str: conn_key_columns,
         }
 
+        meta_key_str = f"{SRKwargsPrefix}{meta_key}"
         meta_table = Mock(
             kwargs={
                 TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(id)",
-                TableInfoKeyWithPrefix.KEY: meta_key,
+                meta_key_str: meta_key_columns,
             }
         )
 

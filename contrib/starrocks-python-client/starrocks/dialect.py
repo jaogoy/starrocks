@@ -1032,6 +1032,7 @@ class StarRocksDialect(MySQLDialect_pymysql):
 
         indexes: list[dict[str, Any]] = []
 
+        # TODO: what's the purpose here?
         for spec in parsed_state.keys:
             dialect_options: dict[str, Any] = {}
             unique = False
@@ -1047,7 +1048,7 @@ class StarRocksDialect(MySQLDialect_pymysql):
             elif flavor is None:
                 pass
             else:
-                logger.info(
+                logger.warning(
                     "Converting unknown KEY type %s to a plain KEY", flavor
                 )
                 pass

@@ -3,7 +3,7 @@ from sqlalchemy.dialects import registry
 
 from starrocks.sql.ddl import CreateMaterializedView, DropMaterializedView
 from starrocks.sql.schema import MaterializedView
-from test.test_utils import _normalize_sql
+from test.test_utils import normalize_sql
 
 
 class TestMaterializedViewCompiler:
@@ -16,7 +16,7 @@ class TestMaterializedViewCompiler:
         mv = MaterializedView("my_mv", "SELECT * FROM my_table")
         sql = str(CreateMaterializedView(mv).compile(dialect=self.dialect))
         expected = "CREATE MATERIALIZED VIEW my_mv AS SELECT * FROM my_table"
-        assert _normalize_sql(sql) == _normalize_sql(expected)
+        assert normalize_sql(sql) == normalize_sql(expected)
 
     def test_create_materialized_view_with_properties(self):
         properties = {"replication_num": "1"}
@@ -29,6 +29,6 @@ class TestMaterializedViewCompiler:
         mv = MaterializedView("my_mv", "SELECT * FROM my_table")
         sql = str(DropMaterializedView(mv).compile(dialect=self.dialect))
         expected = "DROP MATERIALIZED VIEW IF EXISTS my_mv"
-        assert _normalize_sql(sql) == _normalize_sql(expected)
+        assert normalize_sql(sql) == normalize_sql(expected)
 
 
