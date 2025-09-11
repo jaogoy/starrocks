@@ -65,7 +65,7 @@ class TableAttributeNormalizer:
     # Matches spaces around opening parenthesis
     _OPEN_PAREN_SPACE_PATTERN = re.compile(r'\s*(\()\s*')
     # Matches spaces around closing parenthesis
-    _CLOSE_PAREN_SPACE_PATTERN = re.compile(r'\s*(\))\s*')
+    _CLOSE_PAREN_SPACE_PATTERN = re.compile(r'\s*(\)\s?)\s*')
     _COMMA_SPACE_PATTERN = re.compile(r'\s*,\s*')
     _OUTER_PAREN_PATTERN = re.compile(r'^\s*\(\s*(.*?)\s*\)\s*$')
 

@@ -741,7 +741,7 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
         """Compile ALTER TABLE DISTRIBUTED BY DDL for StarRocks."""
         # TODO:
         table_name = format_table_name(self, alter.table_name, alter.schema)
-        distribution_clause = f"DISTRIBUTED BY {alter.distributed_by}"
+        distribution_clause = f"DISTRIBUTED BY {alter.distribution_method}"
         if alter.buckets is not None:
             distribution_clause += f" BUCKETS {alter.buckets}"
         return f"ALTER TABLE {table_name} {distribution_clause}"
@@ -755,6 +755,7 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
     def visit_alter_table_properties(self, alter: AlterTableProperties, **kw: Any) -> str:
         """Compile ALTER TABLE SET (...) DDL for StarRocks."""
         table_name = format_table_name(self, alter.table_name, alter.schema)
+        # logger.debug(f"ALTER TABLE '{table_name}' SET ({alter.properties})")
         
         # Escape double quotes in property values
         def escape_value(value: str) -> str:
@@ -765,8 +766,21 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
 
 
 class StarRocksIdentifierPreparer(MySQLIdentifierPreparer):
-    # reserved_words = RESERVED_WORDS
-    pass
+    """
+    We can add some starrocks specific identifier behavior here if needed.
+
+    Currently, we don't force to use quote for identifier.
+
+    for reserved words, we can use the same as MySQL, and add some starrocks specific reserved words later.
+    such as: reserved_words = STARROCKS_RESERVED_WORDS | RESERVED_WORDS_MYSQL
+    """
+
+    def __init__(self, dialect):
+        super().__init__(dialect, initial_quote='`')
+
+    # We don't force to use quote for identifier. we can uncomment this if needed.
+    # def _requires_quotes(self, ident):
+    #     return True
 
 
 @log.class_logger

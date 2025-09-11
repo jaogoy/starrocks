@@ -261,6 +261,8 @@ class StarRocksTableDefinitionParser(object):
         Returns:
             ReflectionDistributionInfo object
         """
+        if not distribution:
+            return None
         buckets_match = StarRocksTableDefinitionParser._BUCKETS_PATTERN.search(distribution)
 
         if buckets_match:

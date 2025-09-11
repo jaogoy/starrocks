@@ -114,14 +114,22 @@ class AlterTableDistribution(DDLElement):
     def __init__(
         self,
         table_name: str,
-        distributed_by: str,
+        distribution_method: str,
         buckets: Optional[int] = None,
         schema: Optional[str] = None
     ):
+        """
+        Invoke an ALTER TABLE DISTRIBUTED BY operation for StarRocks.
+        Args:
+            table_name: The name of the table.
+            distribution_method: The method of the distribution, without BUCKETS.
+            buckets: The buckets of the distribution.
+            schema: The schema of the table.
+        """
         self.table_name = table_name
         self.schema = schema
-        self.distributed_by = distributed_by
-        self.buckets = buckets  # BUCKETS count
+        self.distribution_method = distribution_method
+        self.buckets = buckets
 
 
 class AlterTableOrder(DDLElement):

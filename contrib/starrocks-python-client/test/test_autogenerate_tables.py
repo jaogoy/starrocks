@@ -3,7 +3,7 @@ from alembic.autogenerate.api import AutogenContext
 from unittest.mock import Mock, PropertyMock
 
 from starrocks.alembic.compare import compare_starrocks_table
-from starrocks.params import SRKwargsPrefix, TableInfoKeyWithPrefix, DialectName
+from starrocks.params import AlterTableEnablement, SRKwargsPrefix, TableInfoKeyWithPrefix, DialectName
 from starrocks.defaults import ReflectionTableDefaults
 from starrocks.types import TableType
 from starrocks.utils import TableAttributeNormalizer
@@ -73,8 +73,9 @@ class TestRealTableObjects:
             assert op.schema == 'test_db'
 
             if isinstance(op, AlterTableDistributionOp):
-                assert op.distributed_by == 'HASH(id, name)'
+                assert op.distribution_method == 'HASH(id, name)'
                 assert op.buckets == 16
+                assert op.distributed_by == 'HASH(id, name) BUCKETS 16'
             elif isinstance(op, AlterTableOrderOp):
                 assert op.order_by == 'id, name'
             elif isinstance(op, AlterTablePropertiesOp):
@@ -645,11 +646,9 @@ class TestPartitionChanges:
             }
         )
 
-        # TODO: it's not supported to alter table partition by now
-        compare_starrocks_table(autogen_context, conn_table, meta_table)
-        # with pytest.raises(NotImplementedError) as exc_info:
-        #     compare_starrocks_table(autogen_context, conn_table, meta_table)
-        # assert LOG_ATTRIBUTE_NEED_SPECIFIED in str(exc_info.value)
+        with pytest.raises(NotImplementedError) as exc_info:
+            compare_starrocks_table(autogen_context, conn_table, meta_table)
+        assert LOG_ATTRIBUTE_NEED_SPECIFIED in str(exc_info.value)
 
     def test_partition_change(self):
         """Test PARTITION_BY value changes."""
@@ -674,6 +673,16 @@ class TestPartitionChanges:
         with pytest.raises(NotImplementedError) as exc_info:
             compare_starrocks_table(autogen_context, conn_table, meta_table)
         assert "StarRocks does not support 'ALTER TABLE PARTITION BY'" in str(exc_info.value)
+
+        # Force to make diff of partition by
+        old_enablement = AlterTableEnablement.PARTITION_BY
+        AlterTableEnablement.PARTITION_BY = True
+        result = compare_starrocks_table(autogen_context, conn_table, meta_table)
+        assert len(result) == 1
+        from starrocks.alembic.ops import AlterTablePartitionOp
+        assert isinstance(result[0], AlterTablePartitionOp)
+        assert result[0].partition_method == "LIST(category)"
+        AlterTableEnablement.PARTITION_BY = old_enablement
 
     @pytest.mark.parametrize("conn_partition, meta_partition", [
         ("RANGE(`date_col`)", "RANGE(date_col)"),
@@ -765,7 +774,7 @@ class TestDistributionChanges:
         assert len(result) == 1
         from starrocks.alembic.ops import AlterTableDistributionOp
         assert isinstance(result[0], AlterTableDistributionOp)
-        assert result[0].distributed_by == "HASH(id)"
+        assert result[0].distribution_method == "HASH(id)"
         assert result[0].buckets == 8
 
     def test_distribution_default_to_none(self):
@@ -823,7 +832,7 @@ class TestDistributionChanges:
         assert len(result) == 1
         from starrocks.alembic.ops import AlterTableDistributionOp
         assert isinstance(result[0], AlterTableDistributionOp)
-        assert result[0].distributed_by == "HASH(user_id)"
+        assert result[0].distribution_method == "HASH(user_id)"
         assert result[0].buckets == 16
 
     @pytest.mark.parametrize("conn_distribution, meta_distribution", [
@@ -1202,7 +1211,7 @@ class TestORMTableObjects:
 
         for op in result:
             if isinstance(op, AlterTableDistributionOp):
-                assert op.distributed_by == "HASH(id)"
+                assert op.distribution_method == "HASH(id)"
                 assert op.buckets == 8
             elif isinstance(op, AlterTableOrderOp):
                 assert op.order_by == "id, name"
@@ -1254,7 +1263,7 @@ class TestComplexScenarios:
 
         for op in result:
             if isinstance(op, AlterTableDistributionOp):
-                assert op.distributed_by == "HASH(user_id)"
+                assert op.distribution_method == "HASH(user_id)"
                 assert op.buckets == 16
             elif isinstance(op, AlterTableOrderOp):
                 assert op.order_by == "created_at, id"

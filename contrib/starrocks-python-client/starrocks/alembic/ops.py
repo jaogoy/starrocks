@@ -364,9 +364,25 @@ class AlterTablePartitionOp(ops.AlterTableOp):
         partition_method: str,
         schema: Optional[str] = None,
     ):
+        """
+        Invoke an ALTER TABLE PARTITION BY operation for StarRocks.
+        Args:
+            table_name: The name of the table.
+            partition_method: The method of the partition, such as 'RANGE(dt)', without pre-created partitions.
+            schema: The schema of the table.
+        """
         super().__init__(table_name, schema=schema)
         self.partition_method = partition_method
-
+    
+    @property
+    def partition_by(self) -> str:
+        """
+        Get the partition by string for the ALTER TABLE PARTITION BY operation.
+        It DOES NOT include the pre-created partitions.
+        Because pre-created partitions should be created with ALTER TABLE ADD PARTITION operation.
+        """
+        return self.partition_method
+        
     @classmethod
     def alter_table_partition(
         cls,
@@ -375,7 +391,10 @@ class AlterTablePartitionOp(ops.AlterTableOp):
         partition_method: str,
         schema: Optional[str] = None,
     ):
-        """Invoke an ALTER TABLE PARTITION BY operation for StarRocks."""
+        """
+        Invoke an ALTER TABLE PARTITION BY operation for StarRocks.
+        The same as __init__ method.
+        """
         op = cls(table_name, partition_method, schema=schema)
         return operations.invoke(op)
 
@@ -391,9 +410,23 @@ class AlterTableDistributionOp(ops.AlterTableOp):
         buckets: Optional[int] = None,
         schema: Optional[str] = None,
     ):
+        """Invoke an ALTER TABLE DISTRIBUTED BY operation for StarRocks.
+        Args:
+            table_name: The name of the table.
+            distribution_method: The method of the distribution, without BUCKETS.
+            buckets: The buckets of the distribution.
+            schema: The schema of the table.
+        """
         super().__init__(table_name, schema=schema)
         self.distribution_method = distribution_method
         self.buckets = buckets
+
+    @property
+    def distributed_by(self) -> str:
+        """Get the integrated distributed by string for the ALTER TABLE DISTRIBUTED BY operation.
+        It includes the BUCKETS if it's not None.
+        """
+        return f"{self.distribution_method}{f' BUCKETS {self.buckets}' if self.buckets else ''}"
 
     @classmethod
     def alter_table_distribution(
@@ -404,7 +437,9 @@ class AlterTableDistributionOp(ops.AlterTableOp):
         buckets: Optional[int] = None,
         schema: Optional[str] = None,
     ):
-        """Invoke an ALTER TABLE DISTRIBUTED BY operation for StarRocks."""
+        """Invoke an ALTER TABLE DISTRIBUTED BY operation for StarRocks.
+        The same as __init__ method.
+        """
         op = cls(table_name, distribution_method, buckets, schema=schema)
         return operations.invoke(op)
 
@@ -460,7 +495,7 @@ def alter_table_key(operations, op: AlterTableKeyOp):
 def alter_table_partition(operations, op: AlterTablePartitionOp):
     logger.error(
         "ALTER TABLE PARTITION is not currently supported for StarRocks. "
-        "Table: %s, Partition: %s", op.table_name, op.partition_by
+        "Table: %s, Partition: %s", op.table_name, op.partition_method
     )
     raise NotImplementedError("ALTER TABLE PARTITION is not yet supported")
 
