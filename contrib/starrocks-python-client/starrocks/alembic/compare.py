@@ -21,7 +21,7 @@ from starrocks.params import (
 )
 
 from starrocks.reflection import StarRocksTableDefinitionParser
-from starrocks.reflection_info import ReflectionViewInfo, ReflectionDistributionInfo, ReflectionPartitionInfo
+from starrocks.reflection_info import ReflectedViewState, ReflectedDistributionInfo, ReflectedPartitionInfo
 from starrocks.sql.schema import MaterializedView, View
 
 from starrocks.alembic.ops import (
@@ -129,7 +129,7 @@ def _compare_views(
 
     # Find old views to drop
     for schema, view_name in sorted(conn_views - metadata_views.keys()):
-        view_info: Optional[ReflectionViewInfo] = inspector.get_view(view_name, schema=schema)
+        view_info: Optional[ReflectedViewState] = inspector.get_view(view_name, schema=schema)
         if not view_info:
             continue
         upgrade_ops.ops.append(
@@ -144,7 +144,7 @@ def _compare_views(
 
     # Find views that exist in both and compare their definitions
     for schema, view_name in sorted(conn_views.intersection(metadata_views.keys())):
-        view_info: Optional[ReflectionViewInfo] = inspector.get_view(view_name, schema=schema)
+        view_info: Optional[ReflectedViewState] = inspector.get_view(view_name, schema=schema)
         if not view_info:
             continue
 
@@ -368,9 +368,9 @@ def compare_starrocks_table(
     # Get the system run_mode for proper default value comparison
     run_mode = autogen_context.dialect.run_mode
     logger.debug(f"System run_mode for table comparison: {run_mode}")
-
-    conn_table_attributes = _extract_starrocks_dialect_attributes(conn_table.kwargs)
-    meta_table_attributes = _extract_starrocks_dialect_attributes(metadata_table.kwargs)
+    
+    conn_table_attributes = conn_table.dialect_options[DialectName]
+    meta_table_attributes = metadata_table.dialect_options[DialectName]
 
     ops_list = []
 
@@ -497,11 +497,11 @@ def _compare_key_with_defaults(
 
 
 def _compare_partition_method(
-    conn_partition: Optional[ReflectionPartitionInfo | str],
+    conn_partition: Optional[ReflectedPartitionInfo | str],
     default_partition: Optional[str]
 ) -> bool:
     """
-    Compare two ReflectionPartitionInfo objects for equality.
+    Compare two ReflectedPartitionInfo objects for equality.
 
     This comparison deliberately ignores pre-created partition info (e.g., `VALUES
     LESS THAN (...)`) and only compares the partitioning scheme itself (type and
@@ -519,8 +519,8 @@ def _compare_partition_method(
     if default_partition is None:
         return conn_partition is None
 
-    # If the partition info is a string, it's the partition_by expression, not a ReflectionPartitionInfo object
-    if isinstance(conn_partition, ReflectionPartitionInfo):
+    # If the partition info is a string, it's the partition_by expression, not a ReflectedPartitionInfo object
+    if isinstance(conn_partition, ReflectedPartitionInfo):
         conn_partition = conn_partition.partition_method
         
     # Only compare the partition_method.
@@ -835,12 +835,16 @@ def _compare_single_table_attribute(
         return False
 
 
-def _extract_starrocks_dialect_attributes(kwargs: Dict[str, Any]) -> CaseInsensitiveDict:
+def extract_starrocks_dialect_attributes(kwargs: Dict[str, Any]) -> CaseInsensitiveDict:
     """Extract StarRocks-specific dialect attributes from a dict, with each attribute prefixed with 'starrocks_'.
 
     Returns a CaseInsensitiveDict for case-insensitive key access, with prefix 'starrocks_' removed.
+
+    Currently, it's useless, because we use Table.dialect_options[dialect] to get it.
     """
     result = CaseInsensitiveDict()
+    if not kwargs:
+        return result
     for k, v in kwargs.items():
         if k.lower().startswith(SRKwargsPrefix):
             result[k[len(SRKwargsPrefix):]] = v
@@ -850,17 +854,17 @@ def _extract_starrocks_dialect_attributes(kwargs: Dict[str, Any]) -> CaseInsensi
 @comparators_dispatch_for_starrocks("column")
 def compare_starrocks_column(
     autogen_context: AutogenContext,
-    alter_column_op: "AlterColumnOp",
+    alter_column_op: AlterColumnOp,
     schema: Optional[str],
-    tname: "Union[quoted_name, str]",
-    cname: "Union[quoted_name, str]",
-    conn_col: "Column[Any]",
-    metadata_col: "Column[Any]",
+    tname: Union[quoted_name, str],
+    cname: Union[quoted_name, str],
+    conn_col: Column[Any],
+    metadata_col: Column[Any],
 ) -> None:
     """
     Compare StarRocks-specific column options.
     
-    Check for changes in StarRocks-specific attributes like aggregate type.
+    Check for changes in StarRocks-specific attributes, like aggregate type.
     """
     meta_agg_type = metadata_col.info.get(ColumnAggInfoKeyWithPrefix.AGG_TYPE)
     conn_agg_type = conn_col.dialect_options.get(ColumnAggInfoKeyWithPrefix.AGG_TYPE)

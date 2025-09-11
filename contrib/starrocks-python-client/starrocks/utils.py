@@ -3,7 +3,7 @@ from typing import Any, Dict, Optional, Union, Mapping, Iterator, List
 
 from sqlalchemy.exc import StatementError
 
-from starrocks.reflection_info import ReflectionDistributionInfo, ReflectionPartitionInfo
+from starrocks.reflection_info import ReflectedDistributionInfo, ReflectedPartitionInfo
 
 
 class SQLParseError(StatementError):
@@ -124,27 +124,27 @@ class TableAttributeNormalizer:
         return value.upper().strip() if value else value
 
     @staticmethod
-    def normalize_partition_method(partition: Union[ReflectionPartitionInfo, str]) -> str:
+    def normalize_partition_method(partition: Union[ReflectedPartitionInfo, str]) -> str:
         """Normalize partition string by removing backticks and extra spaces.
         Because there may be column names in this string, we don't simply lowercase it.
-        If the partition is a ReflectionPartitionInfo object, return the partition_method only.
+        If the partition is a ReflectedPartitionInfo object, return the partition_method only.
         """
         if not partition:
             return partition
         return TableAttributeNormalizer.normalize_column_identifiers(
-            partition.partition_method if isinstance(partition, ReflectionPartitionInfo) else partition
+            partition.partition_method if isinstance(partition, ReflectedPartitionInfo) else partition
         )
 
     @staticmethod
-    def normalize_distribution_string(distribution: Union[ReflectionDistributionInfo, str]) -> str:
+    def normalize_distribution_string(distribution: Union[ReflectedDistributionInfo, str]) -> str:
         """Normalize distribution string by removing backticks and extra spaces.
         Because there may be column names in this string, we don't simply lowercase it.
-        If the distribution is a ReflectionDistributionInfo object, return the string representation only.
+        If the distribution is a ReflectedDistributionInfo object, return the string representation only.
         """
         if not distribution:
             return distribution
         return TableAttributeNormalizer.normalize_column_identifiers(
-            str(distribution) if isinstance(distribution, ReflectionDistributionInfo) else distribution
+            str(distribution) if isinstance(distribution, ReflectedDistributionInfo) else distribution
         )
 
     @staticmethod

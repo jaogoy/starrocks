@@ -81,7 +81,17 @@ Here is a flowchart illustrating the nested dispatch process:
 
 ## StarRocks Dialect Extensions
 
-The `sqlalchemy-starrocks` dialect hooks into this process by registering its own set of comparators in the `starrocks.alembic.compare` module.
+The `sqlalchemy-starrocks` dialect hooks into this dispatch process by registering its own set of comparators in the `starrocks.alembic.compare` module.
+
+> To remove the impaction on other type of databases when there are several Alembic plugins be use, we use a custom decorator, which will only handle for StarRocks dialect.
+
+### Accessing Dialect-Specific Options
+
+A key implementation detail is how SQLAlchemy handles dialect-specific keyword arguments (like `starrocks_PARTITION_BY`). Whether a `Table` object is created by the user (e.g., `Table('my_table', metadata, starrocks_PARTITION_BY=...)`, or ORM style) or reflected from the database by the inspector, SQLAlchemy normalizes these options.
+
+All `starrocks_` prefixed arguments are collected and stored in a dictionary accessible via `table.dialect_options['starrocks']`.
+
+This provides the custom comparator functions with a single, consistent location to retrieve StarRocks-specific attributes for both the database-side `Table` object and the metadata-side `Table` object, greatly simplifying the comparison logic.
 
 ### Custom Comparator Functions
 

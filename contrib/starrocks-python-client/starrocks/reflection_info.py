@@ -19,7 +19,7 @@ class ReflectedState(object):
 
 
 @dataclasses.dataclass(kw_only=True)
-class ReflectionViewInfo:
+class ReflectedViewState:
     """Stores reflection information about a view."""
     name: str
     definition: str
@@ -28,7 +28,7 @@ class ReflectionViewInfo:
 
 
 @dataclasses.dataclass(kw_only=True)
-class ReflectionMVInfo:
+class ReflectedMVState:
     """Stores reflection information about a materialized view."""
     name: str
     definition: str
@@ -37,7 +37,7 @@ class ReflectionMVInfo:
 
 
 @dataclasses.dataclass(kw_only=True, frozen=True)
-class ReflectionPartitionInfo:
+class ReflectedPartitionInfo:
     """
     Stores structured reflection information about a table's partitioning scheme.
 
@@ -63,7 +63,7 @@ class ReflectionPartitionInfo:
 
 
 @dataclasses.dataclass(kw_only=True)
-class ReflectionDistributionInfo:
+class ReflectedDistributionInfo:
     """Stores reflection information about a view."""
     type: str | None
     """The distribution type string like 'HASH' or 'RANDOM'."""

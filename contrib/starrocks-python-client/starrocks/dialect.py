@@ -57,9 +57,10 @@ from .sql.ddl import (
 )
 from .sql.schema import View
 from .reflection import StarRocksInspector
-from .reflection_info import ReflectedState, ReflectionViewInfo, ReflectionPartitionInfo
+from .reflection_info import ReflectedState, ReflectedViewState, ReflectedPartitionInfo
 from .defaults import ReflectionViewDefaults
 from .params import ColumnSROptionsKey, SRKwargsPrefix, TableInfoKey, TableInfoKeyWithPrefix, ColumnAggInfoKeyWithPrefix
+from alembic.operations.ops import AlterColumnOp
 
 # Register the compiler methods
 # The @compiles decorator is the public API for registering new SQL constructs.
@@ -241,7 +242,7 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
                 logger.warning(
                     "Column '%s' in table '%s' has primary_key=True, which is not supported by the StarRocks dialect "
                     "and will be ignored. Please define the primary key on the Table object using the "
-                    "'starrocks_PRIMARY_KEY' keyword argument.",
+                    f"'{TableInfoKeyWithPrefix.PRIMARY_KEY}' keyword argument.",
                     column.name,
                     self._get_simple_full_table_name(table.name, table.schema),
                 )
@@ -274,6 +275,7 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
         return text
     
     def _get_simple_full_table_name(self, table_name: str, schema: Optional[str] = None) -> str:
+        """Directly get the full table name without adding any quotes."""
         return f"{schema}.{table_name}" if schema else table_name
 
     def _validate_key_definitions(self, table: sa_schema.Table) -> None:
@@ -525,12 +527,6 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
         #     sqltypes.TIMESTAMP,
         # )
 
-        if column.comment is not None:
-            literal = self.sql_compiler.render_literal_value(
-                column.comment, sqltypes.String()
-            )
-            colspec.append("COMMENT " + literal)
-
         # ToDo >= version 3.0
         # if (
         #     column.table is not None
@@ -561,6 +557,12 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
                 colspec.append("DEFAULT " + default)
         if column.computed is not None:
             colspec.append(self.process(column.computed))
+
+        if column.comment is not None:
+            literal = self.sql_compiler.render_literal_value(
+                column.comment, sqltypes.String()
+            )
+            colspec.append("COMMENT " + literal)
 
         return " ".join(colspec)
 
@@ -980,7 +982,7 @@ class StarRocksDialect(MySQLDialect_pymysql):
             table=table_rows[0],
             table_config=table_config_dict,
             columns=column_rows,
-            agg_types=column_2_agg_type,
+            column_2_agg_type=column_2_agg_type,
             charset=charset,
         )
 
@@ -1119,14 +1121,14 @@ class StarRocksDialect(MySQLDialect_pymysql):
 
     def get_views(
         self, connection: Connection, schema: Optional[str] = None, **kwargs: Any
-    ) -> Dict[tuple[str | None, str], "ReflectionViewInfo"]:
-        """Batch reflection: return all views mapping to ReflectionViewInfo by (schema, name).
+    ) -> Dict[tuple[str | None, str], "ReflectedViewState"]:
+        """Batch reflection: return all views mapping to ReflectedViewState by (schema, name).
 
         Prototype: not used by autogenerate yet, provided for potential optimization.
         """
         if schema is None:
             schema = self.default_schema_name
-        results: Dict[tuple[str | None, str], ReflectionViewInfo] = {}
+        results: Dict[tuple[str | None, str], ReflectedViewState] = {}
         try:
             rows = self._read_from_information_schema(
                 connection,
@@ -1148,7 +1150,7 @@ class StarRocksDialect(MySQLDialect_pymysql):
     @reflection.cache
     def _get_view_info(
         self, connection: Connection, view_name: str, schema: Optional[str] = None, **kwargs: Any
-    ) -> Optional[ReflectionViewInfo]:
+    ) -> Optional[ReflectedViewState]:
         """Gets all information about a view.
 
         Note: comment is currently not fetched from information_schema and defaults to empty.
@@ -1162,7 +1164,7 @@ class StarRocksDialect(MySQLDialect_pymysql):
                 table_schema=schema,
                 table_name=view_name,
             )[0]
-            rv = ReflectionViewInfo(
+            rv = ReflectedViewState(
                 name=view_details.TABLE_NAME,
                 definition=view_details.VIEW_DEFINITION,
                 # TODO: comment is not queried for now, it's not in information_schema.views
@@ -1179,7 +1181,7 @@ class StarRocksDialect(MySQLDialect_pymysql):
 
     def get_view(
         self, connection: Connection, view_name: str, schema: Optional[str] = None, **kwargs: Any
-    ) -> Optional[ReflectionViewInfo]:
+    ) -> Optional[ReflectedViewState]:
         """Return all information about a view."""
         view_info = self._get_view_info(connection, view_name, schema, **kwargs)
         if not view_info:

@@ -72,9 +72,9 @@ graph TD
 
 ### Key Workflows
 
-1.  **Autogenerate Flow (Schema Comparison)**: The user runs `alembic revision --autogenerate`. Our `compare.py` module is triggered. It uses the `StarRocksInspector` to read the database's current state and compares it against the user's `models.py`. The detected differences are translated into a series of operations (`ops.py`) which are written into a new migration script.
+1. **Autogenerate Flow (Schema Comparison)**: The user runs `alembic revision --autogenerate`. Our `compare.py` module is triggered. It uses the `StarRocksInspector` to read the database's current state and compares it against the user's `models.py`. The detected differences are translated into a series of operations (`ops.py`) which are written into a new migration script.
 
-2.  **Upgrade Flow (Schema Migration)**: The user runs `alembic upgrade`. The migration script is executed. The operations within the script trigger our `render.py` module, which in turn uses the `StarRocksDDLCompiler` to generate the final StarRocks-specific DDL. This DDL is then executed against the database.
+2. **Upgrade Flow (Schema Migration)**: The user runs `alembic upgrade`. The migration script is executed. The operations within the script trigger our `render.py` module, which in turn uses the `StarRocksDDLCompiler` to generate the final StarRocks-specific DDL. This DDL is then executed against the database.
 
 ---
 
@@ -87,6 +87,7 @@ To extend SQLAlchemy and Alembic, we hook into several key processes. Understand
 **Goal**: To read the schema from a StarRocks database and convert it into SQLAlchemy-understandable Python objects.
 
 **Workflow**:
+
 ```mermaid
 sequenceDiagram
     participant UserCode as "User Code<br/>(e.g., MetaData.reflect())"
@@ -101,7 +102,7 @@ sequenceDiagram
     Dialect->>DB: SHOW TABLES;
     DB-->>Dialect: [tables]
     Dialect-->>Inspector: returns table names
-    
+
     UserCode->>Inspector: .get_columns('my_table')
     Inspector->>Dialect: .get_columns('my_table')
     Dialect->>DB: SELECT ... FROM information_schema.columns
@@ -110,19 +111,21 @@ sequenceDiagram
 ```
 
 **How-To**: We implement methods in our `StarRocksDialect` and `StarRocksInspector`.
+
 - **Location**: `starrocks/dialect.py`, `starrocks/reflection.py`
 - **Key Methods**:
-    - `get_table_names()`, `get_view_names()`, `get_materialized_view_names()`
-    - `get_columns(table_name)`
-    - `get_view_definition(view_name)`
-    - `get_pk_constraint`, `get_indexes`
-    - **`get_table_options(table_name)`**: Crucial for fetching StarRocks-specific properties like `DISTRIBUTED BY` and `PROPERTIES`.
+  - `get_table_names()`, `get_view_names()`, `get_materialized_view_names()`
+  - `get_columns(table_name)`
+  - `get_view_definition(view_name)`
+  - `get_pk_constraint`, `get_indexes`
+  - **`get_table_options(table_name)`**: Crucial for fetching StarRocks-specific properties like `DISTRIBUTED BY` and `PROPERTIES`.
 
 ### 2.2 `compile` (DDL Compilation) Flow
 
 **Goal**: To translate SQLAlchemy's abstract DDL objects (e.g., `CreateTable`) into concrete StarRocks SQL dialect.
 
 **Workflow**:
+
 ```mermaid
 sequenceDiagram
     participant UserCode as "User Code<br/>(e.g., my_table.create())"
@@ -139,11 +142,12 @@ sequenceDiagram
 ```
 
 **How-To**: We create a `StarRocksDDLCompiler` inheriting from `MySQLDDLCompiler` and implement `visit_*` methods for each DDL element we want to customize.
+
 - **Location**: `starrocks/compiler.py` (recommended) or `starrocks/dialect.py`
 - **Key Methods**:
-    - `visit_create_table(element)`: Reads `starrocks_*` kwargs from the `Table` object and appends clauses like `DISTRIBUTED BY...` and `PROPERTIES...`.
-    - `visit_create_view(element)`: Compiles our custom `View` object into a `CREATE VIEW` statement.
-    - `visit_AlterTableDistribution(element)`: Compiles our custom `AlterTableDistribution` DDL element into an `ALTER TABLE...` statement.
+  - `visit_create_table(element)`: Reads `starrocks_*` kwargs from the `Table` object and appends clauses like `DISTRIBUTED BY...` and `PROPERTIES...`.
+  - `visit_create_view(element)`: Compiles our custom `View` object into a `CREATE VIEW` statement.
+  - `visit_AlterTableDistribution(element)`: Compiles our custom `AlterTableDistribution` DDL element into an `ALTER TABLE...` statement.
 
 ### 2.3 Alembic `compare` Flow
 
@@ -152,16 +156,19 @@ sequenceDiagram
 **Workflow**: Alembic uses a decorator-based dispatch system. We register our custom comparison functions to be called during the `autogenerate` process.
 
 **How-To**: We write decorated functions in `starrocks/alembic/compare.py`.
-- **`@comparators.dispatch_for("schema")`**: For container-level objects. We use this to compare the lists of `Views` and `Materialized Views`.
-- **`@comparators.dispatch_for("table")`**: To compare StarRocks-specific table-level options (`PROPERTIES`, `DISTRIBUTED BY`, etc.) after Alembic has compared the standard table attributes.
-- **`@comparators.dispatch_for("column")`**: To compare StarRocks-specific column-level attributes (e.g., aggregation type).
+
+- `@comparators.dispatch_for("schema")`: For container-level objects. We use this to compare the lists of `Views` and `Materialized Views`.
+- `@comparators.dispatch_for("table")`: To compare StarRocks-specific table-level options (`PROPERTIES`, `DISTRIBUTED BY`, etc.) after Alembic has compared the standard table attributes.
+- `@comparators.dispatch_for("column")`: To compare StarRocks-specific column-level attributes (e.g., aggregation type).
 
 ### 2.4 Alembic `ops` and `render` Flow
 
 **Goal**: To define custom Alembic operations and control how they are represented in migration scripts and rendered into SQL.
 
 **How-To**:
+
 1.  **Define Custom Operations (`ops.py`)**:
+
     - Create classes like `CreateViewOp(MigrateOperation)`.
     - These classes define the structure of the operation and its `reverse()` method for downgrades.
 
@@ -169,3 +176,9 @@ sequenceDiagram
     - Implement a function for each custom op, decorated with `@renderers.dispatch_for(CreateViewOp)`.
     - This function tells Alembic how to generate the Python code (e.g., `op.create_view(...)`) in the migration script.
     - This is also where we hook into the DDL Compiler to render the operation into SQL for `alembic upgrade --sql`.
+
+- [Inspect](./inspect.md)
+- [Compare](./compare.md)
+- [Compile](./compile.md)
+- [Render](./render.md)
+- [Column Definitions](./column_definitions.md)

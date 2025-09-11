@@ -3,7 +3,7 @@ from alembic.operations import ops
 from sqlalchemy import MetaData
 from starrocks.sql.schema import View
 from starrocks.alembic.compare import autogen_for_views
-from starrocks.reflection_info import ReflectionViewInfo
+from starrocks.reflection_info import ReflectedViewState
 from starrocks.alembic.ops import (
     CreateViewOp, DropViewOp, AlterViewOp,
 )
@@ -51,7 +51,7 @@ class TestAutogenerateViews:
     def test_modify_view_autogenerate(self):
         upgrade_ops = ops.UpgradeOps([])
         self.mock_inspector.get_view_names.return_value = ['my_test_view']
-        self.mock_inspector.get_view.return_value = ReflectionViewInfo(
+        self.mock_inspector.get_view.return_value = ReflectedViewState(
             name="my_test_view", definition="SELECT 1"
         )
         m2 = MetaData()
@@ -82,7 +82,7 @@ class TestAutogenerateViews:
     def test_modify_view_add_security(self):
         upgrade_ops = ops.UpgradeOps([])
         self.mock_inspector.get_view_names.return_value = ['my_secure_view']
-        self.mock_inspector.get_view.return_value = ReflectionViewInfo(
+        self.mock_inspector.get_view.return_value = ReflectedViewState(
             name="my_secure_view", definition="SELECT 1"
         )
         m2 = MetaData()
@@ -96,7 +96,7 @@ class TestAutogenerateViews:
     def test_no_change_view_autogenerate(self):
         upgrade_ops = ops.UpgradeOps([])
         self.mock_inspector.get_view_names.return_value = ['my_test_view']
-        self.mock_inspector.get_view.return_value = ReflectionViewInfo(
+        self.mock_inspector.get_view.return_value = ReflectedViewState(
             name="my_test_view", definition="SELECT 1 AS `val`"
         )
         m2 = MetaData()
@@ -109,7 +109,7 @@ class TestAutogenerateViews:
     def test_modify_view_comment_autogenerate(self):
         upgrade_ops = ops.UpgradeOps([])
         self.mock_inspector.get_view_names.return_value = ['my_test_view']
-        self.mock_inspector.get_view.return_value = ReflectionViewInfo(
+        self.mock_inspector.get_view.return_value = ReflectedViewState(
             name="my_test_view", definition="SELECT 1"
         )
         m2 = MetaData()
@@ -123,7 +123,7 @@ class TestAutogenerateViews:
     def test_modify_view_security_autogenerate(self):
         upgrade_ops = ops.UpgradeOps([])
         self.mock_inspector.get_view_names.return_value = ['my_test_view']
-        self.mock_inspector.get_view.return_value = ReflectionViewInfo(
+        self.mock_inspector.get_view.return_value = ReflectedViewState(
             name="my_test_view", definition="SELECT 1", security='INVOKER'
         )
         m2 = MetaData()
@@ -137,7 +137,7 @@ class TestAutogenerateViews:
     def test_remove_view_security_autogenerate(self):
         upgrade_ops = ops.UpgradeOps([])
         self.mock_inspector.get_view_names.return_value = ['my_test_view']
-        self.mock_inspector.get_view.return_value = ReflectionViewInfo(
+        self.mock_inspector.get_view.return_value = ReflectedViewState(
             name="my_test_view", definition="SELECT 1", security='INVOKER'
         )
         m2 = MetaData()

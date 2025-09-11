@@ -8,7 +8,7 @@ When defining a StarRocks table using SQLAlchemy, you can specify both table-lev
 
 ### Table-Level Properties (`starrocks_*` Prefixes)
 
-StarRocks-specific physical properties for a table are configured by passing special keyword arguments, prefixed with `starrocks_`, either directly to the `Table` constructor or within the `__table_args__` dictionary.
+StarRocks-specific physical properties for a table are configured by passing special keyword arguments, prefixed with `starrocks_`, either directly to the `Table` constructor or within the `__table_args__` dictionary (in [ORM style](#defining-tables-with-the-orm-declarative-style)).
 
 #### General Syntax
 
@@ -51,13 +51,12 @@ Specifies the table engine. `OLAP` is the default and only supported engine.
 Defines the table's type (key) and the columns that constitute the key. You must choose **at most one** of the following options.
 
 - **`starrocks_PRIMARY_KEY`**
+  > - You **can't** specify the Primary Key type in a column, such as `Column('id', Integer, primary_key=True)`, which is not supported for StarRocks.
+  > - You **can't** specify the Primary Key type by using `PrimaryKeyConstraint` either.
 
   - **Description**: Defines a Primary Key type table. Data is sorted by the primary key, and each row is unique.
   - **Type**: `str` (comma-separated column names)
   - **Example**: `starrocks_PRIMARY_KEY="user_id, event_date"`
-
-  > - You can't specify the Primary Key type in a column, such as `Column('id', Integer, primary_key=True)`, which is not supported for StarRocks.
-  > - You can't specify the Primary Key type by using `PrimaryKeyConstraint` either.
 
 - **`starrocks_DUPLICATE_KEY`**
 
@@ -86,6 +85,7 @@ Defines the partitioning strategy for the table.
 
 - **Type**: `str`
 - **Example**:
+
   ```Python
   starrocks_PARTITION_BY="""RANGE(event_date) (
       START ('2022-01-01') END ('2023-01-01') EVERY (INTERVAL 1 DAY)
@@ -126,9 +126,15 @@ A dictionary of additional table properties.
 
 For `AGGREGATE KEY` tables, you can specify an aggregate function for each value column (i.e., non-key columns). This is done by passing an `info` dictionary with the key `starrocks_AGG_TYPE` to the `Column` constructor.
 
+#### General Syntax
+
+```python
+Column('page_views', Integer, info={'starrocks_AGG_TYPE': 'SUM'}),
+```
+
 #### Available Aggregate Types
 
-The following aggregate types are supported:
+The following aggregate types (`AGG_TYPE`) are supported:
 
 - **`SUM`**: Sums the values for rows with the same key.
 - **`REPLACE`**: Replaces existing values with the newest value for rows with the same key.
@@ -162,11 +168,51 @@ aggregate_table = Table(
     Column('uv_estimate', HLL, info={'starrocks_AGG_TYPE': 'HLL_UNION'}),
 
     # Table-level options
-    starrocks_AGGREGATE_KEY="event_date, site_id",  # Must specify it for aggregate tabke
+    starrocks_AGGREGATE_KEY="event_date, site_id",  # Must specify it for AGGREGATE tabke
     starrocks_PARTITION_BY="date_trunc('day', event_date)",
     starrocks_DISTRIBUTED_BY="RANDOM",
     starrocks_PROPERTIES={"replication_num": "3"}
 )
+```
+
+## Defining Tables with the ORM (Declarative Style)
+
+When using SQLAlchemy's Declarative style, you define table-level properties within the `__table_args__` dictionary. Column-level properties are defined using the `info` dictionary on each `Column`.
+
+### Example: ORM Aggregate Key Table
+
+Here is a complete example of an `AGGREGATE KEY` table defined using the Declarative style. It demonstrates both table-level and column-level properties.
+
+```python
+from sqlalchemy import Column, Integer, String, Date
+from sqlalchemy.orm import declarative_base
+from starrocks.types import BITMAP, HLL
+
+Base = declarative_base()
+
+class PageViewAggregates(Base):
+    __tablename__ = 'page_view_aggregates'
+
+    # -- Key Columns --
+    # For AGGREGATE KEY tables, key columns can be marked with `starrocks_is_agg_key`.
+    # This is optional but improves clarity and allows for validation.
+    page_id = Column(Integer, info={'starrocks_is_agg_key': True})
+    visit_date = Column(Date)
+
+    # -- Value Columns --
+    # Value columns have their aggregate function specified in the `info` dict.
+    total_views = Column(Integer, info={'starrocks_agg': 'SUM'})
+    last_user = Column(String, info={'starrocks_agg': 'REPLACE'})
+    distinct_users = Column(BITMAP, info={'starrocks_agg': 'BITMAP_UNION'})
+    uv_estimate = Column(HLL, info={'starrocks_agg': 'HLL_UNION'})
+
+    # -- Table-Level Arguments --
+    __table_args__ = {
+        'starrocks_aggregate_key': 'page_id, visit_date',
+        'starrocks_partition_by': 'date_trunc("day", visit_date)',
+        'starrocks_distributed_by': 'HASH(page_id)',
+        'starrocks_properties': {"replication_num": "3"}
+    }
 ```
 
 ## Integration with Alembic

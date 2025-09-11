@@ -1,12 +1,12 @@
 import pytest
 
-from starrocks.reflection_info import ReflectionViewInfo
+from starrocks.reflection_info import ReflectedViewState
 from starrocks.defaults import ReflectionViewDefaults
 from starrocks.types import ViewSecurityType
 
 
 def test_reflection_view_defaults_apply_basic():
-    info: ReflectionViewInfo = ReflectionViewDefaults.apply(
+    info: ReflectedViewState = ReflectionViewDefaults.apply(
         name="v1",
         definition="SELECT 1",
         comment=None,
@@ -19,7 +19,7 @@ def test_reflection_view_defaults_apply_basic():
 
 
 def test_reflection_view_defaults_apply_upper_security_and_keep_comment():
-    info: ReflectionViewInfo = ReflectionViewDefaults.apply(
+    info: ReflectedViewState = ReflectionViewDefaults.apply(
         name="v2",
         definition="SELECT 2",
         comment="some comment",
@@ -30,7 +30,7 @@ def test_reflection_view_defaults_apply_upper_security_and_keep_comment():
 
 
 def test_reflection_view_defaults_empty_strings():
-    info: ReflectionViewInfo = ReflectionViewDefaults.apply(
+    info: ReflectedViewState = ReflectionViewDefaults.apply(
         name="v3",
         definition="SELECT 3",
         comment="",

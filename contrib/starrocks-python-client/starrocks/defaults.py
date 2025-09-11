@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Optional, Union
 
-from starrocks.reflection_info import ReflectionMVInfo, ReflectionViewInfo
+from starrocks.reflection_info import ReflectedMVState, ReflectedViewState
 from starrocks.types import SystemRunMode, TableDistribution, TableEngine, TableType, ViewSecurityType
 from starrocks.utils import TableAttributeNormalizer
 
@@ -114,7 +114,7 @@ class ReflectionViewDefaults:
         definition: str,
         comment: str | None = None,
         security: str | None = None,
-    ) -> ReflectionViewInfo:
+    ) -> ReflectedViewState:
         """Apply defaults and normalization to reflected view values.
 
         - comment: default empty string
@@ -122,7 +122,7 @@ class ReflectionViewDefaults:
         """
         normalized_comment = (comment or cls.comment())
         normalized_security = (security or cls.security()).upper()
-        return ReflectionViewInfo(
+        return ReflectedViewState(
             name=name,
             definition=definition,
             comment=normalized_comment,
@@ -130,10 +130,10 @@ class ReflectionViewDefaults:
         )
 
     @classmethod
-    def apply_info(cls, reflection_view_info: ReflectionViewInfo) -> ReflectionViewInfo:
+    def apply_info(cls, reflection_view_info: ReflectedViewState) -> ReflectedViewState:
         """Apply defaults and normalization to reflected view values.
         """
-        return ReflectionViewInfo(
+        return ReflectedViewState(
             name=reflection_view_info.name,
             definition=reflection_view_info.definition,
             comment=(reflection_view_info.comment or cls.comment()),
@@ -156,7 +156,7 @@ class ReflectionMVDefaults:
     def apply(cls, *, name: str, definition: str, comment: str | None = None, security: str | None = None) -> ReflectionMaterializedViewInfo:
         """Apply defaults and normalization to reflected materialized view values.
         """
-        return ReflectionMVInfo(
+        return ReflectedMVState(
             name=name,
             definition=definition,
             comment=(comment or cls.comment()),

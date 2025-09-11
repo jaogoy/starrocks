@@ -3,7 +3,7 @@ from sqlalchemy import text, Table, MetaData, Column, Integer, String, inspect
 from sqlalchemy.engine import Engine
 
 from starrocks.params import TableInfoKeyWithPrefix
-from starrocks.reflection_info import ReflectionPartitionInfo
+from starrocks.reflection_info import ReflectedPartitionInfo
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +52,7 @@ class TestReflectionTablesIntegration:
                 assert table_options[TableInfoKeyWithPrefix.ENGINE] == 'OLAP'
                 assert normalize_sql(table_options[TableInfoKeyWithPrefix.PRIMARY_KEY]) == 'id'
                 partition_info = table_options[TableInfoKeyWithPrefix.PARTITION_BY]
-                assert partition_info is not None and isinstance(partition_info, ReflectionPartitionInfo)
+                assert partition_info is not None and isinstance(partition_info, ReflectedPartitionInfo)
                 assert normalize_sql(partition_info.partition_method) == normalize_sql('RANGE(id)')
                 assert "(PARTITION p1 VALUES" in normalize_sql(partition_info.pre_created_partitions)
                 assert normalize_sql(table_options[TableInfoKeyWithPrefix.DISTRIBUTED_BY]) == normalize_sql('HASH(id) BUCKETS 8')

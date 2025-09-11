@@ -31,7 +31,7 @@ from . import utils
 from .utils import SQLParseError
 
 from .params import ColumnAggInfoKeyWithPrefix, ColumnSROptionsKey, SRKwargsPrefix, TableInfoKeyWithPrefix, TableInfoKey
-from .reflection_info import ReflectedState, ReflectionViewInfo, ReflectionDistributionInfo, ReflectionPartitionInfo
+from .reflection_info import ReflectedState, ReflectedViewState, ReflectedDistributionInfo, ReflectedPartitionInfo
 from .types import PartitionType, TableModel, TableType, TableEngine
 from .consts import TableConfigKey
 
@@ -46,30 +46,46 @@ class StarRocksInspector(Inspector):
     def __init__(self, bind):
         super().__init__(bind)
 
-    def get_view(self, view_name: str, schema: Optional[str] = None, **kwargs: Any) -> Optional[ReflectionViewInfo]:
+    def get_view(self, view_name: str, schema: Optional[str] = None, **kwargs: Any) -> Optional[ReflectedViewState]:
         """
         Retrieves information about a specific view.
 
         :param view_name: The name of the view to inspect.
         :param schema: The schema of the view; defaults to the default schema name if None.
         :param kwargs: Additional arguments passed to the dialect's get_view method.
-        :return: A ReflectionViewInfo object, or None if the view does not exist.
+        :return: A ReflectedViewState object, or None if the view does not exist.
         """
         return self.dialect.get_view(self.bind, view_name, schema=schema, **kwargs)
 
-    def get_views(self, schema: str | None = None) -> dict[tuple[str | None, str], ReflectionViewInfo]:
+    def get_views(self, schema: str | None = None) -> dict[tuple[str | None, str], ReflectedViewState]:
         """
         Retrieves a dictionary of all views in a given schema.
 
         :param schema: The schema to inspect; defaults to the default schema name if None.
-        :return: A dictionary mapping (schema, view_name) to ReflectionViewInfo objects.
+        :return: A dictionary mapping (schema, view_name) to ReflectedViewState objects.
         """
         return self.dialect.get_views(self.bind, schema=schema)
 
 
 @log.class_logger
 class StarRocksTableDefinitionParser(object):
-    """Parses content of information_schema tables to get table information."""
+    """
+    This parser is responsible for interpreting the raw data returned from
+    StarRocks' `information_schema` and `SHOW` commands.
+    
+    For columns, the base attributes (name, type, nullable, default) are
+    parsed here, leveraging the underlying MySQL dialect where possible.
+    This dialect-specific implementation adds logic to parse StarRocks-specific
+    attributes that are not present in standard MySQL, such as the aggregation
+    type on a column (e.g., 'SUM', 'REPLACE', 'KEY'). This is achieved by
+    querying `SHOW FULL COLUMNS` and processing the 'Extra' field.
+    
+    Other standard column attributes are assumed to be handled correctly by
+    the base MySQL dialect's reflection mechanisms.
+
+    MySQLTableDefinitionParser uses regex to parse information, so it's not
+    used here.
+    """
 
     _BUCKETS_PATTERN = re.compile(r'\sBUCKETS\s+(\d+)', re.IGNORECASE)
     _BUCKETS_REPLACE_PATTERN = re.compile(r'\s+BUCKETS\s+\d+', re.IGNORECASE)
@@ -85,7 +101,7 @@ class StarRocksTableDefinitionParser(object):
         table: _DecodingRow,
         table_config: dict[str, Any],
         columns: list[_DecodingRow],
-        agg_types: dict[str, str],
+        column_2_agg_type: dict[str, str],
         charset: str,
     ) -> ReflectedState:
         """
@@ -95,14 +111,14 @@ class StarRocksTableDefinitionParser(object):
         :param table_config: A dictionary representing a row from `information_schema.tables_config`,
                              augmented with the 'PARTITION_CLAUSE'.
         :param columns: A list of rows from `information_schema.columns`.
-        :param agg_types: A dictionary mapping column names to their aggregation types.
+        :param column_2_agg_type: A dictionary mapping column names to their aggregation types.
         :param charset: The character set of the table.
         :return: A ReflectedState object containing the parsed table information.
         """
         return ReflectedState(
             table_name=table.TABLE_NAME,
             columns=[
-                self._parse_column(column=column, agg_type=agg_types.get(column.COLUMN_NAME))
+                self._parse_column(column=column, agg_type=column_2_agg_type.get(column.COLUMN_NAME))
                 for column in columns
             ],
             table_options=self._parse_table_options(
@@ -116,7 +132,7 @@ class StarRocksTableDefinitionParser(object):
             }],
         )
 
-    def _parse_column(self, column: _DecodingRow, agg_type: str | None = None) -> dict:
+    def _parse_column(self, column: _DecodingRow, agg_type: dict[str, str]) -> dict:
         """
         Parse column from information_schema.columns table.
         It returns dictionary with column informations expected by sqlalchemy.
@@ -130,6 +146,7 @@ class StarRocksTableDefinitionParser(object):
             "computed": {"sqltext": column["GENERATION_EXPRESSION"]},
             "comment": column["COLUMN_COMMENT"],
         }
+        # TODO: can the col_info with ColumnSROptionsKey be correctly recognized by sqlalchemy?
         if agg_type:
             col_info[ColumnSROptionsKey] = {ColumnAggInfoKeyWithPrefix.AGG_TYPE: agg_type}
         return col_info
@@ -202,9 +219,9 @@ class StarRocksTableDefinitionParser(object):
         return [c.COLUMN_NAME for c in sorted_columns if c.COLUMN_KEY]
 
     @staticmethod
-    def parse_partition_clause(partition_clause: str) -> ReflectionPartitionInfo | None:
+    def parse_partition_clause(partition_clause: str) -> ReflectedPartitionInfo | None:
         """
-        Parses a raw PARTITION BY clause string into a structured ReflectionPartitionInfo object.
+        Parses a raw PARTITION BY clause string into a structured ReflectedPartitionInfo object.
 
         This method handles RANGE, LIST, and expression partitioning schemes. It
         extracts the partition type, or expression used for partitioning,
@@ -216,7 +233,7 @@ class StarRocksTableDefinitionParser(object):
                 `SHOW CREATE TABLE` statement.
 
         Returns:
-            A `ReflectionPartitionInfo` object containing the parsed details.
+            A `ReflectedPartitionInfo` object containing the parsed details.
         """
         if not partition_clause:
             return None
@@ -247,19 +264,19 @@ class StarRocksTableDefinitionParser(object):
             partition_type = PartitionType.EXPRESSION
             partition_method = partition_clause
 
-        return ReflectionPartitionInfo(
+        return ReflectedPartitionInfo(
             type=partition_type,
             partition_method=partition_method,
             pre_created_partitions=pre_created_partitions
         )
 
     @staticmethod
-    def parse_distribution_clause(distribution: str) -> ReflectionDistributionInfo | None:
+    def parse_distribution_clause(distribution: str) -> ReflectedDistributionInfo | None:
         """Parse DISTRIBUTED BY string to extract distribution method and buckets.
         Args:
             distribution: String like "HASH(id) BUCKETS 8" or "HASH(id)"
         Returns:
-            ReflectionDistributionInfo object
+            ReflectedDistributionInfo object
         """
         if not distribution:
             return None
@@ -273,7 +290,7 @@ class StarRocksTableDefinitionParser(object):
             buckets = None
             distribution_method = distribution
         
-        return ReflectionDistributionInfo(
+        return ReflectedDistributionInfo(
             type=None,
             columns=None,
             distribution_method=distribution_method,
@@ -281,18 +298,18 @@ class StarRocksTableDefinitionParser(object):
         )
     
     @staticmethod
-    def parse_distribution(distribution: Optional[Union[ReflectionDistributionInfo, str]]
-                           ) -> ReflectionDistributionInfo | None:
-        if not distribution or isinstance(distribution, ReflectionDistributionInfo):
+    def parse_distribution(distribution: Optional[Union[ReflectedDistributionInfo, str]]
+                           ) -> ReflectedDistributionInfo | None:
+        if not distribution or isinstance(distribution, ReflectedDistributionInfo):
             return distribution
         return StarRocksTableDefinitionParser.parse_distribution_clause(distribution)
 
-    def _get_distribution_info(self, table_config: dict[str, Any]) -> ReflectionDistributionInfo:
+    def _get_distribution_info(self, table_config: dict[str, Any]) -> ReflectedDistributionInfo:
         """
         Get distribution from information_schema.tables_config table.
-        It returns ReflectionDistributionInfo representation of distribution option.
+        It returns ReflectedDistributionInfo representation of distribution option.
         """
-        return ReflectionDistributionInfo(
+        return ReflectedDistributionInfo(
             type=table_config.get(TableConfigKey.DISTRIBUTE_TYPE),
             columns=table_config.get(TableConfigKey.DISTRIBUTE_KEY),
             distribution_method=None,
