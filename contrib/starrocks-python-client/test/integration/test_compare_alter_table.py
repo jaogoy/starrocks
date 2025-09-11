@@ -28,6 +28,7 @@ from unittest.mock import Mock
 from typing import Optional
 
 from starrocks.params import AlterTableEnablement, TableInfoKeyWithPrefix
+from starrocks.reflection_info import ReflectionPartitionInfo
 from starrocks.types import PartitionType
 from test import test_utils
 from test.conftest_sr import create_test_engine, test_default_schema
@@ -195,6 +196,7 @@ class TestAlterTableIntegration:
                     schema=self.test_schema
                 )
                 partition_info = reflected_table.kwargs.get(TableInfoKeyWithPrefix.PARTITION_BY)
+                assert partition_info is not None and isinstance(partition_info, ReflectionPartitionInfo)
                 assert partition_info.type == PartitionType.RANGE
                 assert test_utils.normalize_sql(partition_info.partition_method) == "RANGE(from_unixtime(dt))"
                 assert test_utils.normalize_sql(partition_info.pre_created_partitions) \

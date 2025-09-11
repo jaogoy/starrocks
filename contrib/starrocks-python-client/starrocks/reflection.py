@@ -33,6 +33,7 @@ from .utils import SQLParseError
 from .params import ColumnAggInfoKeyWithPrefix, ColumnSROptionsKey, SRKwargsPrefix, TableInfoKeyWithPrefix, TableInfoKey
 from .reflection_info import ReflectedState, ReflectionViewInfo, ReflectionDistributionInfo, ReflectionPartitionInfo
 from .types import PartitionType, TableModel, TableType, TableEngine
+from .consts import TableConfigKey
 
 logger = logging.getLogger(__name__)
 
@@ -188,7 +189,7 @@ class StarRocksTableDefinitionParser(object):
         """
         Get key type from information_schema.tables_config table.
         """
-        return TableModel.TO_TYPE_MAP.get(table_config.get('TABLE_MODEL'), "")
+        return TableModel.TO_TYPE_MAP.get(table_config.get(TableConfigKey.TABLE_MODEL), "")
 
     def _get_key_columns(self, columns: list[_DecodingRow]) -> list[str]:
         """
@@ -290,10 +291,10 @@ class StarRocksTableDefinitionParser(object):
         It returns ReflectionDistributionInfo representation of distribution option.
         """
         return ReflectionDistributionInfo(
-            type=table_config.get('DISTRIBUTE_TYPE'),
-            columns=table_config.get('DISTRIBUTE_KEY'),
+            type=table_config.get(TableConfigKey.DISTRIBUTE_TYPE),
+            columns=table_config.get(TableConfigKey.DISTRIBUTE_KEY),
             distribution_method=None,
-            buckets=table_config.get('DISTRIBUTE_BUCKET'),
+            buckets=table_config.get(TableConfigKey.DISTRIBUTE_BUCKET),
         )
 
     def _parse_table_options(self, table: _DecodingRow, table_config: dict[str, Any], columns: list[_DecodingRow]) -> dict:
@@ -311,50 +312,46 @@ class StarRocksTableDefinitionParser(object):
         """
         opts = {}
 
-        if table_config.get('TABLE_ENGINE'):
-            logger.debug(f"table_config.TABLE_ENGINE: {table_config.get('TABLE_ENGINE')}")
-            if table_config.get('TABLE_ENGINE') != TableEngine.OLAP:
-                raise NotImplementedError(f"Table engine {table_config.get('TABLE_ENGINE')} is not supported now.")
-            opts[TableInfoKeyWithPrefix.ENGINE] = table_config.get('TABLE_ENGINE').upper()
+        if table_engine := table_config.get(TableConfigKey.TABLE_ENGINE):
+            logger.debug(f"table_config.{TableConfigKey.TABLE_ENGINE}: {table_engine}")
+            # if table_engine != TableEngine.OLAP:
+            #     raise NotImplementedError(f"Table engine {table_engine} is not supported now.")
+            opts[TableInfoKeyWithPrefix.ENGINE] = table_engine.upper()
 
         if table.TABLE_COMMENT:
-            logger.debug(f"table.TABLE_COMMENT: {table.TABLE_COMMENT}") 
+            logger.debug(f"table.TABLE_COMMENT: {table.TABLE_COMMENT}")
             opts[TableInfoKeyWithPrefix.COMMENT] = table.TABLE_COMMENT
 
         # Get key type from information_schema.tables_config.TABLE_MODEL,
         # and key columns from information_schema.columns.COLUMN_KEY
-        logger.debug(f"table_config.TABLE_MODEL: {table_config.get('TABLE_MODEL')}")
-        if table_config.get('TABLE_MODEL'):
-            key_type_str = TableInfoKey.MODEL_TO_KEY_MAP.get(table_config.get('TABLE_MODEL'))
+        if table_model := table_config.get(TableConfigKey.TABLE_MODEL):
+            logger.debug(f"table_config.{TableConfigKey.TABLE_MODEL}: {table_model}")
+            key_type_str = TableInfoKey.MODEL_TO_KEY_MAP.get(table_model)
             if key_type_str:
                 key_columns_str = ", ".join(self._get_key_columns(columns))
                 prefixed_key = f"{SRKwargsPrefix}{key_type_str}"
                 opts[prefixed_key] = key_columns_str
 
-        partition_clause = table_config.get('PARTITION_CLAUSE')
-        if partition_clause:
+        if partition_clause := table_config.get(TableConfigKey.PARTITION_CLAUSE):
+            logger.debug(f"table_config.{TableConfigKey.PARTITION_CLAUSE}: {partition_clause}")
             opts[TableInfoKeyWithPrefix.PARTITION_BY] = self.parse_partition_clause(partition_clause)
-        elif table_config.get('PARTITION_KEY'):
-            # Fallback for older StarRocks versions or if SHOW CREATE TABLE fails
-            logger.debug(f"table_config.PARTITION_KEY: {table_config.get('PARTITION_KEY')}")
-            opts[TableInfoKeyWithPrefix.PARTITION_BY] = self.parse_partition_clause(table_config.get('PARTITION_KEY'))
 
-        if table_config.get('DISTRIBUTE_KEY'):
-            logger.debug(f"table_config.DISTRIBUTE_KEY: {table_config.get('DISTRIBUTE_KEY')}")
+        if distribute_key := table_config.get(TableConfigKey.DISTRIBUTE_KEY):
+            logger.debug(f"table_config.{TableConfigKey.DISTRIBUTE_KEY}: {distribute_key}")
             opts[TableInfoKeyWithPrefix.DISTRIBUTED_BY] = str(self._get_distribution_info(table_config))
 
-        if table_config.get('SORT_KEY'):
-            logger.debug(f"table_config.SORT_KEY: {table_config.get('SORT_KEY')}")
+        if sort_key := table_config.get(TableConfigKey.SORT_KEY):
+            logger.debug(f"table_config.{TableConfigKey.SORT_KEY}: {sort_key}")
             # columns = [c.strip() for c in table_config.get('SORT_KEY').split(",")]
-            opts[TableInfoKeyWithPrefix.ORDER_BY] = table_config.get('SORT_KEY')
+            opts[TableInfoKeyWithPrefix.ORDER_BY] = sort_key
 
-        if table_config.get('PROPERTIES'):
-            logger.debug(f"table_config.PROPERTIES: {table_config.get('PROPERTIES')}")
+        if properties := table_config.get(TableConfigKey.PROPERTIES):
+            logger.debug(f"table_config.{TableConfigKey.PROPERTIES}: {properties}")
             try:
                 opts[TableInfoKeyWithPrefix.PROPERTIES] = dict(
-                    json.loads(table_config.get('PROPERTIES') or "{}").items()
+                    json.loads(properties or "{}").items()
                 )
             except json.JSONDecodeError:
-                logger.info(f"properties are not valid JSON: {table_config.get('PROPERTIES')}")
+                logger.info(f"properties are not valid JSON: {properties}")
 
         return opts

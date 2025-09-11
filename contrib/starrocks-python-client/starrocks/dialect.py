@@ -57,7 +57,7 @@ from .sql.ddl import (
 )
 from .sql.schema import View
 from .reflection import StarRocksInspector
-from .reflection_info import ReflectedState, ReflectionViewInfo
+from .reflection_info import ReflectedState, ReflectionViewInfo, ReflectionPartitionInfo
 from .defaults import ReflectionViewDefaults
 from .params import ColumnSROptionsKey, SRKwargsPrefix, TableInfoKey, TableInfoKeyWithPrefix, ColumnAggInfoKeyWithPrefix
 
@@ -959,7 +959,8 @@ class StarRocksDialect(MySQLDialect_pymysql):
         # Add the partition info into table_config row for convenience
         # But the row object is immutable, so we convert it to a dictionary to modify it.
         table_config_dict = dict(table_config_rows[0])
-        table_config_dict['PARTITION_CLAUSE'] = partition_clause
+        if partition_clause:
+            table_config_dict['PARTITION_CLAUSE'] = partition_clause
 
         return parser.parse(
             table=table_rows[0],

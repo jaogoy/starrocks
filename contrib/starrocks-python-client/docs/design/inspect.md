@@ -28,6 +28,17 @@ For information that is not available in `information_schema` (such as StarRocks
 - **`SHOW CREATE TABLE <table>`**: This command provides the full DDL for a table, which contains all the StarRocks-specific clauses.
 - **`SHOW FULL COLUMNS FROM <table>`**: This is used to retrieve column-level details, including comments.
 
+### Parsing DDL into Structured Objects
+
+A key feature of the introspection process is that it does not treat all DDL clauses as opaque strings. For complex attributes like `PARTITION BY` and `DISTRIBUTED BY`, the dialect parses the string output from `SHOW CREATE TABLE` into structured Python objects:
+
+- **`ReflectionPartitionInfo`**: Represents the partitioning strategy.
+- **`ReflectionDistributionInfo`**: Represents the distribution (including bucket number) strategy.
+
+These objects hold the parsed details of the clause. They also implement `__str__` and `__repr__` methods, which are crucial for the comparison and rendering stages. These methods can normalize the representation of the clause, ensuring that semantically identical but textually different clauses can be compared accurately.
+
+> sqlacodegen will render these options by using `{one_property!r}` to get the value.
+
 ## Current Limitations and Future Improvements
 
 The primary limitation of the current approach is the reliance on string matching and regular expressions to parse the output of `SHOW CREATE TABLE`.

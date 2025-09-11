@@ -94,6 +94,8 @@ The `sqlalchemy-starrocks` dialect hooks into this process by registering its ow
   - `ORDER BY`
   - `PROPERTIES`
 
+  > **Note on Type Handling**: When this comparator runs, the attributes from the database (`conn_table`) may be structured objects (e.g., `ReflectionPartitionInfo`, `ReflectionDistributionInfo`), while the attributes from the user's code (`metadata_table`) are typically strings. The comparison logic is responsible for handling this duality by normalizing the structured objects into a comparable string representation before checking for differences.
+
 - **`compare_view(...)`**: Registered for the `"view"` type. It compares the `SELECT` definition of views.
 - **`compare_mv(...)`**: Registered for the `"materialized_view"` type.
 - **`compare_starrocks_column(...)`**: Registered for the `"column"` type. It compares StarRocks-specific column-level properties, like aggregate types in `AGGREGATE KEY` tables. Other column properties are still handled by Alembic's generic comparator.
