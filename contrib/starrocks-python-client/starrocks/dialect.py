@@ -39,7 +39,7 @@ from sqlalchemy.dialects.mysql.types import (
 from sqlalchemy.dialects.mysql.json import JSON
 
 from starrocks.types import ColumnAggType, SystemRunMode, TableType
-from starrocks.utils import TableAttributeNormalizer
+from starrocks.utils import CaseInsensitiveDict, TableAttributeNormalizer
 
 from .datatype import (
     LARGEINT, HLL, BITMAP, PERCENTILE, ARRAY, MAP, STRUCT,
@@ -59,7 +59,7 @@ from .sql.schema import View
 from .reflection import StarRocksInspector
 from .reflection_info import ReflectedState, ReflectedViewState, ReflectedPartitionInfo
 from .defaults import ReflectionViewDefaults
-from .params import ColumnSROptionsKey, SRKwargsPrefix, TableInfoKey, TableInfoKeyWithPrefix, ColumnAggInfoKeyWithPrefix
+from .params import ColumnAggInfoKey, ColumnSROptionsKey, DialectName, SRKwargsPrefix, TableInfoKey, TableInfoKeyWithPrefix, ColumnAggInfoKeyWithPrefix
 from alembic.operations.ops import AlterColumnOp
 
 # Register the compiler methods
@@ -209,6 +209,21 @@ class StarRocksSQLCompiler(MySQLCompiler):
 class StarRocksDDLCompiler(MySQLDDLCompiler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+
+    def visit_alter_column(self, alter: AlterColumnOp, **kw):
+        """
+        Compile ALTER COLUMN statements.
+
+        StarRocks does not support altering the aggregation type of a column.
+        This method checks for such attempts and raises a NotImplementedError.
+        """
+        # The `starrocks_AGG_TYPE` is added to kwargs only when a change is detected
+        # by the comparator. See `compare_starrocks_column_agg_type`.
+        if ColumnAggInfoKeyWithPrefix.AGG_TYPE in alter.kwargs:
+            raise NotImplementedError(
+                f"StarRocks does not support changing the aggregation type of column '{alter.column_name}'."
+            )
+        return super().visit_alter_column(alter, **kw)
 
     def visit_create_table(self, create: sa_schema.CreateTable, **kw: Any) -> str:
         table = create.element
@@ -390,7 +405,8 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
         table_opts: list[str] = []
 
         # Extract StarRocks-specific table options from kwargs without the dialect prefix (starrocks_)
-        opts: dict[str, Any] = self._extract_table_options(table)
+        # opts: dict[str, Any] = self._extract_table_options(table)
+        opts: dict[str, Any] = table.dialect_options[DialectName]
 
         # ENGINE
         if engine := opts.get(TableInfoKey.ENGINE):
@@ -438,7 +454,9 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
         return "\n".join(table_opts)
     
     def _extract_table_options(self, table: sa_schema.Table) -> dict[str, Any]:
-        """Extract table options, without the prefix `starrocks_`."""
+        """Extract table options, without the prefix `starrocks_`.
+        TODO: it seems useless.
+        """
         opts: dict[str, Any] = dict(
             (k[len(SRKwargsPrefix):].upper(), v) for k, v in table.kwargs.items()
                 if k.startswith(SRKwargsPrefix)
@@ -499,10 +517,10 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
         Returns:
             The full DDL string for the column definition.
         """
-        # name, type, others of a column for the output colspec
+        # Name, type, others of a column for the output colspec
         _, idx_type = 0, 1
 
-        # set name and type first
+        # Get name and type first
         colspec: list[str] = [
             self.preparer.format_column(column),
             self.dialect.type_compiler.process(
@@ -511,37 +529,13 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
         ]
 
         # Get and set column-level aggregate information
-        self._get_agg_info(column, colspec)
+        if agg_info := self._get_column_agg_info(column):
+            colspec.append(agg_info)
 
         # NULL or NOT NULL. AUTO_INCREMENT columns must be NOT NULL
         if not column.nullable or column.autoincrement is True:
             colspec.append("NOT NULL")
         # else: omit explicit NULL (default)
-
-        # see: https://docs.sqlalchemy.org/en/latest/dialects/mysql.html#mysql_timestamp_null  # noqa
-        # elif column.nullable and is_timestamp:
-        #     colspec.append("NULL") # ToDo - remove this, find way to fix the test
-
-        # is_timestamp = isinstance(
-        #     column.type._unwrapped_dialect_impl(self.dialect),
-        #     sqltypes.TIMESTAMP,
-        # )
-
-        # ToDo >= version 3.0
-        # if (
-        #     column.table is not None
-        #     and column is column.table._autoincrement_column
-        #     and (
-        #         column.server_default is None
-        #         or isinstance(column.server_default, sa_schema.Identity)
-        #     )
-        #     and not (
-        #         self.dialect.supports_sequences
-        #         and isinstance(column.default, sa_schema.Sequence)
-        #         and not column.default.optional
-        #     )
-        # ):
-        #     colspec[1] = "BIGINT" # ToDo - remove this, find way to fix the test
 
         # AUTO_INCREMENT or default value or computed column
         if column.autoincrement is True:
@@ -555,9 +549,12 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
 
             elif default is not None:
                 colspec.append("DEFAULT " + default)
+        
+        # Computed
         if column.computed is not None:
             colspec.append(self.process(column.computed))
 
+        # Comment
         if column.comment is not None:
             literal = self.sql_compiler.render_literal_value(
                 column.comment, sqltypes.String()
@@ -566,37 +563,75 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
 
         return " ".join(colspec)
 
-    def _get_agg_info(self, column: sa_schema.Column, colspec: list[str]) -> None:
-        """Get aggregate information for a column."""
+    def _get_column_agg_info(self, column: sa_schema.Column) -> str | None:
+        """Get aggregate information for a column.
+        Args:
+            column: The `sqlalchemy.schema.Column` object to process.
+
+        Returns:
+            The aggregate information for the column (`KEY` or `agg_type`, such as `SUM`, or None).
+        """
         
-        # aggregation type is only valid for AGGREGATE KEY tables
-        table_kwargs = column.table.kwargs or {}
-        is_agg_table: bool = any(
-            k.lower() == TableInfoKeyWithPrefix.AGGREGATE_KEY.lower()
-            for k in table_kwargs.keys()
-        )
-        if not is_agg_table and (
-            self._has_column_info_key(column, ColumnAggInfoKeyWithPrefix.IS_AGG_KEY) or
-                self._has_column_info_key(column, ColumnAggInfoKeyWithPrefix.AGG_TYPE)
-        ):
+        table = column.table
+
+        # Determine whether the target table is an AGGREGATE KEY table.
+        # In CREATE TABLE, table.dialect_options will contain StarRocks options.
+        # In ALTER TABLE ADD/MODIFY COLUMN, Alembic/SQLAlchemy often provides a lightweight
+        # Table placeholder without dialect options; in that case we treat the table type
+        # as unknown and avoid raising on presence of KEY/agg markers so users can specify
+        # them explicitly in ADD/MODIFY statements.
+        is_agg_table: bool | None = None
+        try:
+            is_agg_table = table.info.get(TableInfoKeyWithPrefix.AGGREGATE_KEY)
+        except Exception:
+            # Defensive: if table/info is not accessible, keep unknown
+            is_agg_table = None
+
+        if is_agg_table is None:
+            try:
+                table_opt_upper_keys: set[str] = {k.upper() for k in table.dialect_options[DialectName].keys()}
+                if table_opt_upper_keys:
+                    is_agg_table = TableInfoKey.AGGREGATE_KEY in table_opt_upper_keys
+                    table.info[TableInfoKeyWithPrefix.AGGREGATE_KEY] = is_agg_table
+                else:
+                    # Unknown table options in ALTER context; leave as None
+                    is_agg_table = None
+            except Exception:
+                # No dialect options available; leave as unknown
+                is_agg_table = None
+
+        # check agg key/type in the column
+        column_options = column.dialect_options[DialectName]
+        opt_dict = CaseInsensitiveDict(column_options)
+
+        has_is_agg_key = ColumnAggInfoKey.IS_AGG_KEY in opt_dict
+        has_agg_type = ColumnAggInfoKey.AGG_TYPE in opt_dict
+
+        # If we can determine the table is NOT AGGREGATE KEY, disallow column-level
+        # KEY/agg markers. If unknown (ALTER context), allow rendering markers.
+        if is_agg_table is False and (has_is_agg_key or has_agg_type):
             raise exc.CompileError(
                 "Column-level KEY/aggregate markers are only valid for AGGREGATE KEY tables; "
                 "declare starrocks_aggregate_key at table level first."
             )
-        if self._has_column_info_key(column, ColumnAggInfoKeyWithPrefix.IS_AGG_KEY):
-            colspec.append(ColumnAggType.KEY)
-            if self._has_column_info_key(column, ColumnAggInfoKeyWithPrefix.AGG_TYPE):
-                raise exc.CompileError(
-                    f"Column '{column.name}' cannot be both KEY and aggregated "
-                    f"(has {ColumnAggInfoKeyWithPrefix.AGG_TYPE})."
-                )
-        elif self._has_column_info_key(column, ColumnAggInfoKeyWithPrefix.AGG_TYPE):
-            agg_val = str(self._get_column_info_value(column, ColumnAggInfoKeyWithPrefix.AGG_TYPE)).upper()
+
+        # Disallow specifying both KEY and agg_type simultaneously.
+        if has_is_agg_key and has_agg_type:
+            raise exc.CompileError(
+                f"Column '{column.name}' cannot be both KEY and aggregated "
+                f"(has {ColumnAggInfoKey.AGG_TYPE})."
+            )
+
+        if has_is_agg_key:
+            return ColumnAggType.KEY
+        elif has_agg_type:
+            agg_val = str(opt_dict[ColumnAggInfoKey.AGG_TYPE]).upper()
             if agg_val not in ColumnAggType.ALLOWED_ITEMS:
                 raise exc.CompileError(
                     f"Unsupported aggregate type for column '{column.name}': {agg_val}"
                 )
-            colspec.append(agg_val)
+            return agg_val
+        return None
 
     def visit_computed_column(self, generated: sa_schema.Computed, **kw: Any) -> str:
         text = "AS %s" % self.sql_compiler.process(

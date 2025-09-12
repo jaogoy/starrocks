@@ -135,6 +135,40 @@ For `AGGREGATE KEY` tables, you can specify properties for each column by passin
   - `'SUM'`, `'REPLACE'`, `'REPLACE_IF_NOT_NULL'`, `'MAX'`, `'MIN'`, `'HLL_UNION'`, `'BITMAP_UNION'`
 - **`starrocks_is_agg_key`**: A boolean that can be set to `True` to explicitly mark a column as a key in an `AGGREGATE KEY` table. This is optional but improves clarity.
 
+#### Notes on ALTER TABLE ADD/MODIFY COLUMN
+
+- When creating, adding or modifying columns on an `AGGREGATE KEY` table, StarRocks requires that each column’s role be explicit:
+  - Key columns can be marked with `starrocks_is_agg_key=True`.
+  - Value columns must specify `starrocks_agg_type` (e.g., `'SUM'`, `'REPLACE'`, etc.).
+- Column-level `starrocks_is_agg_key`/`starrocks_agg_type` are only valid for `AGGREGATE KEY` tables.
+- In `ALTER TABLE ... ADD COLUMN`/`MODIFY COLUMN` contexts, Alembic may not provide table-level options to the compiler. The dialect therefore allows specifying `starrocks_is_agg_key` or `starrocks_agg_type` directly on the column for these operations.
+
+Examples:
+
+```python
+# Add a key column to an AGGREGATE KEY table
+op.add_column(
+    'aggregate_table',
+    Column('site_id2', Integer, nullable=False, starrocks_is_agg_key=True),
+)
+
+# Add a value column with aggregation
+op.add_column(
+    'aggregate_table',
+    Column('page_views2', Integer, nullable=False, starrocks_agg_type='SUM'),
+)
+
+# Modify a column’s definition (type/nullable/comment). Note: changing agg type is not supported
+op.alter_column(
+    'aggregate_table',
+    'page_views',
+    existing_type=Integer,
+    nullable=False,
+    # If needed for clarity, you may repeat the role marker (key or agg_type)
+    # starrocks_agg_type='SUM',  # allowed for context but agg type change is not supported
+)
+```
+
 ### Example: Aggregate Key Table
 
 Here is a complete example of an `AGGREGATE KEY` table that demonstrates both table-level and column-level properties.
@@ -205,4 +239,8 @@ class PageViewAggregates(Base):
 
 The `sqlalchemy-starrocks` dialect integrates with Alembic to support autogeneration of schema migrations. When you run `alembic revision --autogenerate`, it will compare both the table-level and column-level `starrocks_` options against the database and generate the appropriate DDL.
 
-Note that changes to non-alterable attributes like `ENGINE`, `table type`, or `partitioning` will be detected, but will raise an error to prevent generating an unsupported migration.
+Note that changes to non-alterable attributes like `ENGINE`, `table type`, or `partitioning` will be detected, but will raise an error to prevent generating an unsupported migration. Additionally, changing a column’s aggregation type is not supported by StarRocks; autogenerate will detect differences and raise an error instead of producing DDL.
+
+### Limitations
+
+- **`AUTO_INCREMENT`**: Currently, the reflection process does not detect the `AUTO_INCREMENT` property on columns. This is because this information is not available in a structured way from `information_schema.columns` or `SHOW FULL COLUMNS`. While it is present in the output of `SHOW CREATE TABLE`, parsing this is not yet implemented. Therefore, Alembic's `autogenerate` will not be able to detect or generate migrations for `AUTO_INCREMENT` columns.

@@ -8,6 +8,7 @@ from alembic.autogenerate.api import AutogenContext
 from alembic.operations.ops import AlterColumnOp, AlterTableOp, UpgradeOps
 from sqlalchemy import Column, quoted_name
 from sqlalchemy.engine.reflection import Inspector
+from sqlalchemy.exc import NotSupportedError
 from sqlalchemy.sql.schema import Table
 
 from starrocks.defaults import ReflectionTableDefaults
@@ -369,8 +370,8 @@ def compare_starrocks_table(
     run_mode = autogen_context.dialect.run_mode
     logger.debug(f"System run_mode for table comparison: {run_mode}")
     
-    conn_table_attributes = conn_table.dialect_options[DialectName]
-    meta_table_attributes = metadata_table.dialect_options[DialectName]
+    conn_table_attributes = CaseInsensitiveDict(conn_table.dialect_options[DialectName])
+    meta_table_attributes = CaseInsensitiveDict(metadata_table.dialect_options[DialectName])    
 
     ops_list = []
 
@@ -834,7 +835,6 @@ def _compare_single_table_attribute(
         # Case 3: meta not specified, conn is default (or no default defined) -> no change
         return False
 
-
 def extract_starrocks_dialect_attributes(kwargs: Dict[str, Any]) -> CaseInsensitiveDict:
     """Extract StarRocks-specific dialect attributes from a dict, with each attribute prefixed with 'starrocks_'.
 
@@ -852,7 +852,7 @@ def extract_starrocks_dialect_attributes(kwargs: Dict[str, Any]) -> CaseInsensit
 
 
 @comparators_dispatch_for_starrocks("column")
-def compare_starrocks_column(
+def compare_starrocks_column_agg_type(
     autogen_context: AutogenContext,
     alter_column_op: AlterColumnOp,
     schema: Optional[str],
@@ -864,60 +864,47 @@ def compare_starrocks_column(
     """
     Compare StarRocks-specific column options.
     
-    Check for changes in StarRocks-specific attributes, like aggregate type.
+    Check for changes in StarRocks-specific attributes like aggregate type.
     """
-    meta_agg_type = metadata_col.info.get(ColumnAggInfoKeyWithPrefix.AGG_TYPE)
-    conn_agg_type = conn_col.dialect_options.get(ColumnAggInfoKeyWithPrefix.AGG_TYPE)
+    conn_opts = CaseInsensitiveDict(conn_col.dialect_options[DialectName])
+    meta_opts = CaseInsensitiveDict(metadata_col.dialect_options[DialectName])
+    conn_agg_type: str | None = conn_opts.get(ColumnAggInfoKey.AGG_TYPE)
+    meta_agg_type: str | None = meta_opts.get(ColumnAggInfoKey.AGG_TYPE)
+    logger.debug(f"AGG_TYPE. conn_agg_type: {conn_agg_type}, meta_agg_type: {meta_agg_type}")
 
     if meta_agg_type != conn_agg_type:
-        logger.warning(
-            "StarRocks-specific option '%s' for column '%s' in table '%s' has changed from '%s' to '%s'",
-            ColumnAggInfoKey.AGG_TYPE,
-            cname,
-            tname,
-            conn_agg_type or '(not set)',
-            meta_agg_type or '(not set)',
-        )
-        # Update the alter_column_op with the new aggregate type
+        # Update the alter_column_op with the new aggregate type. useless now
         if alter_column_op is not None:
             alter_column_op.kwargs[ColumnAggInfoKeyWithPrefix.AGG_TYPE] = meta_agg_type
+        raise NotSupportedError(
+            f"StarRocks does not support changing the aggregation type of a column: '{cname}', "
+            f"from {conn_agg_type} to {meta_agg_type}.",
+            None, None
+        )
 
 
-def _normalize_order_by_string(order_by: Union[str, List[str], None]) -> str:
-    """Normalize ORDER BY string by removing backticks and standardizing format.
-
-    Args:
-        order_by: String or list representing ORDER BY clause
-
-    Returns:
-        Normalized string
+@comparators_dispatch_for_starrocks("column")
+def compare_starrocks_column_autoincrement(
+    autogen_context: AutogenContext,
+    alter_column_op: AlterColumnOp,
+    schema: Optional[str],
+    tname: Union[quoted_name, str],
+    cname: quoted_name,
+    conn_col: Column[Any],
+    metadata_col: Column[Any],
+) -> None:
     """
-    if isinstance(order_by, list):
-        order_by = ', '.join(str(item) for item in order_by)
-    elif order_by is None:
-        return ''
+    Compare StarRocks-specific column options.
+    It will run after the  built-in comparator for "column" auto_increment.
 
-    return _normalize_column_identifiers(str(order_by))
-
-
-def _normalize_column_identifiers(text: str) -> str:
-    """Normalize column identifiers by removing backticks and standardizing spaces.
-
-    This is the unified function for handling column names in various contexts.
-
-    Args:
-        text: String containing column names with possible backticks
-
-    Returns:
-        Normalized string with backticks removed and spaces standardized
+    StarRocks does not support changing the autoincrement of a column.
     """
-    if not text:
-        return text
-
-    # Remove backticks around column names
-    import re
-    normalized = re.sub(r'`([^`]+)`', r'\1', text)
-    # Standardize spaces
-    normalized = re.sub(r'\s+', ' ', normalized).strip()
-    return normalized
+    # Because we can't inpsect the autoincrement, we can't do the check the difference.
+    # if conn_col.autoincrement != metadata_col.autoincrement:
+    #     raise NotSupportedError(
+    #         f"StarRocks does not support changing the autoincrement of a column: '{cname}', "
+    #         f"from {conn_col.autoincrement} to {metadata_col.autoincrement}.",
+    #         None, None
+    #     )
+    return None
 

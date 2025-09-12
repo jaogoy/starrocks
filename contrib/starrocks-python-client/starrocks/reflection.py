@@ -30,7 +30,7 @@ from starrocks.defaults import ReflectionTableDefaults
 from . import utils
 from .utils import SQLParseError
 
-from .params import ColumnAggInfoKeyWithPrefix, ColumnSROptionsKey, SRKwargsPrefix, TableInfoKeyWithPrefix, TableInfoKey
+from .params import ColumnAggInfoKeyWithPrefix, ColumnSROptionsKey, DialectName, SRKwargsPrefix, TableInfoKeyWithPrefix, TableInfoKey
 from .reflection_info import ReflectedState, ReflectedViewState, ReflectedDistributionInfo, ReflectedPartitionInfo
 from .types import PartitionType, TableModel, TableType, TableEngine
 from .consts import TableConfigKey
@@ -132,23 +132,30 @@ class StarRocksTableDefinitionParser(object):
             }],
         )
 
-    def _parse_column(self, column: _DecodingRow, agg_type: dict[str, str]) -> dict:
+    def _parse_column(self, column: _DecodingRow, **kwargs: Any) -> dict:
         """
         Parse column from information_schema.columns table.
         It returns dictionary with column informations expected by sqlalchemy.
+
+        Args:
+            column: A row from `information_schema.columns`.
+            kwargs: Additional keyword arguments passed to the dialect. currently only support:
+                agg_type: The aggregate type of the column.
+
+        Returns:
+            A dictionary with column information expected by sqlalchemy.
         """
+        computed = {"sqltext": column.GENERATION_EXPRESSION} if column.GENERATION_EXPRESSION else None
         col_info = {
-            "name": column["COLUMN_NAME"],
+            "name": column.COLUMN_NAME,
             "type": self._parse_column_type(column=column),
-            "nullable": column["IS_NULLABLE"] == "YES",
-            "default": column["COLUMN_DEFAULT"],
+            "nullable": column.IS_NULLABLE == "YES",
+            "default": column.COLUMN_DEFAULT,
             "autoincrement": None,  # TODO: This is not specified
-            "computed": {"sqltext": column["GENERATION_EXPRESSION"]},
-            "comment": column["COLUMN_COMMENT"],
+            "computed": computed,
+            "comment": column.COLUMN_COMMENT,
+            "dialect_options": { DialectName: kwargs }
         }
-        # TODO: can the col_info with ColumnSROptionsKey be correctly recognized by sqlalchemy?
-        if agg_type:
-            col_info[ColumnSROptionsKey] = {ColumnAggInfoKeyWithPrefix.AGG_TYPE: agg_type}
         return col_info
 
     def _parse_column_type(self, column: _DecodingRow) -> Any:
@@ -158,14 +165,14 @@ class StarRocksTableDefinitionParser(object):
         After that it creates instance of column type.
         """
         pattern = r"^(?P<type>\w+)(?:\s*\((?P<args>.*?)\))?$"
-        match = re.match(pattern, column["COLUMN_TYPE"])
+        match = re.match(pattern, column.COLUMN_TYPE)
         type_ = match.group("type")
         args = match.group("args")
         try:
             col_type = self.dialect.ischema_names[type_]
         except KeyError:
             util.warn(
-                "Did not recognize type '%s' of column '%s'" % (type_, column["COLUMN_NAME"])
+                "Did not recognize type '%s' of column '%s'" % (type_, column.COLUMN_NAME)
             )
             col_type = sqltypes.NullType
 
