@@ -108,6 +108,6 @@ This provides the custom comparator functions with a single, consistent location
 
 - **`compare_view(...)`**: Registered for the `"view"` type. It compares the `SELECT` definition of views.
 - **`compare_mv(...)`**: Registered for the `"materialized_view"` type.
-- **`compare_starrocks_column(...)`**: Registered for the `"column"` type. It compares StarRocks-specific column-level properties, like aggregate types in `AGGREGATE KEY` tables. Other column properties are still handled by Alembic's generic comparator.
+- **`compare_starrocks_column(...)`**: Registered for the `"column"` type. It retrieves StarRocks-specific column-level attributes from the `column.dialect_options['starrocks']` dictionary, like `starrocks_AGG_TYPE` (aggregate type) for `AGGREGATE KEY` tables. Other column properties are still handled by Alembic's generic comparator.
 
 By implementing these functions, the dialect ensures that StarRocks-specific schema features are correctly compared during the `autogenerate` process.

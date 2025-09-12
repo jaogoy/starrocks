@@ -46,8 +46,7 @@ Please follow these standards and procedures when assisting with development:
 - **Clarity and Conciseness**: For any functional design or modification, a concise and clear design document is required before implementation begins.
 
 - **Coding Standards**:
-
-  - **Python Code Style**: Follow PEP 8, Flake8, and Ruff standards.
+  - **Python Code Style**: Follow the python code style, maybe in the [code_style.md](code_style.md).
   - **Type Annotations**: All functions, methods, and complex variable declarations should have explicit type annotations. Historical code should also be gradually annotated. [[memory:8065598]]
   - **Docstrings**: Write clear, Google-style docstrings for all modules, classes, and functions, including arguments and returns. In the docstrings of specific test classes (e.g., `TestAlterTableIntegration`), please follow this field order: `engine`, `key`, `comment`, `partition`, `distribution`, `order by`, `properties`. [[memory:8012332]]
   - **Code Modifications**: When refactoring or making changes, strictly limit them to the current task's scope and avoid altering unrelated code. [[memory:8012264]]

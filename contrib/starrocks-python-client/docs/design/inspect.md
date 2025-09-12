@@ -4,9 +4,11 @@ This document outlines the design of the database introspection (or reflection) 
 
 ## Strategy
 
+### Getting Schema Information
+
 The introspection process employs a multi-tiered strategy to gather schema information, prioritizing structured sources and falling back to less structured ones when necessary.
 
-### 1. Primary Source: `information_schema`
+#### 1. Primary Source: `information_schema`
 
 The primary and preferred source for schema information is the ANSI-standard `information_schema`. (StarRocks will also use some dialect views in `information_schema`.)
 The dialect queries the following views to gather the bulk of the information:
@@ -21,12 +23,18 @@ The dialect queries the following views to gather the bulk of the information:
 
 Using `information_schema` is fast, efficient, and provides structured data that is easy to parse.
 
-### 2. Fallback Sources: `SHOW` Commands
+#### 2. Fallback Sources: `SHOW` Commands
 
 For information that is not available in `information_schema` (such as StarRocks-specific properties like `PARTITION BY`, `DISTRIBUTED BY`, `ORDER BY`), the dialect falls back to using `SHOW` commands:
 
 - **`SHOW CREATE TABLE <table>`**: This command provides the full DDL for a table, which contains all the StarRocks-specific clauses.
-- **`SHOW FULL COLUMNS FROM <table>`**: This is used to retrieve column-level details, including comments.
+- **`SHOW FULL COLUMNS FROM <table>`**: This is used to retrieve column-level details, including key columns and aggregate types for `AGGREGATE KEY` tables.
+
+### Reflecting Column Aggregate Types
+
+For `AGGREGATE KEY` tables, the aggregate type of each column is not available in `information_schema`. The dialect discovers this information by parsing the `Type` field from the output of `SHOW FULL COLUMNS FROM <table>`.
+
+This parsed aggregate type is then passed into the constructor for the reflected `Column` object as a `starrocks_AGG_TYPE` keyword argument. Because `Column` is also a `DialectKWArgs` object (like a `Table`), SQLAlchemy automatically normalizes this into the `column.dialect_options['starrocks']` dictionary, making it available for the `compare` process.
 
 ### Parsing DDL into Structured Objects
 

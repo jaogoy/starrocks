@@ -4,7 +4,7 @@ This guide provides a comprehensive overview of how to define StarRocks tables u
 
 ## Defining Table Properties
 
-When defining a StarRocks table using SQLAlchemy, you can specify both table-level and column-level properties.
+When defining a StarRocks table using SQLAlchemy, you can specify both table-level and column-level properties using keyword arguments prefixed with `starrocks_`.
 
 ### Table-Level Properties (`starrocks_*` Prefixes)
 
@@ -35,6 +35,8 @@ my_table = Table(
 )
 ```
 
+StarRocks-specific physical properties for a table are configured by passing special keyword arguments, prefixed with `starrocks_`, either directly to the `Table` constructor or within the `__table_args__` dictionary for ORM style.
+
 #### Available Table-Level Options
 
 Here is a comprehensive list of the supported `starrocks_` prefixed arguments. The order of attributes in the documentation follows the recommended order in the `CREATE TABLE` DDL statement.
@@ -51,6 +53,7 @@ Specifies the table engine. `OLAP` is the default and only supported engine.
 Defines the table's type (key) and the columns that constitute the key. You must choose **at most one** of the following options.
 
 - **`starrocks_PRIMARY_KEY`**
+
   > - You **can't** specify the Primary Key type in a column, such as `Column('id', Integer, primary_key=True)`, which is not supported for StarRocks.
   > - You **can't** specify the Primary Key type by using `PrimaryKeyConstraint` either.
 
@@ -81,7 +84,7 @@ The table comment should be passed as the standard `comment` keyword argument to
 
 ##### 4. `starrocks_PARTITION_BY`
 
-Defines the partitioning strategy for the table.
+Defines the partitioning strategy.
 
 - **Type**: `str`
 - **Example**:
@@ -102,7 +105,7 @@ Specifies the data distribution (including bucketing) strategy.
 
 ##### 6. `starrocks_ORDER_BY`
 
-Specifies the sorting columns to optimize query performance.
+Specifies the sorting columns.
 
 - **Type**: `str` (comma-separated column names)
 - **Example**: `starrocks_ORDER_BY="event_timestamp, event_type"`
@@ -122,34 +125,22 @@ A dictionary of additional table properties.
   }
   ```
 
-### Column-Level Properties (Aggregate Types)
+### Column-Level Properties (`starrocks_*` Prefixes)
 
-For `AGGREGATE KEY` tables, you can specify an aggregate function for each value column (i.e., non-key columns). This is done by passing an `info` dictionary with the key `starrocks_AGG_TYPE` to the `Column` constructor.
+For `AGGREGATE KEY` tables, you can specify properties for each column by passing a `starrocks_` prefixed keyword argument directly to the `Column` constructor.
 
-#### General Syntax
+#### Available Column-Level Options
 
-```python
-Column('page_views', Integer, info={'starrocks_AGG_TYPE': 'SUM'}),
-```
-
-#### Available Aggregate Types
-
-The following aggregate types (`AGG_TYPE`) are supported:
-
-- **`SUM`**: Sums the values for rows with the same key.
-- **`REPLACE`**: Replaces existing values with the newest value for rows with the same key.
-- **`REPLACE_IF_NOT_NULL`**: Replaces existing values only if the new value is not null.
-- **`MAX`**: Keeps the maximum value.
-- **`MIN`**: Keeps the minimum value.
-- **`HLL_UNION`**: Aggregates data using HyperLogLog.
-- **`BITMAP_UNION`**: Aggregates data using Bitmap.
+- **`starrocks_agg_type`**: A string specifying the aggregate type for a value column. Supported values are:
+  - `'SUM'`, `'REPLACE'`, `'REPLACE_IF_NOT_NULL'`, `'MAX'`, `'MIN'`, `'HLL_UNION'`, `'BITMAP_UNION'`
+- **`starrocks_is_agg_key`**: A boolean that can be set to `True` to explicitly mark a column as a key in an `AGGREGATE KEY` table. This is optional but improves clarity.
 
 ### Example: Aggregate Key Table
 
 Here is a complete example of an `AGGREGATE KEY` table that demonstrates both table-level and column-level properties.
 
 ```python
-from sqlalchemy import Table, MetaData, Column, Integer, String, Date
+from sqlalchemy import Table, MetaData, Column, Integer, Date
 from starrocks.types import BITMAP, HLL
 
 metadata = MetaData()
@@ -157,18 +148,18 @@ metadata = MetaData()
 aggregate_table = Table(
     'aggregate_table',
     metadata,
-    # Key columns do not need special properties
-    Column('event_date', Date),
-    Column('site_id', Integer),
+    # Key columns (explicitly marked for clarity)
+    Column('event_date', Date, starrocks_is_agg_key=True),
+    Column('site_id', Integer, starrocks_is_agg_key=True),
 
-    # Value columns with aggregate types specified in `info`
-    Column('page_views', Integer, info={'starrocks_AGG_TYPE': 'SUM'}),
-    Column('last_visit_time', Date, info={'starrocks_AGG_TYPE': 'REPLACE'}),
-    Column('user_ids', BITMAP, info={'starrocks_AGG_TYPE': 'BITMAP_UNION'}),
-    Column('uv_estimate', HLL, info={'starrocks_AGG_TYPE': 'HLL_UNION'}),
+    # Value columns with aggregate types
+    Column('page_views', Integer, starrocks_agg_type='SUM'),
+    Column('last_visit_time', Date, starrocks_agg_type='REPLACE'),
+    Column('user_ids', BITMAP, starrocks_agg_type='BITMAP_UNION'),
+    Column('uv_estimate', HLL, starrocks_agg_type='HLL_UNION'),
 
     # Table-level options
-    starrocks_AGGREGATE_KEY="event_date, site_id",  # Must specify it for AGGREGATE tabke
+    starrocks_AGGREGATE_KEY="event_date, site_id",
     starrocks_PARTITION_BY="date_trunc('day', event_date)",
     starrocks_DISTRIBUTED_BY="RANDOM",
     starrocks_PROPERTIES={"replication_num": "3"}
@@ -177,11 +168,9 @@ aggregate_table = Table(
 
 ## Defining Tables with the ORM (Declarative Style)
 
-When using SQLAlchemy's Declarative style, you define table-level properties within the `__table_args__` dictionary. Column-level properties are defined using the `info` dictionary on each `Column`.
+When using SQLAlchemy's Declarative style, you define table-level properties within the `__table_args__` dictionary. Column-level properties are passed directly as keyword arguments to each `Column`.
 
 ### Example: ORM Aggregate Key Table
-
-Here is a complete example of an `AGGREGATE KEY` table defined using the Declarative style. It demonstrates both table-level and column-level properties.
 
 ```python
 from sqlalchemy import Column, Integer, String, Date
@@ -194,17 +183,14 @@ class PageViewAggregates(Base):
     __tablename__ = 'page_view_aggregates'
 
     # -- Key Columns --
-    # For AGGREGATE KEY tables, key columns can be marked with `starrocks_is_agg_key`.
-    # This is optional but improves clarity and allows for validation.
-    page_id = Column(Integer, info={'starrocks_is_agg_key': True})
-    visit_date = Column(Date)
+    page_id = Column(Integer, primary_key=True, starrocks_is_agg_key=True)
+    visit_date = Column(Date, starrocks_is_agg_key=True)
 
     # -- Value Columns --
-    # Value columns have their aggregate function specified in the `info` dict.
-    total_views = Column(Integer, info={'starrocks_agg': 'SUM'})
-    last_user = Column(String, info={'starrocks_agg': 'REPLACE'})
-    distinct_users = Column(BITMAP, info={'starrocks_agg': 'BITMAP_UNION'})
-    uv_estimate = Column(HLL, info={'starrocks_agg': 'HLL_UNION'})
+    total_views = Column(Integer, starrocks_agg_type='SUM')
+    last_user = Column(String, starrocks_agg_type='REPLACE')
+    distinct_users = Column(BITMAP, starrocks_agg_type='BITMAP_UNION')
+    uv_estimate = Column(HLL, starrocks_agg_type='HLL_UNION')
 
     # -- Table-Level Arguments --
     __table_args__ = {
@@ -217,6 +203,6 @@ class PageViewAggregates(Base):
 
 ## Integration with Alembic
 
-The `sqlalchemy-starrocks` dialect integrates with Alembic to support autogeneration of schema migrations. When you run `alembic revision --autogenerate`, it will compare both the table-level `starrocks_` options and column-level properties against the database and generate the appropriate DDL.
+The `sqlalchemy-starrocks` dialect integrates with Alembic to support autogeneration of schema migrations. When you run `alembic revision --autogenerate`, it will compare both the table-level and column-level `starrocks_` options against the database and generate the appropriate DDL.
 
 Note that changes to non-alterable attributes like `ENGINE`, `table type`, or `partitioning` will be detected, but will raise an error to prevent generating an unsupported migration.
