@@ -15,10 +15,10 @@
 import re
 from textwrap import dedent
 import logging
-from typing import Any, Dict, Optional, List
+from typing import Any, Dict, Final, Optional, List
 
 from alembic.ddl.base import format_table_name
-from sqlalchemy import Connection, exc, schema as sa_schema, util, log, text, Row
+from sqlalchemy import Column, Connection, Table, exc, schema as sa_schema, util, log, text, Row
 
 from sqlalchemy.dialects.mysql.pymysql import MySQLDialect_pymysql
 
@@ -208,6 +208,7 @@ class StarRocksSQLCompiler(MySQLCompiler):
 
 class StarRocksDDLCompiler(MySQLDDLCompiler):
     def __init__(self, *args, **kwargs):
+        self.indent: Final[str] = "    "
         super().__init__(*args, **kwargs)
 
     def visit_alter_column(self, alter: AlterColumnOp, **kw):
@@ -245,10 +246,9 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
         if create_table_suffix := self.create_table_suffix(table):
             text += create_table_suffix + " "
 
-        text += "("
+        text += f"(\n{self.indent}"
 
-        separator = "\n"
-
+        column_text_list = list()
         # if only one primary key, specify it along with the column
         first_pk = False
         for create_column in create.columns:
@@ -262,13 +262,11 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
                     self._get_simple_full_table_name(table.name, table.schema),
                 )
             try:
-                processed = self.process(
-                    create_column, first_pk=column.primary_key and not first_pk
-                )
+                # TODO: what's the usage of first_pk?
+                processed = self.process(create_column, first_pk=column.primary_key and not first_pk)
+                # logger.debug(f"column desc for column: {column.name} is '{processed}'")
                 if processed is not None:
-                    text += separator
-                    separator = ", \n"
-                    text += "\t" + processed
+                    column_text_list.append(processed)
                 if column.primary_key:
                     first_pk = True
             except exc.CompileError as ce:
@@ -276,6 +274,7 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
                     "(in table '%s', column '%s'): %s"
                     % (self._get_simple_full_table_name(table.name, table.schema), column.name, ce.args[0])
                 ) from ce
+        text += f", \n{self.indent}".join(column_text_list)
 
         # N.B. Primary Key is specified in post_create_table
         #  Indexes are created by SQLA after the creation of the table using CREATE INDEX
@@ -284,9 +283,11 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
         #     _include_foreign_key_constraints=create.include_foreign_key_constraints,  # noqa
         # )
         # if const:
-        #     text += separator + "\t" + const
+        #     text += separator + self.indent + const
 
-        text += "\n)%s\n" % self.post_create_table(table, **kw)
+        text += "\n)\n%s\n" % self.post_create_table(table, **kw)
+        logger.debug(f"create table text for table: {table.name}, schema: {table.schema}, text: {text}")
+
         return text
     
     def _get_simple_full_table_name(self, table_name: str, schema: Optional[str] = None) -> str:
@@ -404,9 +405,11 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
 
         table_opts: list[str] = []
 
-        # Extract StarRocks-specific table options from kwargs without the dialect prefix (starrocks_)
+        # Extract StarRocks-specific table options from dialect_options without the prefix `starrocks_`.
         # opts: dict[str, Any] = self._extract_table_options(table)
-        opts: dict[str, Any] = table.dialect_options[DialectName]
+        # And item with value being None should be removed, because the `defaults` has all the keys.
+        opts = {k.upper(): v for k, v in table.dialect_options[DialectName].items() if v is not None}
+        logger.debug(f"table opts for table: {table.name}, schema: {table.schema}, opts: {opts}")
 
         # ENGINE
         if engine := opts.get(TableInfoKey.ENGINE):
@@ -448,17 +451,20 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
                     f"Unsupported type for PROPERTIES: {type(properties)}"
                 )
 
-            props = ",\n".join([f'\t"{k}"="{v}"' for k, v in props_items])
+            props = ",\n".join([f'{self.indent}"{k}"="{v}"' for k, v in props_items])
             table_opts.append(f"PROPERTIES(\n{props}\n)")
+
+        logger.debug(f"table opts for table: {table.name}, schema: {table.schema}, opts: {table_opts!r}")
 
         return "\n".join(table_opts)
     
     def _extract_table_options(self, table: sa_schema.Table) -> dict[str, Any]:
-        """Extract table options, without the prefix `starrocks_`.
-        TODO: it seems useless.
+        """Extract table options, with the prefix `starrocks_` removed.
+        It seems useless. Because we retrieve the options from dialect_options 
+        by removing all the defaults with value 'None'.
         """
         opts: dict[str, Any] = dict(
-            (k[len(SRKwargsPrefix):].upper(), v) for k, v in table.kwargs.items()
+            (k[len(SRKwargsPrefix):].upper(), v) for k, v in table.dialect_kwargs.items()
                 if k.startswith(SRKwargsPrefix)
         )
         logger.debug(f"extract table options from table: {table.name}, schema: {table.schema}, options: {opts}")
@@ -529,7 +535,9 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
         ]
 
         # Get and set column-level aggregate information
+        # logger.debug(f"get column agg info for column: {column.name}")
         if agg_info := self._get_column_agg_info(column):
+            logger.debug(f"agg info for column: {column.name} is '{agg_info}'")
             colspec.append(agg_info)
 
         # NULL or NOT NULL. AUTO_INCREMENT columns must be NOT NULL
@@ -583,16 +591,21 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
         is_agg_table: bool | None = None
         try:
             is_agg_table = table.info.get(TableInfoKeyWithPrefix.AGGREGATE_KEY)
+            # logger.debug(f"Cached is_agg_table for column: {column.name} is '{is_agg_table}'")
         except Exception:
             # Defensive: if table/info is not accessible, keep unknown
             is_agg_table = None
 
         if is_agg_table is None:
             try:
-                table_opt_upper_keys: set[str] = {k.upper() for k in table.dialect_options[DialectName].keys()}
+                # Remove items with value being None, because the `defaults` has all the keys.
+                table_opt_upper_keys: set[str] = {k.upper() for k, v in table.dialect_options[DialectName].items() 
+                    if v is not None
+                }
                 if table_opt_upper_keys:
                     is_agg_table = TableInfoKey.AGGREGATE_KEY in table_opt_upper_keys
                     table.info[TableInfoKeyWithPrefix.AGGREGATE_KEY] = is_agg_table
+                    # logger.debug(f"Cache is_agg_table for column: {column.name} to '{is_agg_table}'")
                 else:
                     # Unknown table options in ALTER context; leave as None
                     is_agg_table = None
@@ -601,8 +614,7 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
                 is_agg_table = None
 
         # check agg key/type in the column
-        column_options = column.dialect_options[DialectName]
-        opt_dict = CaseInsensitiveDict(column_options)
+        opt_dict: dict[str, Any] = {k.upper(): v for k, v in column.dialect_options[DialectName].items() if v is not None}
 
         has_is_agg_key = ColumnAggInfoKey.IS_AGG_KEY in opt_dict
         has_agg_type = ColumnAggInfoKey.AGG_TYPE in opt_dict
@@ -689,11 +701,11 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
                     comment: str = self.sql_compiler.render_literal_value(
                         c['comment'], sqltypes.String()
                     )
-                    column_clauses.append(f'\t{col_name} COMMENT {comment}')
+                    column_clauses.append(f'{self.indent}{col_name} COMMENT {comment}')
                 else:
-                    column_clauses.append(f'\t{col_name}')
+                    column_clauses.append(f'{self.indent}{col_name}')
             else:
-                column_clauses.append(f'\t{self.preparer.quote(c)}')
+                column_clauses.append(f'{self.indent}{self.preparer.quote(c)}')
         return " (\n%s\n)" % ",\n".join(column_clauses)
 
     def visit_create_view(self, create: CreateView, **kw: Any) -> str:
@@ -822,7 +834,15 @@ class StarRocksIdentifierPreparer(MySQLIdentifierPreparer):
 
 @log.class_logger
 class StarRocksDialect(MySQLDialect_pymysql):
-    name = "starrocks"
+    # Dialect name
+    name: Final[str] = "starrocks"
+
+    # Supported/Permitted StarRocks's dialect construct arguments for Table and Column
+    # Supports both lower and upper case variants for the arguments (eaiser for users' usages).
+    construct_arguments = [
+        (Table, {variant: None for k in TableInfoKey.ALL for variant in (k.lower(), k.upper())}),
+        (Column, {variant: None for k in ColumnAggInfoKey.ALL for variant in (k.lower(), k.upper())}),
+    ]
 
     # Used to get the partition info from the SHOW CREATE TABLE statement
     # Use regex to find the PARTITION BY clause. It can be multi-line.
@@ -929,7 +949,7 @@ class StarRocksDialect(MySQLDialect_pymysql):
                                  for k, v in kwargs.items()
                                  if k and v])}
         """)
-        logger.debug(f"query for information_schema.{inf_sch_table}: {st}")
+        # logger.debug(f"query for information_schema.{inf_sch_table}: {st}")
         rp: Any = None
         try:
             rp = connection.execution_options(
@@ -1004,6 +1024,7 @@ class StarRocksDialect(MySQLDialect_pymysql):
         column_2_agg_type: dict[str, str] = {
             row.Field: row.Extra.upper()
             for row in full_column_rows
+            if row.Extra
         }
 
         partition_clause = self._get_partition_clause_from_create_table(connection, table_name, schema)
@@ -1065,7 +1086,7 @@ class StarRocksDialect(MySQLDialect_pymysql):
         full_table_name = self._get_quote_full_table_name(table_name, schema)
         try:
             st: str = f"SHOW FULL COLUMNS FROM {full_table_name}"
-            logger.debug(f"query special column info by using: {st}")
+            # logger.debug(f"query special column info by using: {st}")
             return connection.execute(text(st)).fetchall()
         except exc.DBAPIError as e:
             # 1146: Table ... doesn't exist
@@ -1086,6 +1107,7 @@ class StarRocksDialect(MySQLDialect_pymysql):
 
         # TODO: what's the purpose here?
         for spec in parsed_state.keys:
+            
             dialect_options: dict[str, Any] = {}
             unique = False
             flavor: Optional[str] = spec["type"]

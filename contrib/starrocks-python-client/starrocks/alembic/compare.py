@@ -874,6 +874,7 @@ def compare_starrocks_column_agg_type(
 
     if meta_agg_type != conn_agg_type:
         # Update the alter_column_op with the new aggregate type. useless now
+        # "KEY", "SUM" for set, None for unsert
         if alter_column_op is not None:
             alter_column_op.kwargs[ColumnAggInfoKeyWithPrefix.AGG_TYPE] = meta_agg_type
         raise NotSupportedError(
@@ -900,11 +901,13 @@ def compare_starrocks_column_autoincrement(
     StarRocks does not support changing the autoincrement of a column.
     """
     # Because we can't inpsect the autoincrement, we can't do the check the difference.
-    # if conn_col.autoincrement != metadata_col.autoincrement:
-    #     raise NotSupportedError(
-    #         f"StarRocks does not support changing the autoincrement of a column: '{cname}', "
-    #         f"from {conn_col.autoincrement} to {metadata_col.autoincrement}.",
-    #         None, None
-    #     )
+    if conn_col.autoincrement != metadata_col.autoincrement:
+        logger.warning(
+            f"Detected AUTO_INCREMENT is changed for column {cname}. "
+            f"conn_col.autoincrement: {conn_col.autoincrement}, "
+            f"metadata_col.autoincrement: {metadata_col.autoincrement}. "
+            f"No ALTER statement will be generated automatically, "
+            f"Because we can't inpsect the column's autoincrement currently."
+        )
     return None
 

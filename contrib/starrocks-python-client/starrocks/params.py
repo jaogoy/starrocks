@@ -72,6 +72,11 @@ class ColumnAggInfoKey:
     AGG_TYPE = "AGG_TYPE"
 
 
+ColumnAggInfoKey.ALL = {
+    k for k, v in vars(ColumnAggInfoKey).items() if not callable(v) and not k.startswith("__")
+}
+
+
 class TableInfoKeyWithPrefix:
     """Centralizes starrocks_ prefixed kwargs for Table objects. Full prefixed names."""
 
@@ -113,6 +118,11 @@ class ColumnAggInfoKeyWithPrefix:
 
     IS_AGG_KEY = "starrocks_IS_AGG_KEY"
     AGG_TYPE = "starrocks_AGG_TYPE"
+
+
+ColumnAggInfoKeyWithPrefix.ALL = {
+    k for k, v in vars(ColumnAggInfoKeyWithPrefix).items() if not callable(v) and not k.startswith("__")
+}
 
 
 ColumnSROptionsKey: str = "column_sr_options"

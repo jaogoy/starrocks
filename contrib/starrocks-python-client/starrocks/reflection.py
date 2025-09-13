@@ -23,6 +23,7 @@ from sqlalchemy.dialects.mysql.types import DATETIME, TIME, TIMESTAMP
 from sqlalchemy.dialects.mysql.base import _DecodingRow
 from sqlalchemy.dialects.mysql.reflection import _re_compile
 from sqlalchemy import log, types as sqltypes, util
+from sqlalchemy.engine.interfaces import ReflectedColumn
 from sqlalchemy.engine.reflection import Inspector
 
 from starrocks.defaults import ReflectionTableDefaults
@@ -139,11 +140,14 @@ class StarRocksTableDefinitionParser(object):
 
         Args:
             column: A row from `information_schema.columns`.
-            kwargs: Additional keyword arguments passed to the dialect. currently only support:
-                agg_type: The aggregate type of the column.
+            kwargs: Additional keyword arguments, without prefix `starrocks_`, passed to the dialect.
+                currently only support:
+                    - is_agg_key: Whether the column is a key column.
+                    - agg_type: The aggregate type of the column.
 
         Returns:
             A dictionary with column information expected by sqlalchemy.
+            It's the same as the `ReflectedColumn` object.
         """
         computed = {"sqltext": column.GENERATION_EXPRESSION} if column.GENERATION_EXPRESSION else None
         col_info = {
@@ -154,7 +158,11 @@ class StarRocksTableDefinitionParser(object):
             "autoincrement": None,  # TODO: This is not specified
             "computed": computed,
             "comment": column.COLUMN_COMMENT,
-            "dialect_options": { DialectName: kwargs }
+            "dialect_options": {
+                DialectName: {
+                    k.upper(): v.upper() for k, v in kwargs.items() if v is not None
+                }
+            }
         }
         return col_info
 
