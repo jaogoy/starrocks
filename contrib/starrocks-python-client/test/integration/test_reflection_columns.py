@@ -47,26 +47,39 @@ class TestReflectionColumnsAggIntegration:
             table.create(connection)
 
             try:
-                inspector = inspect(engine)
-                reflected_columns: list[ReflectedColumn] = inspector.get_columns(table_name)
+                # Create a map of column name to its reflected info dict
+                conn_db = MetaData()
+                conn_table = Table(table_name, conn_db, autoload_with=engine, schema=test_default_schema)
+                reflected_map: dict[str, ReflectedColumn] = {col.name: col for col in conn_table.columns}
 
                 # Create a map of column name to its reflected info dict
-                reflected_map: dict[str, ReflectedColumn] = {col["name"]: col for col in reflected_columns}
+                # By using this way, the dialect options are raw as set, haven't been processed by `check_kwargs`
+                # to form dialect_options object/property.
+                # inspector = inspect(engine)
+                # reflected_columns: list[ReflectedColumn] = inspector.get_columns(table_name)
+                #reflected_map: dict[str, ReflectedColumn] = {col["name"]: col for col in reflected_columns}
+
 
                 # Assertions
-                assert ColumnAggInfoKey.AGG_TYPE not in reflected_map["id"]["dialect_options"][DialectName]
-                assert ColumnAggInfoKey.AGG_TYPE not in reflected_map["key1"]["dialect_options"][DialectName]
-                assert reflected_map["val_sum"]["dialect_options"][DialectName][ColumnAggInfoKey.AGG_TYPE] == ColumnAggType.SUM
-                assert reflected_map["val_replace"]["dialect_options"][DialectName][ColumnAggInfoKey.AGG_TYPE] == ColumnAggType.REPLACE
+                logger.info(f"reflected_column: id {reflected_map['id']!r}")
+                assert ColumnAggInfoKey.AGG_TYPE not in reflected_map["id"].dialect_options[DialectName] or \
+                    reflected_map["id"].dialect_options[DialectName][ColumnAggInfoKey.AGG_TYPE] is None
+                logger.info(f"reflected_column: key1 {reflected_map['key1']!r}")
+                assert ColumnAggInfoKey.AGG_TYPE not in reflected_map["key1"].dialect_options[DialectName] or \
+                    reflected_map["key1"].dialect_options[DialectName][ColumnAggInfoKey.AGG_TYPE] is None
+                logger.info(f"reflected_column: val_sum {reflected_map['val_sum']!r}")
+                logger.debug(f"dialect options for column: val_sum {reflected_map['val_sum'].dialect_options[DialectName]}")
+                assert reflected_map["val_sum"].dialect_options[DialectName][ColumnAggInfoKey.AGG_TYPE] == ColumnAggType.SUM
+                assert reflected_map["val_replace"].dialect_options[DialectName][ColumnAggInfoKey.AGG_TYPE] == ColumnAggType.REPLACE
                 assert (
-                    reflected_map["val_replace_if_not_null"]["dialect_options"][DialectName][ColumnAggInfoKey.AGG_TYPE]
+                    reflected_map["val_replace_if_not_null"].dialect_options[DialectName][ColumnAggInfoKey.AGG_TYPE]
                     == ColumnAggType.REPLACE_IF_NOT_NULL
                 )
-                assert reflected_map["val_min"]["dialect_options"][DialectName][ColumnAggInfoKey.AGG_TYPE] == ColumnAggType.MIN
-                assert reflected_map["val_max"]["dialect_options"][DialectName][ColumnAggInfoKey.AGG_TYPE] == ColumnAggType.MAX
-                assert reflected_map["val_hll"]["dialect_options"][DialectName][ColumnAggInfoKey.AGG_TYPE] == ColumnAggType.HLL_UNION
+                assert reflected_map["val_min"].dialect_options[DialectName][ColumnAggInfoKey.AGG_TYPE] == ColumnAggType.MIN
+                assert reflected_map["val_max"].dialect_options[DialectName][ColumnAggInfoKey.AGG_TYPE] == ColumnAggType.MAX
+                assert reflected_map["val_hll"].dialect_options[DialectName][ColumnAggInfoKey.AGG_TYPE] == ColumnAggType.HLL_UNION
                 assert (
-                    reflected_map["val_bitmap"]["dialect_options"][DialectName][ColumnAggInfoKey.AGG_TYPE]
+                    reflected_map["val_bitmap"].dialect_options[DialectName][ColumnAggInfoKey.AGG_TYPE]
                     == ColumnAggType.BITMAP_UNION
                 )
 

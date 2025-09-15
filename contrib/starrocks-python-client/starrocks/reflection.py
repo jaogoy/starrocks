@@ -119,7 +119,8 @@ class StarRocksTableDefinitionParser(object):
         return ReflectedState(
             table_name=table.TABLE_NAME,
             columns=[
-                self._parse_column(column=column, agg_type=column_2_agg_type.get(column.COLUMN_NAME))
+                self._parse_column(column=column, 
+                    **{ColumnAggInfoKeyWithPrefix.AGG_TYPE: column_2_agg_type.get(column.COLUMN_NAME)})
                 for column in columns
             ],
             table_options=self._parse_table_options(
@@ -140,10 +141,10 @@ class StarRocksTableDefinitionParser(object):
 
         Args:
             column: A row from `information_schema.columns`.
-            kwargs: Additional keyword arguments, without prefix `starrocks_`, passed to the dialect.
+            kwargs: Additional keyword arguments, with prefix `starrocks_`, passed to the dialect.
                 currently only support:
-                    - is_agg_key: Whether the column is a key column.
-                    - agg_type: The aggregate type of the column.
+                    - starrocks_IS_AGG_KEY: Whether the column is a key column.
+                    - starrocks_AGG_TYPE: The aggregate type of the column.
 
         Returns:
             A dictionary with column information expected by sqlalchemy.
@@ -156,14 +157,11 @@ class StarRocksTableDefinitionParser(object):
             "nullable": column.IS_NULLABLE == "YES",
             "default": column.COLUMN_DEFAULT,
             "autoincrement": None,  # TODO: This is not specified
-            "computed": computed,
             "comment": column.COLUMN_COMMENT,
-            "dialect_options": {
-                DialectName: {
-                    k.upper(): v.upper() for k, v in kwargs.items() if v is not None
-                }
-            }
+            "dialect_options": kwargs
         }
+        if computed:
+            col_info["computed"] = computed
         return col_info
 
     def _parse_column_type(self, column: _DecodingRow) -> Any:

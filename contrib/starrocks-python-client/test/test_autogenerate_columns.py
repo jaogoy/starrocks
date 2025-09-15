@@ -64,44 +64,52 @@ class TestAutogenerateColumnsAggType:
         )
 
 class TestAutogenerateColumnsAutoIncrement:
-    def _mk_context(self) -> AutogenContext:
-        ctx = Mock(spec=AutogenContext)
-        ctx.dialect = Mock()
-        ctx.dialect.name = DialectName
-        return ctx
+    def setup_method(self) -> None:
+        self.autogen_context = Mock(spec=AutogenContext)
+        self.autogen_context.dialect = Mock()
+        self.autogen_context.dialect.name = DialectName
+    
+    def teardown_method(self) -> None:
+        self.autogen_context = None
 
     def test_autoincrement_same_noop(self):
-        ctx = self._mk_context()
 
         # conn and meta both True
         conn_col = Mock(autoincrement=True)
         meta_col = Mock(autoincrement=True)
 
         # should not raise
-        compare_starrocks_column_autoincrement(ctx, None, "sch", "t1", "id", conn_col, meta_col)
+        compare_starrocks_column_autoincrement(self.autogen_context, None, "sch", "t1", "id", conn_col, meta_col)
 
         # conn and meta both False
         conn_col2 = Mock(autoincrement=False)
         meta_col2 = Mock(autoincrement=False)
 
         # should not raise
-        compare_starrocks_column_autoincrement(ctx, None, "sch", "t1", "id", conn_col2, meta_col2)
+        compare_starrocks_column_autoincrement(self.autogen_context, None, "sch", "t1", "id", conn_col2, meta_col2)
 
-    def test_autoincrement_diff_raises(self):
-        ctx = self._mk_context()
+    def test_autoincrement_diff_warns(self, caplog):
+
+        caplog.set_level("WARNING")
 
         # conn True -> meta False
         conn_col = Mock(autoincrement=True)
         meta_col = Mock(autoincrement=False)
 
-        with pytest.raises(NotSupportedError) as ei1:
-            compare_starrocks_column_autoincrement(ctx, None, "sch", "t1", "id", conn_col, meta_col)
-        assert "does not support changing the autoincrement" in str(ei1.value)
+        caplog.clear()
+        compare_starrocks_column_autoincrement(self.autogen_context, None, "sch", "t1", "id", conn_col, meta_col)
+        assert any(
+            "Detected AUTO_INCREMENT is changed" in str(r.getMessage()) and r.levelname == "WARNING"
+            for r in caplog.records
+        )
 
         # conn False -> meta True
         conn_col2 = Mock(autoincrement=False)
         meta_col2 = Mock(autoincrement=True)
 
-        with pytest.raises(NotSupportedError) as ei2:
-            compare_starrocks_column_autoincrement(ctx, None, "sch", "t1", "id", conn_col2, meta_col2)
-        assert "does not support changing the autoincrement" in str(ei2.value)
+        caplog.clear()
+        compare_starrocks_column_autoincrement(self.autogen_context, None, "sch", "t1", "id", conn_col2, meta_col2)
+        assert any(
+            "Detected AUTO_INCREMENT is changed" in str(r.getMessage()) and r.levelname == "WARNING"
+            for r in caplog.records
+        )

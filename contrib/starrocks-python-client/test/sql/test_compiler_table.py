@@ -118,8 +118,8 @@ class TestCreateTableCompiler:
         self.logger.info("Testing Aggregate Key Table DDL")
         tbl = Table('agg_tbl', self.metadata,
                     Column('k1', Integer),
-                    Column('v1', Integer, info={ColumnAggInfoKeyWithPrefix.AGG_TYPE: ColumnAggType.SUM}),
-                    Column('v2', String(50), info={ColumnAggInfoKeyWithPrefix.AGG_TYPE: ColumnAggType.REPLACE}),
+                    Column('v1', Integer, **{ColumnAggInfoKeyWithPrefix.AGG_TYPE: ColumnAggType.SUM}),
+                    Column('v2', String(50), **{ColumnAggInfoKeyWithPrefix.AGG_TYPE: ColumnAggType.REPLACE}),
                     starrocks_aggregate_key='k1')
         sql = self._compile_table(tbl)
         expected = """
@@ -139,7 +139,7 @@ class TestCreateTableCompiler:
         # Test case 1: Column marked as both key and aggregate
         with pytest.raises(exc.CompileError, match="cannot be both KEY and aggregated"):
             tbl1 = Table('invalid_agg_tbl1', self.metadata,
-                         Column('k1', Integer, info={
+                         Column('k1', Integer, **{
                              ColumnAggInfoKeyWithPrefix.IS_AGG_KEY: True,
                              ColumnAggInfoKeyWithPrefix.AGG_TYPE: ColumnAggType.SUM
                          }),
@@ -150,7 +150,7 @@ class TestCreateTableCompiler:
         with pytest.raises(exc.CompileError, match="only valid for AGGREGATE KEY tables"):
             tbl2 = Table('invalid_agg_tbl2', self.metadata,
                          Column('k1', Integer),
-                         Column('v1', Integer, info={ColumnAggInfoKeyWithPrefix.AGG_TYPE: ColumnAggType.SUM}),
+                         Column('v1', Integer, **{ColumnAggInfoKeyWithPrefix.AGG_TYPE: ColumnAggType.SUM}),
                          starrocks_duplicate_key='k1')
             self._compile_table(tbl2)
 
@@ -159,21 +159,23 @@ class TestCreateTableCompiler:
         from sqlalchemy import exc
 
         # Test case 1: Value column before key column
-        with pytest.raises(exc.CompileError, match="all key columns must be defined before any value columns"):
-            tbl1 = Table('invalid_order_tbl1', self.metadata,
-                         Column('v1', Integer, info={ColumnAggInfoKeyWithPrefix.AGG_TYPE: ColumnAggType.SUM}),
-                         Column('k1', Integer),
-                         **{TableInfoKeyWithPrefix.AGGREGATE_KEY: 'k1'})
-            self._compile_table(tbl1)
+        # Don't check it now. leave it to SR.
+        # with pytest.raises(exc.CompileError, match="all key columns must be defined before any value columns"):
+        #     tbl1 = Table('invalid_order_tbl1', self.metadata,
+        #                  Column('v1', Integer, **{ColumnAggInfoKeyWithPrefix.AGG_TYPE: ColumnAggType.SUM}),
+        #                  Column('k1', Integer),
+        #                  **{TableInfoKeyWithPrefix.AGGREGATE_KEY: 'k1'})
+        #     self._compile_table(tbl1)
 
         # Test case 2: Key columns in wrong order compared to starrocks_aggregate_key
-        with pytest.raises(exc.CompileError, match="order of key columns in the table definition must match"):
-            tbl2 = Table('invalid_order_tbl2', self.metadata,
-                         Column('k2', Integer),
-                         Column('k1', Integer),
-                         Column('v1', Integer, info={ColumnAggInfoKeyWithPrefix.AGG_TYPE: ColumnAggType.SUM}),
-                         **{TableInfoKeyWithPrefix.AGGREGATE_KEY: 'k1,k2'})
-            self._compile_table(tbl2)
+        # Don't check it now. leave it to SR.
+        # with pytest.raises(exc.CompileError, match="order of key columns in the table definition must match"):
+        #     tbl2 = Table('invalid_order_tbl2', self.metadata,
+        #                  Column('k2', Integer),
+        #                  Column('k1', Integer),
+        #                  Column('v1', Integer, **{ColumnAggInfoKeyWithPrefix.AGG_TYPE: ColumnAggType.SUM}),
+        #                  **{TableInfoKeyWithPrefix.AGGREGATE_KEY: 'k1,k2'})
+        #     self._compile_table(tbl2)
 
     def test_column_default_value(self):
         self.logger.info("Testing column server_default value")

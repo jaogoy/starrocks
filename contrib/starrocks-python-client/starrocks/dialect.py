@@ -615,7 +615,6 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
 
         # check agg key/type in the column
         opt_dict: dict[str, Any] = {k.upper(): v for k, v in column.dialect_options[DialectName].items() if v is not None}
-
         has_is_agg_key = ColumnAggInfoKey.IS_AGG_KEY in opt_dict
         has_agg_type = ColumnAggInfoKey.AGG_TYPE in opt_dict
 
@@ -993,7 +992,7 @@ class StarRocksDialect(MySQLDialect_pymysql):
             raise exc.InvalidRequestError(
                 f"Multiple tables found with name {table_name} in schema {schema}"
             )
-        logger.debug(f"reflected table info for table: {table_name}, info: {dict(table_rows[0])}")
+        logger.debug(f"reflected table row for table: {table_name}, info: {dict(table_rows[0])}")
 
         table_config_rows: list[_DecodingRow] = self._read_from_information_schema(
             connection=connection,

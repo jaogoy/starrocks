@@ -370,8 +370,8 @@ def compare_starrocks_table(
     run_mode = autogen_context.dialect.run_mode
     logger.debug(f"System run_mode for table comparison: {run_mode}")
     
-    conn_table_attributes = CaseInsensitiveDict(conn_table.dialect_options[DialectName])
-    meta_table_attributes = CaseInsensitiveDict(metadata_table.dialect_options[DialectName])    
+    conn_table_attributes = CaseInsensitiveDict({k: v for k, v in conn_table.dialect_options[DialectName].items() if v is not None})
+    meta_table_attributes = CaseInsensitiveDict({k: v for k, v in metadata_table.dialect_options[DialectName].items() if v is not None})    
 
     ops_list = []
 
@@ -657,9 +657,11 @@ def _compare_properties(
     """
     conn_properties = conn_table_attributes.get(TableInfoKey.PROPERTIES, {})
     meta_properties = meta_table_attributes.get(TableInfoKey.PROPERTIES, {})
+    logger.debug(f"PROPERTIES. conn_properties: {conn_properties}, meta_properties: {meta_properties}")
 
-    normalized_conn = {key.lower(): value for key, value in conn_properties.items()}
-    normalized_meta = {key.lower(): value for key, value in meta_properties.items()}
+    normalized_conn = CaseInsensitiveDict(conn_properties)
+    normalized_meta = CaseInsensitiveDict(meta_properties)
+    # logger.debug(f"PROPERTIES. normalized_conn: {normalized_conn}, normalized_meta: {normalized_meta}")
 
     if normalized_meta == normalized_conn:
         return
@@ -682,7 +684,6 @@ def _compare_properties(
             # Change if it differs from conn, or if conn is None.
             if meta_str != conn_str:
                 has_meaningful_change = True
-                break
         else:
             # Case 3 & 4: meta does NOT specify a value.
             # Change ONLY if conn has a NON-DEFAULT value.
@@ -711,8 +712,6 @@ def _compare_properties(
                     )
                     pass  # No change needed to meta_properties, its absence implies removal.
 
-                # has_meaningful_change is already True here
-                break
     
     if has_meaningful_change:
         from starrocks.alembic.ops import AlterTablePropertiesOp
@@ -866,8 +865,12 @@ def compare_starrocks_column_agg_type(
     
     Check for changes in StarRocks-specific attributes like aggregate type.
     """
-    conn_opts = CaseInsensitiveDict(conn_col.dialect_options[DialectName])
-    meta_opts = CaseInsensitiveDict(metadata_col.dialect_options[DialectName])
+    conn_opts = CaseInsensitiveDict(
+        {k: v for k, v in conn_col.dialect_options[DialectName].items() if v is not None}
+    )
+    meta_opts = CaseInsensitiveDict(
+        {k: v for k, v in metadata_col.dialect_options[DialectName].items() if v is not None}
+    )
     conn_agg_type: str | None = conn_opts.get(ColumnAggInfoKey.AGG_TYPE)
     meta_agg_type: str | None = meta_opts.get(ColumnAggInfoKey.AGG_TYPE)
     logger.debug(f"AGG_TYPE. conn_agg_type: {conn_agg_type}, meta_agg_type: {meta_agg_type}")

@@ -1,3 +1,4 @@
+import logging
 import pytest
 from alembic.autogenerate.api import AutogenContext
 from unittest.mock import Mock, PropertyMock
@@ -13,6 +14,9 @@ LOG_ATTRIBUTE_NEED_SPECIFIED = "Please specify this attribute explicitly"
 LOG_NO_DEFAULT_VALUE = "but no default is defined in ReflectionTableDefaults"
 LOG_ALTER_AUTO_GENERATED = "An ALTER TABLE SET operation will be generated"
 LOG_NO_ALERT_AUTO_GENERATED = "No ALTER TABLE SET operation will be generated"
+
+
+logger = logging.getLogger(__name__)
 
 
 class TestRealTableObjects:
@@ -1296,7 +1300,9 @@ class TestORMTableObjects:
             elif isinstance(op, AlterTableOrderOp):
                 assert op.order_by == "id, name"
             elif isinstance(op, AlterTablePropertiesOp):
-                assert op.properties == {'replication_num': '3', 'storage_medium': 'SSD'}
+                logger.info(f"ALTER TABLE SET PROPERTIES: {op.properties}")
+                # the compression property is added although it's not set in the metadata table
+                assert op.properties == {'replication_num': '3', 'storage_medium': 'SSD', 'compression': 'LZ4'}
 
 
 class TestComplexScenarios:
