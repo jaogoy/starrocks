@@ -36,7 +36,7 @@
     - ❌ **待办:** 在 `sqlalchemy.Index` 上支持 `starrocks_using='BITMAP'` 的定义方式。
 
 - **3. 增强 DDL 编译器 (`Compiler`)**
-  - **进度:** 90%
+  - **进度:** 80%
   - **状态:** 💹 已推进 (核心完成)
   - **任务:** 扩展 `starrocks/compiler.py` 中的 `StarRocksDDLCompiler`，使其能根据模型生成正确的 DDL。
   - **细节:** 编译器采用访问者模式，为每个需要自定义 SQL 的 DDL 元素实现 `visit_*` 方法。
@@ -46,7 +46,10 @@
     - ✅ `visit_alter_table`: 支持编译 `DISTRIBUTED BY`, `ORDER BY`, `SET PROPERTIES` 子句。
     - ✅ `visit_alter_column`: 除了 AGG_TYPE，应该原有的都支持。
     - ✅ `visit_create_view` 和 `visit_drop_view`，`alter_view`。
-    - ✅ `visit_create_materialized_view` 和 `visit_drop_materialized_view`, `alter_materialized_view`。
+    - ✅ `visit_create_materialized_view`: 当前仅支持编译 `definition` 和 `properties`。
+    - ❌ **待办: `visit_create_materialized_view`**: 需增强以支持编译 `PARTITION BY`, `DISTRIBUTED BY`, `ORDER BY`, `REFRESH` 子句。
+    - ✅ `visit_drop_materialized_view`。
+    - ❌ **待办: `visit_alter_materialized_view`**: 需新增以支持编译 `RENAME`, `SET PROPERTIES`, `REFRESH`, `SET ACTIVE/INACTIVE`。
     - ❌ **待办: `visit_create_index`**: 需实现对 `USING BITMAP` 子句的编译。
     - ❌ **待办: `visit_drop_index`**: 确保索引可以被正确删除。
 
@@ -76,38 +79,43 @@
     - ❌ **待办: `get_columns`**: 需增加对 `AUTO_INCREMENT` 属性的反射支持。这是一个明确的缺失功能点。
 
 - **3. 实现 `View` 和 `MV` 的反射**
-  - **进度:** 100%
+  - **进度:** 70%
   - **状态:** ✅ 已完成
   - **任务:** 在 `starrocks/reflection.py` 中添加对视图和物化视图的反射能力。
   - **细节:** 实现 `get_view_names`, `get_view_definition`, `get_materialized_view_names`, `get_materialized_view_definition` 等方法，统一通过查询 `information_schema` 实现。
   - **验收标准:** `inspector` 能够成功获取数据库中所有 `View` 和 `MV` 的名称、定义和属性。
   - **子任务清单:**
     - ✅ `get_view_names` 和 `get_view_definition`。
-    - ✅ `get_materialized_view_names` 和 `get_materialized_view_definition` (包含 `properties`)。
+    - ✅ `get_materialized_view_names` 和 `get_materialized_view_definition` (当前仅支持 `properties`)。
+    - ❌ **待办: 增强 `MV` 反射**: 需增加对 `PARTITION BY`, `DISTRIBUTED BY`, `ORDER BY`, `REFRESH` 策略, `STATUS` (ACTIVE/INACTIVE) 等属性的反射支持。
 
 ### 第三阶段：Alembic 集成 (Alembic Integration)
 
 - **1. 创建 Alembic 自定义 `ops`**
 
-  - **进度:** 100%
+  - **进度:** 90%
   - **状态:** ✅ 已完成
   - **任务:** 在 `starrocks/alembic/ops.py` 中定义与 `View`, `MV` 及 `Table` 特殊变更相关的 Alembic 操作。
   - **细节:** 创建 `CreateViewOp`, `DropViewOp`, `AlterTablePropertiesOp` 等，并实现其 `reverse()` 方法以支持 `downgrade`。
   - **验收标准:** 这些 `Op` 对象可以在 Alembic 迁移脚本中被调用，并且它们的 `reverse()` 方法是正确的。
   - **子任务清单:**
-    - ✅ `View` 和 `MV` 的 `Create`/`Drop`/`Alter` 操作已定义。
+    - ✅ `View` 的 `Create`/`Drop`/`Alter` 操作已定义。
+    - ✅ `MV` 的 `Create`/`Drop` 操作已定义。
+    - ❌ **待办: 增强 `AlterMaterializedViewOp`**: 需实现对 `rename`, `set_properties`, `set_refresh_scheme`, `set_status` 等操作的支持。
     - ✅ `Table` 的 `Alter` 操作（如 `AlterTablePropertiesOp`, `AlterTableDistributionOp` 等）已定义。
     - ✅ 所有操作均已实现 `reverse()` 方法。
 
 - **2. 实现 `autogenerate` 差异对比**
 
-  - **进度:** 90%
+  - **进度:** 80%
   - **状态:** 💹 已推进 (核心完成)
   - **任务:** 在 `starrocks/alembic/compare.py` 中实现自定义的比较逻辑。
   - **细节:** 使用 Alembic 提供的 `@comparators.dispatch_for` 装饰器来注册自定义的比较函数，以插件化的方式扩展 `autogenerate` 的能力。
   - **验收标准:** `alembic revision --autogenerate` 能够为 `Table`, `View`, `MV`, `Column`, `Index` 的增、删、改生成正确的迁移脚本。
   - **子任务清单:**
-    - ✅ `schema` 级对比: 支持 `View` 和 `MV` 的 `CREATE`, `DROP`, `ALTER`。
+    - ✅ `schema` 级对比: 支持 `View` 的 `CREATE`, `DROP`, `ALTER`。
+    - ✅ `schema` 级对比: 支持 `MV` 的 `CREATE`, `DROP`。
+    - ❌ **待办: 增强 `MV` 对比**: 需增加对 `PARTITION BY`, `DISTRIBUTED BY`, `ORDER BY`, `REFRESH` 策略, `STATUS` 等属性的变更检测。
     - ✅ `table` 级对比: 支持 `ENGINE`, `KEY`, `DISTRIBUTION`, `PARTITION`, `PROPERTIES`, `COMMENT` 的变更检测。
     - ✅ `column` 级对比: 支持 `type`, `nullable`, `default`, `comment`, `agg_type` 的变更检测。
     - ✅ 对不支持的 `agg_type` 变更会主动抛出异常。
@@ -122,7 +130,7 @@
   - **细节:** 使用 `@renderers.dispatch_for(...)` 装饰器，将 `Op` 对象转换为最终的 DDL 字符串。
   - **验收标准:** `alembic upgrade <revision> --sql` 能够打印出正确的 StarRocks DDL 语句。
   - **子任务清单:**
-    - ✅ 所有自定义 `Op` 均已实现 Python 代码渲染和 SQL 渲染。
+    - ✅ 所有自定义 `Op` 均已实现 Python 代码渲染。
 
 - **4. 新增：支持 Bitmap 索引**
   - **进度:** 0%
@@ -135,18 +143,22 @@
 
 - **1. 编写集成测试**
 
-  - **进度:** 80%
+  - **进度:** 70%
   - **状态:** 💹 已推进
   - **任务:** 在 `test/` 目录下，为 Alembic `autogenerate` 编写端到端的集成测试。
   - **细节:** 覆盖 `Table`, `View`, `MV` 的创建、修改、删除场景，验证脚本生成、`upgrade` 和 `downgrade` 的正确性。
   - **验收标准:** 自动化测试能验证 V1.0 所有核心功能的完整生命周期（创建、修改、删除、升级、降级）。
   - **子任务清单:**
-    - ✅ **已有覆盖:** `Table` 和 `Column` 的 `CREATE`, `DROP`, `ALTER` 场景。
-    - ✅ **已有覆盖:** `View` 和 `MV` 的 `CREATE`, `DROP`, `ALTER` 场景。
-    - ❌ **待办: 功能测试**:
-      - `Bitmap Index` 的完整生命周期测试 (`CREATE`, `DROP`)。
-      - `AUTO_INCREMENT` 的反射和对比测试。
-    - ❌ **待办: 场景测试**:
+    - ✅ **已有覆盖 (Existing Coverage):**
+      - **DDL 编译 (`test/sql/`)**: 已覆盖 `Table`, `View`, `MV` 的 `CREATE`/`ALTER` 语句生成。
+      - **数据库反射 (`test/integration/test_reflection_*.py`)**: 已覆盖对 `Table`, `Column` 属性以及聚合类型的反射。
+      - **Alembic `autogenerate` (`test_autogenerate_*.py`)**: 已覆盖对 `Table`, `Column`, `View` 属性变更的检测，`MV` 仅覆盖基础场景。
+      - **Alembic 代码渲染 (`test/test_render.py`)**: 已通过单元测试覆盖 `View`, `MV`, `Table` 的 `Op` 对象到 Python 代码的渲染，包含对 `None` 值、空集合和特殊字符等边界情况的验证。
+    - ❌ **待办: 功能测试 (Functional Tests)**:
+      - `Materialized View`: 需要完整的生命周期测试，覆盖 `CREATE`/`ALTER` (`RENAME`, `REFRESH`, `PROPERTIES`, `STATUS`)/`DROP`，以及对所有特有属性的反射和 `autogenerate` 对比。
+      - `Bitmap Index`: 需要完整的生命周期测试 (`CREATE`, `DROP`, 反射, `autogenerate` 对比)。
+      - `AUTO_INCREMENT`: 需要完善反射支持 (当前测试为 `xfail`) 和 `autogenerate` 变更支持 (当前仅有告警)。
+    - ❌ **待办: 场景测试 (Scenario Tests)**:
       - 复杂数据类型 (`ARRAY`, `JSON` 等) 的 `ALTER` 场景。
       - 单个迁移脚本中包含多种操作组合的场景。
 

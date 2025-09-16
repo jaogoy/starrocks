@@ -2,45 +2,77 @@
 
 This document provides a high-level overview of the test coverage for the StarRocks Python Client, organized by feature area.
 
-## 1. Table Autogeneration and Comparison (`test_autogenerate_tables.py`)
+## 1. DDL Compilation (`test/sql/`)
 
-This file primarily focuses on verifying Alembic's `autogenerate` feature's ability to detect differences in StarRocks-specific table attributes between a database-reflected table and a metadata-defined table.
+This suite verifies that Python schema definitions are correctly compiled into StarRocks-compliant DDL statements.
 
-### General Test Patterns for Table Attributes
+- **`test_compiler_table.py`**: Covers `CREATE TABLE` statements, including `ENGINE`, `KEY`, `PARTITION BY`, `DISTRIBUTED BY`, `ORDER BY`, and `PROPERTIES`.
+- **`test_compiler_alter_table.py`**: Covers `ALTER TABLE` statements for properties, distribution, and order by clauses.
+- **`test_compiler_view.py`**: Covers `CREATE`, `ALTER`, and `DROP VIEW` statements.
+- **`test_compiler_mv.py`**: Covers `CREATE`, `ALTER`, and `DROP MATERIALIZED VIEW` statements.
 
-For Engine, Key Type, Partition By, Distributed By, Order By, Properties, Comment:
+## 2. Database Reflection (`test/integration/test_reflection_*.py`)
 
-Each major table attribute is generally tested across the following scenarios:
+These integration tests ensure that the dialect can accurately inspect a live StarRocks database and reflect its schema into SQLAlchemy objects.
 
-- **Value State Changes:**
-  - Transition from `None` (not set) to a default value.
-  - Transition from `None` to a non-default value.
-  - Transition from an explicit value (default or non-default) back to `None`.
-  - Change from one explicit value to another.
-- **No Change Scenarios:**
-  - Database and metadata values are identical (including case-insensitive matches).
-- **Special Considerations:**
-  - For attributes not supporting `ALTER` operations (e.g., certain Key Type changes), `NotImplementedError` is expected.
-  - For `PROPERTIES`, specific tests cover default value handling (implicit vs. explicit) and scenarios where non-default values in the DB are not specified in metadata.
-  - `Comment` changes are handled by SQLAlchemy's built-in comparison.
+- **`test_reflection_tables.py`**: Verifies reflection of all table-level options (`ENGINE`, `KEY`, `PARTITION BY`, `DISTRIBUTED BY`, `ORDER BY`, `PROPERTIES`, `COMMENT`).
+- **`test_reflection_columns.py`**: Verifies reflection of column attributes like `type`, `nullable`, `default`, and `comment`.
+- **`test_reflection_agg.py`**: Focuses on reflecting StarRocks-specific column aggregation types (`SUM`, `MIN`, `MAX`, `REPLACE`, etc.).
 
-### Other Specific Test Cases:
+## 3. Alembic `autogenerate` Comparison (`test_autogenerate_*.py`)
 
-- **ORM Model with `__table_args__`:** Verifies correct handling of StarRocks properties defined in ORM models.
-- **Non-StarRocks Dialect Handling:** Ensures comparison logic is skipped for other dialects.
+This is the core suite of integration tests, verifying that Alembic's `autogenerate` feature correctly detects differences between database state and metadata definitions, generating the appropriate migration operations.
 
-## 2. Table Reflection (`test_reflection_tables.py`)
+- **`test_autogenerate_tables.py`**: Tests detection of changes for all major table attributes (`ENGINE`, `KEY`, `PARTITION BY`, etc.). It covers state transitions like `None` to a value, value to `None`, and value to a different value.
+- **`test_autogenerate_columns.py`**: Tests detection of changes for column properties (`type`, `nullable`, `default`, `comment`, `agg_type`).
+- **`test_autogenerate_views.py`**: Covers `CREATE`, `DROP`, and `ALTER` operations for Views.
+- **`test_autogenerate_mvs.py`**: Covers `CREATE`, `DROP`, and `ALTER` operations for Materialized Views.
 
-This file contains integration tests for `StarRocksDialect.get_table_options`, verifying its ability to correctly reflect StarRocks-specific table attributes from a live database via `information_schema`.
+## 4. Missing Coverage and Future Work
 
-### Covered Scenarios:
+The following features and scenarios are not yet covered by automated tests:
 
-- **Comprehensive Table Options Reflection:** Verifies the reflection of all StarRocks-specific table attributes, including `ENGINE`, `KEY` (e.g., PRIMARY KEY), `PARTITION BY`, `DISTRIBUTED BY`, `ORDER BY`, `PROPERTIES` (e.g., `replication_num`, `storage_medium`), and `COMMENT` for a fully configured table.
+- **Materialized View Lifecycle**:
 
-## 3. Column Aggregate Reflection (`test_reflection_agg.py`)
+  - `CREATE MATERIALIZED VIEW` compilation and execution with extended clauses:
+    - `PARTITION BY`
+    - `DISTRIBUTED BY`
+    - `ORDER BY`
+    - `REFRESH ASYNC/MANUAL/INCREMENTAL`
+  - `ALTER MATERIALIZED VIEW` compilation and execution for:
+    - `RENAME TO`
+    - `SET REFRESH ...`
+    - `SET PROPERTIES (...)`
+    - `SET ACTIVE / INACTIVE`
+  - Reflection of all extended MV properties (`partition`, `distribution`, `order by`, `refresh_scheme`, `status`).
+  - `autogenerate` detection for changes in all the properties listed above.
 
-This file contains integration tests for `StarRocksDialect.get_columns` focusing on the reflection of StarRocks-specific column aggregation types (`AGG_TYPE`).
+- **Bitmap Index Lifecycle**:
 
-### Covered Scenarios:
+  - `CREATE INDEX ... USING BITMAP` compilation and execution.
+  - `DROP INDEX` compilation and execution.
+  - Reflection of Bitmap indexes via `inspector.get_indexes()`.
+  - `autogenerate` detection for the creation and deletion of Bitmap indexes.
 
-- **Aggregate Key Table Reflection:** Confirms that `AGGREGATE KEY` table columns with various aggregate functions (`SUM`, `MIN`, `MAX`, `REPLACE`, `REPLACE_IF_NOT_NULL`, `HLL_UNION`, `BITMAP_UNION`) are correctly reflected and their `AGG_TYPE` is identifiable in `column.info`.
+- **`AUTO_INCREMENT` Property**:
+
+  - Full reflection of the `AUTO_INCREMENT` property on columns. Current tests are marked as `xfail`.
+  - `autogenerate` comparison to produce an `ALTER` operation for adding/removing `AUTO_INCREMENT` (currently only a warning is logged).
+
+- **Complex Scenario Tests**:
+
+  - `ALTER` operations on columns with complex data types (e.g., `ARRAY`, `JSON`).
+  - Migration scripts that combine multiple, different types of operations (e.g., adding a table, altering a column, and dropping a view in a single revision).
+
+- **End-to-End Alembic Lifecycle Test**:
+  - A comprehensive test case simulating the full user workflow:
+    1. Define a schema in Python models (including tables, views, etc.).
+    2. Run `autogenerate` to create a migration script.
+    3. Run `upgrade` to apply the migration to the database.
+    4. Verify the database schema correctly matches the models.
+    5. Modify the Python models (e.g., alter a table property).
+    6. Run `autogenerate` again to create a second migration script.
+    7. Run `upgrade` to apply the changes.
+    8. Verify the changes are reflected in the database.
+    9. Run `downgrade` to revert the changes and verify the schema is restored.
+    10. Run `downgrade` back to base to verify all objects are dropped.
