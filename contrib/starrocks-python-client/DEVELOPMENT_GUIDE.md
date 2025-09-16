@@ -107,7 +107,7 @@
 
 - **2. 实现 `autogenerate` 差异对比**
 
-  - **进度:** 80%
+  - **进度:** 70%
   - **状态:** 💹 已推进 (核心完成)
   - **任务:** 在 `starrocks/alembic/compare.py` 中实现自定义的比较逻辑。
   - **细节:** 使用 Alembic 提供的 `@comparators.dispatch_for` 装饰器来注册自定义的比较函数，以插件化的方式扩展 `autogenerate` 的能力。
@@ -115,7 +115,7 @@
   - **子任务清单:**
     - ✅ `schema` 级对比: 支持 `View` 的 `CREATE`, `DROP`, `ALTER`。
     - ✅ `schema` 级对比: 支持 `MV` 的 `CREATE`, `DROP`。
-    - ❌ **待办: 增强 `MV` 对比**: 需增加对 `PARTITION BY`, `DISTRIBUTED BY`, `ORDER BY`, `REFRESH` 策略, `STATUS` 等属性的变更检测。
+    - ❌ **待办: 增强 `MV` 对比**: 需增加对 `PARTITION BY`, `DISTRIBUTED BY`, `ORDER BY`, `REFRESH` 策略, `STATUS` 等属性的变更检测，**包括对 `ALTER MATERIALIZED VIEW` 操作的完整支持**。
     - ✅ `table` 级对比: 支持 `ENGINE`, `KEY`, `DISTRIBUTION`, `PARTITION`, `PROPERTIES`, `COMMENT` 的变更检测。
     - ✅ `column` 级对比: 支持 `type`, `nullable`, `default`, `comment`, `agg_type` 的变更检测。
     - ✅ 对不支持的 `agg_type` 变更会主动抛出异常。
@@ -146,21 +146,25 @@
   - **进度:** 70%
   - **状态:** 💹 已推进
   - **任务:** 在 `test/` 目录下，为 Alembic `autogenerate` 编写端到端的集成测试。
-  - **细节:** 覆盖 `Table`, `View`, `MV` 的创建、修改、删除场景，验证脚本生成、`upgrade` 和 `downgrade` 的正确性。
+  - **细节:** 测试应覆盖完整的 `revision --autogenerate`, `upgrade`, `downgrade` 流程。验证脚本生成、在线数据库执行、离线 SQL 生成的正确性。
   - **验收标准:** 自动化测试能验证 V1.0 所有核心功能的完整生命周期（创建、修改、删除、升级、降级）。
   - **子任务清单:**
     - ✅ **已有覆盖 (Existing Coverage):**
       - **DDL 编译 (`test/sql/`)**: 已覆盖 `Table`, `View`, `MV` 的 `CREATE`/`ALTER` 语句生成。
       - **数据库反射 (`test/integration/test_reflection_*.py`)**: 已覆盖对 `Table`, `Column` 属性以及聚合类型的反射。
       - **Alembic `autogenerate` (`test_autogenerate_*.py`)**: 已覆盖对 `Table`, `Column`, `View` 属性变更的检测，`MV` 仅覆盖基础场景。
-      - **Alembic 代码渲染 (`test/test_render.py`)**: 已通过单元测试覆盖 `View`, `MV`, `Table` 的 `Op` 对象到 Python 代码的渲染，包含对 `None` 值、空集合和特殊字符等边界情况的验证。
-    - ❌ **待办: 功能测试 (Functional Tests)**:
-      - `Materialized View`: 需要完整的生命周期测试，覆盖 `CREATE`/`ALTER` (`RENAME`, `REFRESH`, `PROPERTIES`, `STATUS`)/`DROP`，以及对所有特有属性的反射和 `autogenerate` 对比。
-      - `Bitmap Index`: 需要完整的生命周期测试 (`CREATE`, `DROP`, 反射, `autogenerate` 对比)。
-      - `AUTO_INCREMENT`: 需要完善反射支持 (当前测试为 `xfail`) 和 `autogenerate` 变更支持 (当前仅有告警)。
-    - ❌ **待办: 场景测试 (Scenario Tests)**:
-      - 复杂数据类型 (`ARRAY`, `JSON` 等) 的 `ALTER` 场景。
-      - 单个迁移脚本中包含多种操作组合的场景。
+      - **Alembic 代码渲染 (`test/test_render.py`)**: 已通过单元测试覆盖 `View`, `MV`, `Table` 的 `Op` 对象到 Python 代码的渲染。
+    - ❌ **待办: 功能完整性测试 (Functional Completeness Tests)**:
+      - **`Materialized View`**: 需要完整的生命周期测试，覆盖 `CREATE`/`ALTER` (`RENAME`, `REFRESH`, `PROPERTIES`, `STATUS`)/`DROP`，并确保 `upgrade` 和 `downgrade` 均能正确执行。
+      - **`Bitmap Index`**: 需要完整的生命周期测试 (`CREATE`/`DROP`)，确保 `upgrade` 和 `downgrade` 均能正确执行，并覆盖反射和 `autogenerate` 对比。
+      - **`AUTO_INCREMENT`**: 需要完善反射支持 (当前测试为 `xfail`) 和 `autogenerate` 变更支持 (当前仅有告警)。
+    - ❌ **待办: 核心场景测试 (Core Scenario Tests)**:
+      - **`downgrade` 可逆性**: 确保每个 `upgrade` 操作都有一个对应的、功能正确的 `downgrade` 操作，执行后能将数据库恢复到迁移前状态。
+      - **`autogenerate` 默认值处理**: 测试当模型中未指定某些属性（如 `ENGINE`），而数据库中存在系统默认值时，`autogenerate` 不会生成不必要的变更。
+      - **离线 SQL 生成 (`--sql` 模式)**: 验证 `alembic upgrade --sql` 能为所有操作生成语法正确的 DDL 脚本，并与预期快照进行比对。
+      - **幂等性测试**: 多次对同一个数据库版本执行 `autogenerate`，应始终生成空的迁移脚本。
+      - **复杂类型支持**: 增加对 `ARRAY`, `JSON`, `MAP` 等复杂数据类型 `ALTER` 场景的测试。
+      - **组合操作**: 测试在单个迁移脚本中包含多种混合操作（如同时创建表、修改视图）的场景。
 
 - **2. 编写用户文档**
   - **进度:** 10%

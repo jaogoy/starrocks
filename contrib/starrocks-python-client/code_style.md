@@ -5,14 +5,15 @@
 总体需要遵守 PEP 8、PEP 257、PEP 484 规范，并参考 Flake8, Ruff 规范。
 
 在此基础上，增加参考 Google Python Style Guide，其中有几部分对前面的规范进行了修改：
+
 - 最大行长度（从 79 改为 120）
 - docstring 风格（Google 风格更清晰）
 - 强制类型注解
 
 我比较重点关心的几个部分：
-  - **Type Annotations**: All functions, methods, and complex variable declarations should have explicit type annotations. Historical code should also be gradually annotated.
-  - **Docstrings**: Write clear, Google-style docstrings for all modules, classes, and functions, including arguments and returns.
 
+- **Type Annotations**: All functions, methods, and complex variable declarations should have explicit type annotations. Historical code should also be gradually annotated.
+- **Docstrings**: Write clear, Google-style docstrings for all modules, classes, and functions, including arguments and returns.
 
 如下是更多一些自己的代码规范要求。
 

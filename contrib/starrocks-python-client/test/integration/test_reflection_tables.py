@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 class TestReflectionTablesIntegration:
     """Integration tests for StarRocks table reflection from information_schema."""
 
-    def test_reflect_table_options(self, engine: Engine):
+    def test_reflect_table_options(self, sr_engine: Engine):
         """Test that `get_table_options` correctly reflects all StarRocks table options."""
         table_name = "test_reflect_table_options"
         metadata = MetaData()
@@ -35,7 +35,7 @@ class TestReflectionTablesIntegration:
             starrocks_properties={"replication_num": "1", "storage_medium": "SSD"},
         )
 
-        with engine.connect() as connection:
+        with sr_engine.connect() as connection:
             # Ensure the table is dropped before creation for a clean test environment
             connection.execute(text(f"DROP TABLE IF EXISTS {table_name}"))
             # Create the table in the test database
@@ -43,7 +43,7 @@ class TestReflectionTablesIntegration:
 
             try:
                 # Inspect the database to get table options
-                inspector = inspect(engine)
+                inspector = inspect(sr_engine)
                 table_options = inspector.get_table_options(table_name)
                 logger.info("table_options: %s", table_options)
 

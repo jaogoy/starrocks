@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 
 class TestReflectionColumnsAggIntegration:
-    def test_reflect_aggregate_key_table(self, engine: Engine):
+    def test_reflect_aggregate_key_table(self, sr_engine: Engine):
         table_name = "test_reflect_columns"
         metadata = MetaData()
 
@@ -42,20 +42,20 @@ class TestReflectionColumnsAggIntegration:
             starrocks_properties={"replication_num": "1"},
         )
 
-        with engine.connect() as connection:
+        with sr_engine.connect() as connection:
             connection.execute(text(f"DROP TABLE IF EXISTS {table_name}"))
             table.create(connection)
 
             try:
                 # Create a map of column name to its reflected info dict
                 conn_db = MetaData()
-                conn_table = Table(table_name, conn_db, autoload_with=engine, schema=test_default_schema)
+                conn_table = Table(table_name, conn_db, autoload_with=sr_engine, schema=test_default_schema)
                 reflected_map: dict[str, ReflectedColumn] = {col.name: col for col in conn_table.columns}
 
                 # Create a map of column name to its reflected info dict
                 # By using this way, the dialect options are raw as set, haven't been processed by `check_kwargs`
                 # to form dialect_options object/property.
-                # inspector = inspect(engine)
+                # inspector = inspect(sr_engine)
                 # reflected_columns: list[ReflectedColumn] = inspector.get_columns(table_name)
                 #reflected_map: dict[str, ReflectedColumn] = {col["name"]: col for col in reflected_columns}
 
@@ -90,24 +90,24 @@ class TestReflectionColumnsAggIntegration:
 
 @pytest.mark.integration
 class TestReflectionColumnAutoIncrementIntegration:
-    engine: Engine
+    sr_engine: Engine
     test_schema: str | None
 
     @classmethod
     def setup_class(cls) -> None:
-        cls.engine = create_test_engine()
+        cls.sr_engine = create_test_engine()
         cls.test_schema = test_default_schema
-        with cls.engine.begin() as conn:
+        with cls.sr_engine.begin() as conn:
             if cls.test_schema:
                 conn.exec_driver_sql(f"CREATE DATABASE IF NOT EXISTS {cls.test_schema}")
 
     @classmethod
     def teardown_class(cls) -> None:
-        with cls.engine.begin() as conn:
+        with cls.sr_engine.begin() as conn:
             res = conn.exec_driver_sql("SHOW TABLES")
             for row in res:
                 conn.exec_driver_sql(f"DROP TABLE IF EXISTS {row[0]}")
-        cls.engine.dispose()
+        cls.sr_engine.dispose()
 
     def _full_table_name(self, name: str) -> str:
         return f"{self.test_schema}.{name}" if self.test_schema else name
@@ -115,7 +115,7 @@ class TestReflectionColumnAutoIncrementIntegration:
     @pytest.mark.xfail(reason="AUTO_INCREMENT reflection not implemented yet", strict=False)
     def test_reflects_autoincrement_true(self) -> None:
         tname = "reflect_columns_ai_true"
-        with self.engine.begin() as conn:
+        with self.sr_engine.begin() as conn:
             conn.exec_driver_sql(
                 f"""
                 CREATE TABLE {self._full_table_name(tname)} (
@@ -127,18 +127,18 @@ class TestReflectionColumnAutoIncrementIntegration:
                 """
             )
         try:
-            insp: Inspector = inspect(self.engine)
+            insp: Inspector = inspect(self.sr_engine)
             cols: list[ReflectedColumn] = insp.get_columns(tname, schema=self.test_schema)
             id_col: ReflectedColumn = next(c for c in cols if c["name"].lower() == "id")
             assert id_col.autoincrement is True  # Not implemented yet
         finally:
-            with self.engine.begin() as conn:
+            with self.sr_engine.begin() as conn:
                 conn.exec_driver_sql(f"DROP TABLE IF EXISTS {self._full_table_name(tname)}")
 
     @pytest.mark.xfail(reason="AUTO_INCREMENT reflection not implemented yet", strict=False)
     def test_reflects_autoincrement_false(self) -> None:
         tname = "reflect_columns_ai_false"
-        with self.engine.begin() as conn:
+        with self.sr_engine.begin() as conn:
             conn.exec_driver_sql(
                 f"""
                 CREATE TABLE {self._full_table_name(tname)} (
@@ -150,10 +150,10 @@ class TestReflectionColumnAutoIncrementIntegration:
                 """
             )
         try:
-            insp: Inspector = inspect(self.engine)
+            insp: Inspector = inspect(self.sr_engine)
             cols: list[ReflectedColumn] = insp.get_columns(tname, schema=self.test_schema)
             id_col: ReflectedColumn = next(c for c in cols if c["name"].lower() == "id")
             assert id_col.autoincrement is False  # Not implemented yet
         finally:
-            with self.engine.begin() as conn:
+            with self.sr_engine.begin() as conn:
                 conn.exec_driver_sql(f"DROP TABLE IF EXISTS {self._full_table_name(tname)}")

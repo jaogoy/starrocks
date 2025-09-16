@@ -1,6 +1,7 @@
 import logging
 import pytest
 from alembic.autogenerate.api import AutogenContext
+from alembic.operations.ops import UpgradeOps
 from unittest.mock import Mock, PropertyMock
 
 from starrocks.alembic.compare import compare_starrocks_table, extract_starrocks_dialect_attributes
@@ -60,7 +61,11 @@ class TestRealTableObjects:
         )
 
         # Test the comparison
-        result = compare_starrocks_table(autogen_context, conn_table, meta_table)
+        upgrade_ops = UpgradeOps([])
+        compare_starrocks_table(
+            autogen_context, upgrade_ops, conn_table.schema, conn_table.name, conn_table, meta_table
+        )
+        result = upgrade_ops.ops
 
         # Should detect multiple changes
         assert len(result) == 3  # distribution, properties, order_by
@@ -126,7 +131,11 @@ class TestRealTableObjects:
             **meta_table_kwargs
         )
 
-        result = compare_starrocks_table(autogen_context, conn_table, meta_table)
+        upgrade_ops = UpgradeOps([])
+        compare_starrocks_table(
+            autogen_context, upgrade_ops, conn_table.schema, conn_table.name, conn_table, meta_table
+        )
+        result = upgrade_ops.ops
 
         # No changes should be detected
         assert result == []
@@ -168,7 +177,11 @@ class TestRealTableObjects:
             schema='test_db'
         )
 
-        result = compare_starrocks_table(autogen_context, conn_table, meta_table)
+        upgrade_ops = UpgradeOps([])
+        compare_starrocks_table(
+            autogen_context, upgrade_ops, conn_table.schema, conn_table.name, conn_table, meta_table
+        )
+        result = upgrade_ops.ops
 
         assert len(result) == 1
         from starrocks.alembic.ops import AlterTablePropertiesOp
@@ -202,7 +215,10 @@ class TestRealTableObjects:
         )
 
         with pytest.raises(NotImplementedError) as exc_info:
-            compare_starrocks_table(autogen_context, conn_table, meta_table)
+            upgrade_ops = UpgradeOps([])
+            compare_starrocks_table(
+                autogen_context, upgrade_ops, conn_table.schema, conn_table.name, conn_table, meta_table
+            )
         assert "StarRocks does not support 'ALTER TABLE ENGINE'" in str(exc_info.value)
 
     def test_real_table_unsupported_key_change(self):
@@ -232,7 +248,10 @@ class TestRealTableObjects:
         )
 
         with pytest.raises(NotImplementedError) as exc_info:
-            compare_starrocks_table(autogen_context, conn_table, meta_table)
+            upgrade_ops = UpgradeOps([])
+            compare_starrocks_table(
+                autogen_context, upgrade_ops, conn_table.schema, conn_table.name, conn_table, meta_table
+            )
         assert "StarRocks does not support 'ALTER TABLE KEY'" in str(exc_info.value)
 
     def test_real_table_unsupported_partition_change(self):
@@ -264,7 +283,10 @@ class TestRealTableObjects:
         )
 
         with pytest.raises(NotImplementedError) as exc_info:
-            compare_starrocks_table(autogen_context, conn_table, meta_table)
+            upgrade_ops = UpgradeOps([])
+            compare_starrocks_table(
+                autogen_context, upgrade_ops, conn_table.schema, conn_table.name, conn_table, meta_table
+            )
         assert "StarRocks does not support 'ALTER TABLE PARTITION BY'" in str(exc_info.value)
 
 
@@ -292,8 +314,12 @@ class TestEngineChanges:
         )
         meta_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(meta_table.kwargs)}
 
-        ops = compare_starrocks_table(autogen_context, conn_table, meta_table)
-        assert len(ops) == 0
+        upgrade_ops = UpgradeOps([])
+        compare_starrocks_table(
+            autogen_context, upgrade_ops, conn_table.schema, conn_table.name, conn_table, meta_table
+        )
+        result = upgrade_ops.ops
+        assert len(result) == 0
 
     def test_engine_none_to_non_default_value(self):
         """Test ENGINE from None (implicit default OLAP) to a non-default value (MYSQL)."""
@@ -315,7 +341,10 @@ class TestEngineChanges:
         meta_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(meta_table.kwargs)}
 
         with pytest.raises(NotImplementedError) as exc_info:
-            compare_starrocks_table(autogen_context, conn_table, meta_table)
+            upgrade_ops = UpgradeOps([])
+            compare_starrocks_table(
+                autogen_context, upgrade_ops, conn_table.schema, conn_table.name, conn_table, meta_table
+            )
         assert "StarRocks does not support 'ALTER TABLE ENGINE'" in str(exc_info.value)
 
     def test_engine_default_to_none(self):
@@ -340,7 +369,11 @@ class TestEngineChanges:
         )
         meta_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(meta_table.kwargs)}
         
-        result = compare_starrocks_table(autogen_context, conn_table, meta_table)
+        upgrade_ops = UpgradeOps([])
+        compare_starrocks_table(
+            autogen_context, upgrade_ops, conn_table.schema, conn_table.name, conn_table, meta_table
+        )
+        result = upgrade_ops.ops
         assert len(result) == 0
 
     def test_engine_non_default_to_none(self):
@@ -365,7 +398,10 @@ class TestEngineChanges:
         meta_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(meta_table.kwargs)}
 
         with pytest.raises(NotImplementedError) as exc_info:
-            compare_starrocks_table(autogen_context, conn_table, meta_table)
+            upgrade_ops = UpgradeOps([])
+            compare_starrocks_table(
+                autogen_context, upgrade_ops, conn_table.schema, conn_table.name, conn_table, meta_table
+            )
         assert LOG_ATTRIBUTE_NEED_SPECIFIED in str(exc_info.value)
 
     def test_engine_change(self):
@@ -392,7 +428,10 @@ class TestEngineChanges:
         
         # ENGINE changes are not supported in StarRocks, should raise NotImplementedError
         with pytest.raises(NotImplementedError) as exc_info:
-            compare_starrocks_table(autogen_context, conn_table, meta_table)
+            upgrade_ops = UpgradeOps([])
+            compare_starrocks_table(
+                autogen_context, upgrade_ops, conn_table.schema, conn_table.name, conn_table, meta_table
+            )
         assert "StarRocks does not support 'ALTER TABLE ENGINE'" in str(exc_info.value)
 
     @pytest.mark.parametrize("conn_engine, meta_engine", [
@@ -422,7 +461,11 @@ class TestEngineChanges:
         )
         meta_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(meta_table.kwargs)}
         
-        result = compare_starrocks_table(autogen_context, conn_table, meta_table)
+        upgrade_ops = UpgradeOps([])
+        compare_starrocks_table(
+            autogen_context, upgrade_ops, conn_table.schema, conn_table.name, conn_table, meta_table
+        )
+        result = upgrade_ops.ops
         assert len(result) == 0
 
     def test_engine_none_to_none(self):
@@ -441,7 +484,11 @@ class TestEngineChanges:
         )
         meta_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(meta_table.kwargs)}
         
-        result = compare_starrocks_table(autogen_context, conn_table, meta_table)
+        upgrade_ops = UpgradeOps([])
+        compare_starrocks_table(
+            autogen_context, upgrade_ops, conn_table.schema, conn_table.name, conn_table, meta_table
+        )
+        result = upgrade_ops.ops
         assert len(result) == 0
 
 
@@ -472,7 +519,11 @@ class TestKeyChanges:
         )
         meta_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(meta_table.kwargs)}
         
-        result = compare_starrocks_table(autogen_context, conn_table, meta_table)
+        upgrade_ops = UpgradeOps([])
+        compare_starrocks_table(
+            autogen_context, upgrade_ops, conn_table.schema, conn_table.name, conn_table, meta_table
+        )
+        result = upgrade_ops.ops
         assert len(result) == 0
 
     def test_key_none_to_non_default_value(self):
@@ -495,7 +546,10 @@ class TestKeyChanges:
         meta_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(meta_table.kwargs)}
         
         with pytest.raises(NotImplementedError) as exc_info:
-            compare_starrocks_table(autogen_context, conn_table, meta_table)
+            upgrade_ops = UpgradeOps([])
+            compare_starrocks_table(
+                autogen_context, upgrade_ops, conn_table.schema, conn_table.name, conn_table, meta_table
+            )
         assert "StarRocks does not support 'ALTER TABLE KEY'" in str(exc_info.value)
 
     def test_key_default_to_none(self):
@@ -519,7 +573,11 @@ class TestKeyChanges:
         )
         meta_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(meta_table.kwargs)}
         
-        result = compare_starrocks_table(autogen_context, conn_table, meta_table)
+        upgrade_ops = UpgradeOps([])
+        compare_starrocks_table(
+            autogen_context, upgrade_ops, conn_table.schema, conn_table.name, conn_table, meta_table
+        )
+        result = upgrade_ops.ops
 
         # No change detected since meta doesn't specify KEY
         assert len(result) == 0
@@ -546,7 +604,10 @@ class TestKeyChanges:
         meta_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(meta_table.kwargs)}
 
         with pytest.raises(NotImplementedError) as exc_info:
-            compare_starrocks_table(autogen_context, conn_table, meta_table)
+            upgrade_ops = UpgradeOps([])
+            compare_starrocks_table(
+                autogen_context, upgrade_ops, conn_table.schema, conn_table.name, conn_table, meta_table
+            )
         
         assert LOG_ATTRIBUTE_NEED_SPECIFIED in str(exc_info.value)
 
@@ -573,7 +634,10 @@ class TestKeyChanges:
         meta_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(meta_table.kwargs)}
 
         with pytest.raises(NotImplementedError) as exc_info:
-            compare_starrocks_table(autogen_context, conn_table, meta_table)
+            upgrade_ops = UpgradeOps([])
+            compare_starrocks_table(
+                autogen_context, upgrade_ops, conn_table.schema, conn_table.name, conn_table, meta_table
+            )
         assert "StarRocks does not support 'ALTER TABLE KEY'" in str(exc_info.value)
 
     @pytest.mark.parametrize("conn_key, conn_key_columns, meta_key, meta_key_columns", [
@@ -607,7 +671,11 @@ class TestKeyChanges:
         )
         meta_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(meta_table.kwargs)}
         
-        result = compare_starrocks_table(autogen_context, conn_table, meta_table)
+        upgrade_ops = UpgradeOps([])
+        compare_starrocks_table(
+            autogen_context, upgrade_ops, conn_table.schema, conn_table.name, conn_table, meta_table
+        )
+        result = upgrade_ops.ops
         assert len(result) == 0
 
     def test_key_none_to_none(self):
@@ -626,7 +694,11 @@ class TestKeyChanges:
         )
         meta_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(meta_table.kwargs)}
         
-        result = compare_starrocks_table(autogen_context, conn_table, meta_table)
+        upgrade_ops = UpgradeOps([])
+        compare_starrocks_table(
+            autogen_context, upgrade_ops, conn_table.schema, conn_table.name, conn_table, meta_table
+        )
+        result = upgrade_ops.ops
         assert len(result) == 0
 
 
@@ -658,7 +730,10 @@ class TestPartitionChanges:
         meta_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(meta_table.kwargs)}
 
         with pytest.raises(NotImplementedError) as exc_info:
-            compare_starrocks_table(autogen_context, conn_table, meta_table)
+            upgrade_ops = UpgradeOps([])
+            compare_starrocks_table(
+                autogen_context, upgrade_ops, conn_table.schema, conn_table.name, conn_table, meta_table
+            )
         assert "StarRocks does not support 'ALTER TABLE PARTITION BY'" in str(exc_info.value)
 
     def test_partition_value_to_none(self):
@@ -683,7 +758,10 @@ class TestPartitionChanges:
         meta_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(meta_table.kwargs)}
         
         with pytest.raises(NotImplementedError) as exc_info:
-            compare_starrocks_table(autogen_context, conn_table, meta_table)
+            upgrade_ops = UpgradeOps([])
+            compare_starrocks_table(
+                autogen_context, upgrade_ops, conn_table.schema, conn_table.name, conn_table, meta_table
+            )
         assert LOG_ATTRIBUTE_NEED_SPECIFIED in str(exc_info.value)
 
     def test_partition_change(self):
@@ -709,13 +787,20 @@ class TestPartitionChanges:
         meta_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(meta_table.kwargs)}
         
         with pytest.raises(NotImplementedError) as exc_info:
-            compare_starrocks_table(autogen_context, conn_table, meta_table)
+            upgrade_ops = UpgradeOps([])
+            compare_starrocks_table(
+                autogen_context, upgrade_ops, conn_table.schema, conn_table.name, conn_table, meta_table
+            )
         assert "StarRocks does not support 'ALTER TABLE PARTITION BY'" in str(exc_info.value)
 
         # Force to make diff of partition by
         old_enablement = AlterTableEnablement.PARTITION_BY
         AlterTableEnablement.PARTITION_BY = True
-        result = compare_starrocks_table(autogen_context, conn_table, meta_table)
+        upgrade_ops = UpgradeOps([])
+        compare_starrocks_table(
+            autogen_context, upgrade_ops, conn_table.schema, conn_table.name, conn_table, meta_table
+        )
+        result = upgrade_ops.ops
         assert len(result) == 1
         from starrocks.alembic.ops import AlterTablePartitionOp
         assert isinstance(result[0], AlterTablePartitionOp)
@@ -751,7 +836,11 @@ class TestPartitionChanges:
         )
         meta_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(meta_table.kwargs)}
         
-        result = compare_starrocks_table(autogen_context, conn_table, meta_table)
+        upgrade_ops = UpgradeOps([])
+        compare_starrocks_table(
+            autogen_context, upgrade_ops, conn_table.schema, conn_table.name, conn_table, meta_table
+        )
+        result = upgrade_ops.ops
         assert len(result) == 0
 
     def test_partition_none_to_none(self):
@@ -770,7 +859,11 @@ class TestPartitionChanges:
         )
         meta_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(meta_table.kwargs)}
         
-        result = compare_starrocks_table(autogen_context, conn_table, meta_table)
+        upgrade_ops = UpgradeOps([])
+        compare_starrocks_table(
+            autogen_context, upgrade_ops, conn_table.schema, conn_table.name, conn_table, meta_table
+        )
+        result = upgrade_ops.ops
         assert len(result) == 0
 
 
@@ -795,8 +888,12 @@ class TestDistributionChanges:
         )
         meta_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(meta_table.kwargs)}
         
-        ops = compare_starrocks_table(autogen_context, conn_table, meta_table)
-        assert len(ops) == 0
+        upgrade_ops = UpgradeOps([])
+        compare_starrocks_table(
+            autogen_context, upgrade_ops, conn_table.schema, conn_table.name, conn_table, meta_table
+        )
+        result = upgrade_ops.ops
+        assert len(result) == 0
 
     def test_distribution_none_to_non_default_value(self):
         """Test DISTRIBUTED_BY from None (implicit default RANDOM) to a non-default value."""
@@ -816,7 +913,11 @@ class TestDistributionChanges:
         )
         meta_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(meta_table.kwargs)}
         
-        result = compare_starrocks_table(autogen_context, conn_table, meta_table)
+        upgrade_ops = UpgradeOps([])
+        compare_starrocks_table(
+            autogen_context, upgrade_ops, conn_table.schema, conn_table.name, conn_table, meta_table
+        )
+        result = upgrade_ops.ops
         assert len(result) == 1
         from starrocks.alembic.ops import AlterTableDistributionOp
         assert isinstance(result[0], AlterTableDistributionOp)
@@ -839,8 +940,12 @@ class TestDistributionChanges:
         )
         meta_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(meta_table.kwargs)}
         
-        ops = compare_starrocks_table(autogen_context, conn_table, meta_table)
-        assert len(ops) == 0
+        upgrade_ops = UpgradeOps([])
+        compare_starrocks_table(
+            autogen_context, upgrade_ops, conn_table.schema, conn_table.name, conn_table, meta_table
+        )
+        result = upgrade_ops.ops
+        assert len(result) == 0
 
     def test_distribution_non_default_to_none(self):
         """Test DISTRIBUTED_BY from a non-default value to None."""
@@ -859,7 +964,10 @@ class TestDistributionChanges:
         meta_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(meta_table.kwargs)}
 
         with pytest.raises(NotImplementedError) as exc_info:
-            compare_starrocks_table(autogen_context, conn_table, meta_table)
+            upgrade_ops = UpgradeOps([])
+            compare_starrocks_table(
+                autogen_context, upgrade_ops, conn_table.schema, conn_table.name, conn_table, meta_table
+            )
         assert LOG_ATTRIBUTE_NEED_SPECIFIED in str(exc_info.value)
 
     def test_distribution_change(self):
@@ -880,7 +988,11 @@ class TestDistributionChanges:
         )
         meta_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(meta_table.kwargs)}
 
-        result = compare_starrocks_table(autogen_context, conn_table, meta_table)
+        upgrade_ops = UpgradeOps([])
+        compare_starrocks_table(
+            autogen_context, upgrade_ops, conn_table.schema, conn_table.name, conn_table, meta_table
+        )
+        result = upgrade_ops.ops
         assert len(result) == 1
         from starrocks.alembic.ops import AlterTableDistributionOp
         assert isinstance(result[0], AlterTableDistributionOp)
@@ -912,7 +1024,11 @@ class TestDistributionChanges:
         )
         meta_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(meta_table.kwargs)}
 
-        result = compare_starrocks_table(autogen_context, conn_table, meta_table)
+        upgrade_ops = UpgradeOps([])
+        compare_starrocks_table(
+            autogen_context, upgrade_ops, conn_table.schema, conn_table.name, conn_table, meta_table
+        )
+        result = upgrade_ops.ops
         assert len(result) == 0
 
     def test_distribution_none_to_none(self):
@@ -931,7 +1047,11 @@ class TestDistributionChanges:
         )
         meta_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(meta_table.kwargs)}
 
-        result = compare_starrocks_table(autogen_context, conn_table, meta_table)
+        upgrade_ops = UpgradeOps([])
+        compare_starrocks_table(
+            autogen_context, upgrade_ops, conn_table.schema, conn_table.name, conn_table, meta_table
+        )
+        result = upgrade_ops.ops
         assert len(result) == 0
 
 
@@ -959,7 +1079,10 @@ class TestOrderByChanges:
         )
         meta_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(meta_table.kwargs)}
         
-        compare_starrocks_table(autogen_context, conn_table, meta_table)
+        upgrade_ops = UpgradeOps([])
+        compare_starrocks_table(
+            autogen_context, upgrade_ops, conn_table.schema, conn_table.name, conn_table, meta_table
+        )
         # assert len(result) == 0  # impossible in reality
 
     def test_order_by_default_to_none(self):
@@ -983,7 +1106,11 @@ class TestOrderByChanges:
         )
         meta_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(meta_table.kwargs)}
         
-        result = compare_starrocks_table(autogen_context, conn_table, meta_table)
+        upgrade_ops = UpgradeOps([])
+        compare_starrocks_table(
+            autogen_context, upgrade_ops, conn_table.schema, conn_table.name, conn_table, meta_table
+        )
+        result = upgrade_ops.ops
         assert len(result) == 0
 
     def test_order_by_change(self):
@@ -1008,7 +1135,11 @@ class TestOrderByChanges:
         )
         meta_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(meta_table.kwargs)}
         
-        result = compare_starrocks_table(autogen_context, conn_table, meta_table)
+        upgrade_ops = UpgradeOps([])
+        compare_starrocks_table(
+            autogen_context, upgrade_ops, conn_table.schema, conn_table.name, conn_table, meta_table
+        )
+        result = upgrade_ops.ops
         assert len(result) == 1
         from starrocks.alembic.ops import AlterTableOrderOp
         assert isinstance(result[0], AlterTableOrderOp)
@@ -1043,7 +1174,34 @@ class TestOrderByChanges:
         )
         meta_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(meta_table.kwargs)}
 
-        result = compare_starrocks_table(autogen_context, conn_table, meta_table)
+        upgrade_ops = UpgradeOps([])
+        compare_starrocks_table(
+            autogen_context, upgrade_ops, conn_table.schema, conn_table.name, conn_table, meta_table
+        )
+        result = upgrade_ops.ops
+        assert len(result) == 0
+
+    def test_order_by_none_to_none(self):
+        """Test ORDER_BY from None to None (no change)."""
+        autogen_context = Mock(spec=AutogenContext)
+        autogen_context.dialect.name = DialectName
+
+        conn_table = Mock()  # No ORDER_BY explicitly set in database
+        type(conn_table).name = PropertyMock(return_value="test_table")
+        type(conn_table).schema = PropertyMock(return_value="test_db")
+        conn_table.kwargs = {TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(id)"}
+        conn_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(conn_table.kwargs)}
+        
+        meta_table = Mock(  # No ORDER_BY specified in metadata
+            kwargs={TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(id)"}
+        )
+        meta_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(meta_table.kwargs)}
+        
+        upgrade_ops = UpgradeOps([])
+        compare_starrocks_table(
+            autogen_context, upgrade_ops, conn_table.schema, conn_table.name, conn_table, meta_table
+        )
+        result = upgrade_ops.ops
         assert len(result) == 0
 
 
@@ -1066,7 +1224,11 @@ class TestPropertiesChanges:
 
         # Our `_compare_properties` detects this as a change because metadata *explicitly* provides a value
         # even if it's the default. This is consistent with explicit metadata definitions.
-        result = compare_starrocks_table(autogen_context, conn_table, meta_table)
+        upgrade_ops = UpgradeOps([])
+        compare_starrocks_table(
+            autogen_context, upgrade_ops, "test_table", "test_db", conn_table, meta_table
+        )
+        result = upgrade_ops.ops
         assert len(result) == 1
         from starrocks.alembic.ops import AlterTablePropertiesOp
         assert isinstance(result[0], AlterTablePropertiesOp)
@@ -1086,7 +1248,11 @@ class TestPropertiesChanges:
         meta_table = Mock(kwargs={TableInfoKeyWithPrefix.PROPERTIES: {prop_key: non_default_value}})
         meta_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(meta_table.kwargs)}
 
-        result = compare_starrocks_table(autogen_context, conn_table, meta_table)
+        upgrade_ops = UpgradeOps([])
+        compare_starrocks_table(
+            autogen_context, upgrade_ops, "test_table", "test_db", conn_table, meta_table
+        )
+        result = upgrade_ops.ops
         assert len(result) == 1
         from starrocks.alembic.ops import AlterTablePropertiesOp
         assert isinstance(result[0], AlterTablePropertiesOp)
@@ -1106,7 +1272,11 @@ class TestPropertiesChanges:
         meta_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(meta_table.kwargs)}
 
         # If DB has default value and metadata has no value, it's considered no change
-        result = compare_starrocks_table(autogen_context, conn_table, meta_table)
+        upgrade_ops = UpgradeOps([])
+        compare_starrocks_table(
+            autogen_context, upgrade_ops, "test_table", "test_db", conn_table, meta_table
+        )
+        result = upgrade_ops.ops
         assert len(result) == 0
     
     @pytest.mark.parametrize("prop_key, default_value, non_default_value", [
@@ -1124,7 +1294,11 @@ class TestPropertiesChanges:
         meta_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(meta_table.kwargs)}
 
         # If DB has default value and metadata has no value, it's considered no change
-        result = compare_starrocks_table(autogen_context, conn_table, meta_table)
+        upgrade_ops = UpgradeOps([])
+        compare_starrocks_table(
+            autogen_context, upgrade_ops, "test_table", "test_db", conn_table, meta_table
+        )
+        result = upgrade_ops.ops
         assert len(result) == 0
         assert LOG_NO_DEFAULT_VALUE in caplog.text
         assert LOG_NO_ALERT_AUTO_GENERATED in caplog.text
@@ -1145,7 +1319,11 @@ class TestPropertiesChanges:
         meta_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(meta_table.kwargs)}
 
         # Should generate an ALTER to effectively reset to default (meta_properties will include the default for this prop)
-        result = compare_starrocks_table(autogen_context, conn_table, meta_table)
+        upgrade_ops = UpgradeOps([])
+        compare_starrocks_table(
+            autogen_context, upgrade_ops, "test_table", "test_db", conn_table, meta_table
+        )
+        result = upgrade_ops.ops
         assert len(result) == 1
         from starrocks.alembic.ops import AlterTablePropertiesOp
         assert isinstance(result[0], AlterTablePropertiesOp)
@@ -1167,7 +1345,11 @@ class TestPropertiesChanges:
         meta_table = Mock(kwargs={TableInfoKeyWithPrefix.PROPERTIES: {prop_key: value2}})  # Metadata has value2
         meta_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(meta_table.kwargs)}
 
-        result = compare_starrocks_table(autogen_context, conn_table, meta_table)
+        upgrade_ops = UpgradeOps([])
+        compare_starrocks_table(
+            autogen_context, upgrade_ops, "test_table", "test_db", conn_table, meta_table
+        )
+        result = upgrade_ops.ops
         assert len(result) == 1
         from starrocks.alembic.ops import AlterTablePropertiesOp
         assert isinstance(result[0], AlterTablePropertiesOp)
@@ -1187,7 +1369,11 @@ class TestPropertiesChanges:
         meta_table = Mock(kwargs={TableInfoKeyWithPrefix.PROPERTIES: {prop_key: value}})  # Metadata has same value
         meta_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(meta_table.kwargs)}
 
-        result = compare_starrocks_table(autogen_context, conn_table, meta_table)
+        upgrade_ops = UpgradeOps([])
+        compare_starrocks_table(
+            autogen_context, upgrade_ops, "test_table", "test_db", conn_table, meta_table
+        )
+        result = upgrade_ops.ops
         assert len(result) == 0
 
     @pytest.mark.parametrize("conn_props, meta_props", [
@@ -1205,7 +1391,11 @@ class TestPropertiesChanges:
         meta_table = Mock(kwargs={TableInfoKeyWithPrefix.PROPERTIES: meta_props})  # Metadata has same value
         meta_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(meta_table.kwargs)}
 
-        result = compare_starrocks_table(autogen_context, conn_table, meta_table)
+        upgrade_ops = UpgradeOps([])
+        compare_starrocks_table(
+            autogen_context, upgrade_ops, "test_table", "test_db", conn_table, meta_table
+        )
+        result = upgrade_ops.ops
         assert len(result) == 0
 
     def test_properties_none_to_none(self):
@@ -1218,7 +1408,11 @@ class TestPropertiesChanges:
         meta_table = Mock(kwargs={})  # No properties in metadata
         meta_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(meta_table.kwargs)}
 
-        result = compare_starrocks_table(autogen_context, conn_table, meta_table)
+        upgrade_ops = UpgradeOps([])
+        compare_starrocks_table(
+            autogen_context, upgrade_ops, "test_table", "test_db", conn_table, meta_table
+        )
+        result = upgrade_ops.ops
         assert len(result) == 0
 
     def test_properties_multiple_changes(self):
@@ -1234,7 +1428,11 @@ class TestPropertiesChanges:
         meta_table = Mock(kwargs={TableInfoKeyWithPrefix.PROPERTIES: meta_props})
         meta_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(meta_table.kwargs)}
 
-        result = compare_starrocks_table(autogen_context, conn_table, meta_table)
+        upgrade_ops = UpgradeOps([])
+        compare_starrocks_table(
+            autogen_context, upgrade_ops, "test_table", "test_db", conn_table, meta_table
+        )
+        result = upgrade_ops.ops
 
         assert len(result) == 1
         from starrocks.alembic.ops import AlterTablePropertiesOp
@@ -1284,7 +1482,11 @@ class TestORMTableObjects:
             schema='test_db'
         )
 
-        result = compare_starrocks_table(autogen_context, conn_table, meta_table)
+        upgrade_ops = UpgradeOps([])
+        compare_starrocks_table(
+            autogen_context, upgrade_ops, conn_table.schema, conn_table.name, conn_table, meta_table
+        )
+        result = upgrade_ops.ops
 
         assert len(result) == 3
         from starrocks.alembic.ops import AlterTableDistributionOp, AlterTableOrderOp, AlterTablePropertiesOp
@@ -1335,7 +1537,11 @@ class TestComplexScenarios:
         )
         meta_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(meta_table.kwargs)}
         
-        result = compare_starrocks_table(autogen_context, conn_table, meta_table)
+        upgrade_ops = UpgradeOps([])
+        compare_starrocks_table(
+            autogen_context, upgrade_ops, conn_table.schema, conn_table.name, conn_table, meta_table
+        )
+        result = upgrade_ops.ops
 
         # Should generate 3 operations (all detectable changes, excluding ENGINE and PARTITION_BY)
         assert len(result) == 3
@@ -1383,7 +1589,11 @@ class TestComplexScenarios:
         )
         meta_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(meta_table.kwargs)}
         
-        result = compare_starrocks_table(autogen_context, conn_table, meta_table)
+        upgrade_ops = UpgradeOps([])
+        compare_starrocks_table(
+            autogen_context, upgrade_ops, conn_table.schema, conn_table.name, conn_table, meta_table
+        )
+        result = upgrade_ops.ops
 
         # Should generate 2 operations (both supported)
         assert len(result) == 2
@@ -1402,7 +1612,11 @@ class TestComplexScenarios:
         conn_table = Mock()
         meta_table = Mock()
         
-        result = compare_starrocks_table(autogen_context, conn_table, meta_table)
+        upgrade_ops = UpgradeOps([])
+        compare_starrocks_table(
+            autogen_context, upgrade_ops, "test_schema", "test_table", conn_table, meta_table
+        )
+        result = upgrade_ops.ops
 
         # Should return empty list for non-StarRocks dialects
         assert len(result) == 0

@@ -30,7 +30,7 @@ def create_test_engine() -> Engine:
 
 
 @pytest.fixture(scope="class")
-def engine() -> Engine:
+def sr_engine() -> Engine:
     eng = create_test_engine()
     try:
         yield eng

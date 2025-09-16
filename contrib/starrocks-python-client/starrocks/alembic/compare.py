@@ -347,8 +347,13 @@ def compare_mv(
 # ==============================================================================
 @comparators_dispatch_for_starrocks("table")
 def compare_starrocks_table(
-        autogen_context: AutogenContext, conn_table: Table, metadata_table: Table
-) -> List[AlterTableOp]:
+    autogen_context: AutogenContext,
+    upgrade_ops: UpgradeOps,
+    schema: Optional[str],
+    table_name: str,
+    conn_table: Optional[Table],
+    metadata_table: Optional[Table],
+) -> None:
     """
     Compare StarRocks-specific table attributes and generate operations.
 
@@ -360,20 +365,28 @@ def compare_starrocks_table(
         conn_table: Table object in the database, already reflected from the database
         metadata_table: Table object in the metadata
 
-    Returns:
-        List of AlterTableOp
-
     Raises:
         NotImplementedError: If a change is detected that is not supported in StarRocks.
     """
+    # Handle table creation and deletion scenarios
+    if conn_table is None:
+        # Table exists in metadata but not in DB; this is a CREATE TABLE.
+        # Alembic handles CreateTableOp separately. Our comparator should do nothing.
+        logger.debug(f"compare_starrocks_table: conn_table is None for '{metadata_table.name}', skipping.")
+        return
+    if metadata_table is None:
+        # Table exists in DB but not in metadata; this is a DROP TABLE.
+        # Alembic handles DropTableOp separately. Our comparator should do nothing.
+        logger.debug(f"compare_starrocks_table: metadata_table is None for '{conn_table.name}', skipping.")
+        return
+
+
     # Get the system run_mode for proper default value comparison
     run_mode = autogen_context.dialect.run_mode
-    logger.debug(f"System run_mode for table comparison: {run_mode}")
+    logger.info(f"compare starrocks table. table: {table_name}, schema:{schema}, run_mode: {run_mode}")
     
     conn_table_attributes = CaseInsensitiveDict({k: v for k, v in conn_table.dialect_options[DialectName].items() if v is not None})
     meta_table_attributes = CaseInsensitiveDict({k: v for k, v in metadata_table.dialect_options[DialectName].items() if v is not None})    
-
-    ops_list = []
 
     logger.debug(
         "StarRocks-specific attributes comparison for table '%s': "
@@ -389,15 +402,15 @@ def compare_starrocks_table(
     # Order follows StarRocks CREATE TABLE grammar:
     #   engine -> key -> comment -> partition -> distribution -> order by -> properties
     table, schema = conn_table.name, conn_table.schema
-    _compare_engine(conn_table_attributes, meta_table_attributes, ops_list, table, schema)
-    _compare_key(conn_table_attributes, meta_table_attributes, ops_list, table, schema)
+    _compare_engine(conn_table_attributes, meta_table_attributes, upgrade_ops.ops, table, schema)
+    _compare_key(conn_table_attributes, meta_table_attributes, upgrade_ops.ops, table, schema)
     # Note: COMMENT comparison is handled by Alembic's built-in _compare_table_comment
-    _compare_partition(conn_table_attributes, meta_table_attributes, ops_list, table, schema)
-    _compare_distribution(conn_table_attributes, meta_table_attributes, ops_list, table, schema)
-    _compare_order_by(conn_table_attributes, meta_table_attributes, ops_list, table, schema)
-    _compare_properties(conn_table_attributes, meta_table_attributes, ops_list, table, schema, run_mode)
+    _compare_partition(conn_table_attributes, meta_table_attributes, upgrade_ops.ops, table, schema)
+    _compare_distribution(conn_table_attributes, meta_table_attributes, upgrade_ops.ops, table, schema)
+    _compare_order_by(conn_table_attributes, meta_table_attributes, upgrade_ops.ops, table, schema)
+    _compare_properties(conn_table_attributes, meta_table_attributes, upgrade_ops.ops, table, schema, run_mode)
 
-    return ops_list
+    return False  # Return False to indicate we didn't add any ops to the list directly
 
 
 def _compare_engine(

@@ -33,6 +33,7 @@ from starrocks.types import PartitionType
 from test import test_utils
 from test.conftest_sr import create_test_engine, test_default_schema
 from starrocks.alembic.compare import compare_starrocks_table
+from alembic.operations.ops import UpgradeOps
 
 logger = logging.getLogger(__name__)
 
@@ -147,7 +148,11 @@ class TestAlterTableIntegration:
 
                 # Compare
                 autogen_context = self._setup_autogen_context()
-                result: list = compare_starrocks_table(autogen_context, reflected_table, target_table)
+                upgrade_ops = UpgradeOps()
+                compare_starrocks_table(
+                    autogen_context, upgrade_ops, self.test_schema, table_name, reflected_table, target_table
+                )
+                result = upgrade_ops.ops
 
                 # Should detect distribution change
                 assert len(result) == 1
@@ -219,7 +224,11 @@ class TestAlterTableIntegration:
                 # Compare
                 AlterTableEnablement.PARTITION_BY = True  # Enable partition comparison
                 autogen_context = self._setup_autogen_context()
-                result: list = compare_starrocks_table(autogen_context, reflected_table, target_table)
+                upgrade_ops = UpgradeOps()
+                compare_starrocks_table(
+                    autogen_context, upgrade_ops, self.test_schema, table_name, reflected_table, target_table
+                )
+                result = upgrade_ops.ops
                 AlterTableEnablement.PARTITION_BY = False  # Disable back to default
 
                 # Should detect partition change
@@ -281,7 +290,11 @@ class TestAlterTableIntegration:
 
                 # Compare
                 autogen_context = self._setup_autogen_context()
-                result = compare_starrocks_table(autogen_context, reflected_table, target_table)
+                upgrade_ops = UpgradeOps()
+                compare_starrocks_table(
+                    autogen_context, upgrade_ops, self.test_schema, table_name, reflected_table, target_table
+                )
+                result = upgrade_ops.ops
 
                 # Should detect ORDER BY addition
                 assert len(result) == 1
@@ -357,7 +370,11 @@ class TestAlterTableIntegration:
 
                 # Compare and verify
                 autogen_context: Mock = self._setup_autogen_context()
-                result: list = compare_starrocks_table(autogen_context, reflected_table, target_table)
+                upgrade_ops = UpgradeOps()
+                compare_starrocks_table(
+                    autogen_context, upgrade_ops, self.test_schema, table_name, reflected_table, target_table
+                )
+                result = upgrade_ops.ops
 
                 # Debug: log operations generated
                 logger.info("=== OPERATIONS GENERATED ===")
@@ -434,7 +451,11 @@ class TestAlterTableIntegration:
 
                 # Compare
                 autogen_context = self._setup_autogen_context()
-                result: list = compare_starrocks_table(autogen_context, reflected_table, target_table)
+                upgrade_ops = UpgradeOps()
+                compare_starrocks_table(
+                    autogen_context, upgrade_ops, self.test_schema, table_name, reflected_table, target_table
+                )
+                result = upgrade_ops.ops
 
                 # Debug: log operations generated
                 logger.info("=== OPERATIONS GENERATED ===")
@@ -501,7 +522,11 @@ class TestAlterTableIntegration:
 
                 # Compare
                 autogen_context: Mock = self._setup_autogen_context()
-                result: list = compare_starrocks_table(autogen_context, reflected_table, target_table)
+                upgrade_ops = UpgradeOps()
+                compare_starrocks_table(
+                    autogen_context, upgrade_ops, self.test_schema, table_name, reflected_table, target_table
+                )
+                result = upgrade_ops.ops
 
                 # Should detect 3 changes
                 assert len(result) == 3
