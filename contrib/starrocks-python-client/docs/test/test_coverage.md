@@ -28,7 +28,18 @@ This is the core suite of integration tests, verifying that Alembic's `autogener
 - **`test_autogenerate_views.py`**: Covers `CREATE`, `DROP`, and `ALTER` operations for Views.
 - **`test_autogenerate_mvs.py`**: Covers `CREATE`, `DROP`, and `ALTER` operations for Materialized Views.
 
-## 4. Missing Coverage and Future Work
+## 4. Alembic `autogenerate` Rendering (`test/test_render.py`)
+
+This suite of unit tests verifies that Alembic operation objects (`Op`) are correctly ren
+ered into Python code for the migration scripts.
+
+- **Operations Covered**: `View` (Create, Drop, Alter), `Materialized View` (Create, Drop), and `Table` (Alter Properties, Distribution, Order By).
+- **Boundary Cases**:
+  - Optional arguments being `None` (e.g., `schema=None`).
+  - Empty collections (e.g., an empty `properties` dictionary).
+  - Correct string escaping for values containing special characters (e.g., quotes, backticks).
+
+## 5. Missing Coverage and Future Work
 
 The following features and scenarios are not yet covered by automated tests:
 

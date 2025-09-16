@@ -1,13 +1,18 @@
+from typing import Final
 from .types import TableType, TableModel
 
 
-DialectName: str = 'starrocks'
-SRKwargsPrefix = 'starrocks_'
+DialectName: Final[str] = 'starrocks'
+"""Dialect name for StarRocks."""
+
+SRKwargsPrefix: Final[str] = 'starrocks_'
 """Prefix for StarRocks-specific kwargs."""
 
 
 class AlterTableEnablement:
-    """Enablement for ALTER TABLE operations."""
+    """Enablement for ALTER TABLE operations.
+    Only support the operations that are supported by StarRocks.
+    """
     ENGINE = False
     KEY = False
     TABLE_TYPE = KEY

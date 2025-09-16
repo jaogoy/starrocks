@@ -1,7 +1,7 @@
 # starrocks-python-client/starrocks/sql/schema.py
 from sqlalchemy.schema import SchemaItem
 from sqlalchemy.sql.elements import quoted_name
-from typing import Any, Optional, List, Dict, Union
+from typing import Any, Optional, List
 
 class View(SchemaItem):
     """Represents a View object in Python."""

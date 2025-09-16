@@ -163,7 +163,7 @@ sequenceDiagram
 
 ### 2.4 Alembic `ops` and `render` Flow
 
-**Goal**: To define custom Alembic operations and control how they are represented in migration scripts and rendered into SQL.
+**Goal**: To define custom Alembic operations and control how they are represented as Python code within migration scripts, or represendted as SQL by using `--sql`.
 
 **How-To**:
 
@@ -174,8 +174,7 @@ sequenceDiagram
 
 2.  **Render Operations (`render.py`)**:
     - Implement a function for each custom op, decorated with `@renderers.dispatch_for(CreateViewOp)`.
-    - This function tells Alembic how to generate the Python code (e.g., `op.create_view(...)`) in the migration script.
-    - This is also where we hook into the DDL Compiler to render the operation into SQL for `alembic upgrade --sql`.
+    - This function defines how Alembic generates the Python code (e.g., `op.create_view(...)`) that appears in the `upgrade()` and `downgrade()` methods of the migration script. The actual execution of these `op.*` functions during `alembic upgrade` will then trigger the DDL Compiler to generate and execute the corresponding SQL.
 
 - [Inspect](./inspect.md)
 - [Compare](./compare.md)
