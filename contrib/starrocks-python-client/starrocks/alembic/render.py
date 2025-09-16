@@ -1,3 +1,4 @@
+from typing import Final
 from alembic.autogenerate import renderers
 from .ops import (
     CreateViewOp, DropViewOp, CreateMaterializedViewOp, DropMaterializedViewOp, AlterViewOp,
@@ -7,6 +8,9 @@ from alembic.autogenerate.api import AutogenContext
 import logging
 
 logger = logging.getLogger("starrocks.alembic.render")
+
+
+op_param_indent: Final[str] = " " * 4
 
 
 def _quote_schema(schema: str) -> str:
@@ -21,7 +25,6 @@ def _alter_view(autogen_context: AutogenContext, op: AlterViewOp) -> str:
     """Render an AlterViewOp for autogenerate."""
     args = [
         f"{op.view_name!r}",
-        f"{op.definition!r}"
     ]
     if op.schema:
         args.append(f"schema={_quote_schema(op.schema)}")
@@ -29,6 +32,8 @@ def _alter_view(autogen_context: AutogenContext, op: AlterViewOp) -> str:
         args.append(f"comment={op.comment!r}")
     if op.security:
         args.append(f"security={op.security!r}")
+    
+    args.append(f"\n{op_param_indent}{op.definition!r}\n")
 
     call = f"op.alter_view({', '.join(args)})"
     logger.debug("render alter_view: %s", call)

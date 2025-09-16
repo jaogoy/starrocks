@@ -409,7 +409,7 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
         # opts: dict[str, Any] = self._extract_table_options(table)
         # And item with value being None should be removed, because the `defaults` has all the keys.
         opts = {k.upper(): v for k, v in table.dialect_options[DialectName].items() if v is not None}
-        logger.debug(f"table opts for table: {table.name}, schema: {table.schema}, opts: {opts}")
+        logger.debug(f"table opts for table: {table.name}, schema: {table.schema}, opts: {opts!r}")
 
         # ENGINE
         if engine := opts.get(TableInfoKey.ENGINE):
@@ -454,7 +454,7 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
             props = ",\n".join([f'{self.indent}"{k}"="{v}"' for k, v in props_items])
             table_opts.append(f"PROPERTIES(\n{props}\n)")
 
-        logger.debug(f"table opts for table: {table.name}, schema: {table.schema}, opts: {table_opts!r}")
+        logger.debug(f"table opts for table: {table.name}, schema: {table.schema}, processed opts: {table_opts!r}")
 
         return "\n".join(table_opts)
     

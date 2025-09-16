@@ -29,13 +29,25 @@ def create_test_engine() -> Engine:
     return engine
 
 
-@pytest.fixture(scope="class")
-def sr_engine() -> Engine:
+@pytest.fixture(scope="session")
+def sr_root_engine() -> Engine:
+    """A session-scoped engine that connects to the default 'test' database."""
     eng = create_test_engine()
     try:
         yield eng
     finally:
         eng.dispose()
+
+
+@pytest.fixture(scope="function")
+def sr_engine(sr_root_engine: Engine, database: str) -> Engine:
+    """A function-scoped engine that connects to the temporary test database."""
+    url = sr_root_engine.url.set(database=database)
+    engine = create_engine(url, pool_pre_ping=True)
+    try:
+        yield engine
+    finally:
+        engine.dispose()
 
 
 # Default for local runs; override via environment
