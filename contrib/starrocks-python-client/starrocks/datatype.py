@@ -13,29 +13,74 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import logging
 from typing import Optional, List, Any, Type, Dict, Callable
 from datetime import date
 
 from sqlalchemy.engine import Dialect
 from sqlalchemy.sql import sqltypes
 from sqlalchemy.sql.type_api import TypeEngine
-from sqlalchemy.sql.sqltypes import BOOLEAN, BINARY, VARBINARY
-from sqlalchemy.dialects.mysql.types import (
-    TINYINT, SMALLINT, INTEGER, BIGINT, DECIMAL, DOUBLE, FLOAT,
-    CHAR, VARCHAR, DATETIME
-)
-from sqlalchemy.dialects.mysql.json import JSON
+import sqlalchemy.dialects.mysql.types as mysql_types
 
-logger = logging.getLogger(__name__)
+
+class BOOLEAN(sqltypes.BOOLEAN):
+    __visit_name__ = "BOOLEAN"
+
+
+class TINYINT(mysql_types.TINYINT):
+    __visit_name__ = "TINYINT"
+
+
+class SMALLINT(mysql_types.SMALLINT):
+    __visit_name__ = "SMALLINT"
+
+
+class INTEGER(mysql_types.INTEGER):
+    __visit_name__ = "INTEGER"
+
+
+class BIGINT(mysql_types.BIGINT):
+    __visit_name__ = "BIGINT"
 
 
 class LARGEINT(sqltypes.Integer):
     __visit_name__ = "LARGEINT"
 
 
-class STRING(sqltypes.String):
+
+class DECIMAL(mysql_types.DECIMAL):
+    __visit_name__ = "DECIMAL"
+
+
+class DOUBLE(mysql_types.DOUBLE):
+    __visit_name__ = "DOUBLE"
+
+
+class FLOAT(mysql_types.FLOAT):
+    __visit_name__ = "FLOAT"
+
+
+class CHAR(mysql_types.CHAR):
+    __visit_name__ = "CHAR"
+
+
+class VARCHAR(mysql_types.VARCHAR):
+    __visit_name__ = "VARCHAR"
+
+
+class STRING(mysql_types.TEXT):
     __visit_name__ = "STRING"
+
+
+class BINARY(sqltypes.BINARY):
+    __visit_name__ = "BINARY"
+
+
+class VARBINARY(sqltypes.VARBINARY):
+    __visit_name__ = "VARBINARY"
+
+
+class DATETIME(mysql_types.DATETIME):
+    __visit_name__ = "DATETIME"
 
 
 class DATE(sqltypes.DATE):
@@ -86,3 +131,6 @@ class STRUCT(TypeEngine):
     @property
     def python_type(self) -> Optional[Type[Any]]:
         return None
+
+class JSON(sqltypes.JSON):
+    __visit_name__ = "JSON"

@@ -27,11 +27,12 @@ from sqlalchemy.engine.interfaces import ReflectedColumn
 from sqlalchemy.engine.reflection import Inspector
 
 from starrocks.defaults import ReflectionTableDefaults
+from starrocks.sql.types import KeyType
 
 from . import utils
 from .utils import SQLParseError
 
-from .params import ColumnAggInfoKeyWithPrefix, ColumnSROptionsKey, DialectName, SRKwargsPrefix, TableInfoKeyWithPrefix, TableInfoKey
+from .params import ColumnAggInfoKeyWithPrefix, SRKwargsPrefix, TableInfoKeyWithPrefix, TableInfoKey
 from .reflection_info import ReflectedState, ReflectedViewState, ReflectedDistributionInfo, ReflectedPartitionInfo
 from .types import PartitionType, TableModel, TableType, TableEngine
 from .consts import TableConfigKey
@@ -88,6 +89,7 @@ class StarRocksTableDefinitionParser(object):
     used here.
     """
 
+    _COLUMN_TYPE_PATTERN = re.compile(r"^(?P<type>\w+)(?:\s*\((?P<args>.*?)\))?\s*(?:(?P<attr>unsigned))?$")
     _BUCKETS_PATTERN = re.compile(r'\sBUCKETS\s+(\d+)', re.IGNORECASE)
     _BUCKETS_REPLACE_PATTERN = re.compile(r'\s+BUCKETS\s+\d+', re.IGNORECASE)
 
@@ -116,7 +118,7 @@ class StarRocksTableDefinitionParser(object):
         :param charset: The character set of the table.
         :return: A ReflectedState object containing the parsed table information.
         """
-        return ReflectedState(
+        reflected_table_info = ReflectedState(
             table_name=table.TABLE_NAME,
             columns=[
                 self._parse_column(column=column, 
@@ -133,6 +135,8 @@ class StarRocksTableDefinitionParser(object):
                 "name": None,
             }],
         )
+        logger.debug(f"reflected table state for table: {table.TABLE_NAME}, info: {reflected_table_info}")
+        return reflected_table_info
 
     def _parse_column(self, column: _DecodingRow, **kwargs: Any) -> dict:
         """
@@ -155,10 +159,12 @@ class StarRocksTableDefinitionParser(object):
             "name": column.COLUMN_NAME,
             "type": self._parse_column_type(column=column),
             "nullable": column.IS_NULLABLE == "YES",
-            "default": column.COLUMN_DEFAULT,
+            "default": column.COLUMN_DEFAULT or None,
             "autoincrement": None,  # TODO: This is not specified
-            "comment": column.COLUMN_COMMENT,
-            "dialect_options": kwargs
+            "comment": column.COLUMN_COMMENT or None,
+            "dialect_options": {
+                k: v for k, v in kwargs.items() if v is not None
+            }
         }
         if computed:
             col_info["computed"] = computed
@@ -170,12 +176,23 @@ class StarRocksTableDefinitionParser(object):
         It splits column type into type and arguments.
         After that it creates instance of column type.
         """
-        pattern = r"^(?P<type>\w+)(?:\s*\((?P<args>.*?)\))?$"
-        match = re.match(pattern, column.COLUMN_TYPE)
-        type_ = match.group("type")
-        args = match.group("args")
+        # logger.debug(f"parse column type for column: {column.COLUMN_NAME}, type: {column.COLUMN_TYPE}")
+        match = self._COLUMN_TYPE_PATTERN.match(column.COLUMN_TYPE)
+        if match:
+            type_ = match.group("type")
+            args = match.group("args")
+            attr = match.group("attr")
+        else:
+            logger.error(f"Failed to parse column type. column: '{column.COLUMN_NAME}', type: '{column.COLUMN_TYPE}'")
+            type_ = column.COLUMN_TYPE
+            args = None
+        # There is a problem about LARGEINT in SR, it's `bigint(20) unsigned` in information_schema.columns.
+        if type_ == "bigint" and attr == "unsigned":
+            type_ = "largeint"
+            logger.info(f"Treat 'bigint(20) unsigned' (in information_schema.columns) as 'LARGEINT' for column: '{column.COLUMN_NAME}', type: '{type_}'")
         try:
             col_type = self.dialect.ischema_names[type_]
+            # logger.debug(f"convert column type: '{type_}' to '{col_type}'")
         except KeyError:
             util.warn(
                 "Did not recognize type '%s' of column '%s'" % (type_, column.COLUMN_NAME)
@@ -218,8 +235,21 @@ class StarRocksTableDefinitionParser(object):
     def _get_key_type(self, table_config: dict[str, Any]) -> str:
         """
         Get key type from information_schema.tables_config table.
+        And return the MySQL's key type, as KeyType
         """
-        return TableModel.TO_TYPE_MAP.get(table_config.get(TableConfigKey.TABLE_MODEL), "")
+        # return TableModel.TO_TYPE_MAP.get(table_config.get(TableConfigKey.TABLE_MODEL), "")
+        TABLE_MODEL_TO_KEY_TYPE_MAP = {
+            TableModel.DUP_KEYS: KeyType.UNIQUE,
+            TableModel.DUP_KEYS2: KeyType.UNIQUE,
+            TableModel.AGG_KEYS: KeyType.UNIQUE,
+            TableModel.AGG_KEYS2: KeyType.UNIQUE,
+            TableModel.PRI_KEYS: KeyType.PRIMARY,
+            TableModel.PRI_KEYS2: KeyType.PRIMARY,
+            TableModel.UNQ_KEYS: KeyType.UNIQUE,
+            TableModel.UNQ_KEYS2: KeyType.UNIQUE,
+        }
+        return TABLE_MODEL_TO_KEY_TYPE_MAP.get(table_config.get(TableConfigKey.TABLE_MODEL), "").value
+
 
     def _get_key_columns(self, columns: list[_DecodingRow]) -> list[str]:
         """
@@ -232,7 +262,7 @@ class StarRocksTableDefinitionParser(object):
         return [c.COLUMN_NAME for c in sorted_columns if c.COLUMN_KEY]
 
     @staticmethod
-    def parse_partition_clause(partition_clause: str) -> ReflectedPartitionInfo | None:
+    def parse_partition_clause(partition_clause: str) -> Optional[ReflectedPartitionInfo]:
         """
         Parses a raw PARTITION BY clause string into a structured ReflectedPartitionInfo object.
 
@@ -336,11 +366,14 @@ class StarRocksTableDefinitionParser(object):
         Then, these options will be exactly the same as the options of a sqlalchemy.Table()
         which is created by users manually, for both sqlalchemy.Table() or ORM styles.
 
-        :param table: A row from `information_schema.tables`.
-        :param table_config: A dictionary representing a row from `information_schema.tables_config`,
+        Args:
+            table: A row from `information_schema.tables`.
+            table_config: A dictionary representing a row from `information_schema.tables_config`,
                              augmented with the 'PARTITION_CLAUSE'.
-        :param columns: A list of rows from `information_schema.columns`.
-        :return: A dictionary of StarRocks-specific table options with the 'starrocks_' prefix.
+            columns: A list of rows from `information_schema.columns`.
+
+        Returns:
+            A dictionary of StarRocks-specific table options with the 'starrocks_' prefix.
         """
         opts = {}
 

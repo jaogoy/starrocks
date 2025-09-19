@@ -54,9 +54,6 @@ Defines the table's type (key) and the columns that constitute the key. You must
 
 - **`starrocks_PRIMARY_KEY`**
 
-  > - You **can't** specify the Primary Key type in a column, such as `Column('id', Integer, primary_key=True)`, which is not supported for StarRocks.
-  > - You **can't** specify the Primary Key type by using `PrimaryKeyConstraint` either.
-
   - **Description**: Defines a Primary Key type table. Data is sorted by the primary key, and each row is unique.
   - **Type**: `str` (comma-separated column names)
   - **Example**: `starrocks_PRIMARY_KEY="user_id, event_date"`
@@ -77,6 +74,8 @@ Defines the table's type (key) and the columns that constitute the key. You must
   - **Description**: Defines a Unique Key type table, where all rows are unique. It functions like a primary key but with a different underlying implementation strategy. You could use it only when Primary Key type can't satisfy you.
   - **Type**: `str` (comma-separated column names)
   - **Example**: `starrocks_UNIQUE_KEY="device_id"`
+
+> Although you **CAN'T** specify the Primary Key type in Columns, such as `Column('id', Integer, primary_key=True)`, or by using `PrimaryKeyConstraint`, You still need to specify it as the SQLAlchemy's stardard primary key declaration, either via Columns or `PrimaryKeyConstraint`, to prevent errors.
 
 ##### 3. `COMMENT`
 
@@ -125,17 +124,25 @@ A dictionary of additional table properties.
   }
   ```
 
-### Column-Level Properties (`starrocks_*` Prefixes)
+### Column Attributes
+
+#### Column Data Types
+
+You should use StarRocks's data types to declare a `Column`.
+All the data types are: `TINYINT`, `SMALLINT`, `INT`, `BIGINT`, `LARGEINT`, `FLOAT`, `DOUBLE`, `DECIMAL`, `BOOLEAN`, `CHAR`, `VARCHAR`, `STRING`, `BINARY`, `VARBINARY`, `DATE`, `DATETIME`, `ARRAY`, `JSON`, `MAP`, `STRUCT`, `BITMAP`, `HLL`, in `starrocks.datatype`.
+
+
+#### Column-Level Properties (`starrocks_*` Prefixes)
 
 For `AGGREGATE KEY` tables, you can specify properties for each column by passing a `starrocks_` prefixed keyword argument directly to the `Column` constructor.
 
-#### Available Column-Level Options
+##### Available Column-Level Options
 
 - **`starrocks_agg_type`**: A string specifying the aggregate type for a value column. Supported values are:
   - `'SUM'`, `'REPLACE'`, `'REPLACE_IF_NOT_NULL'`, `'MAX'`, `'MIN'`, `'HLL_UNION'`, `'BITMAP_UNION'`
 - **`starrocks_is_agg_key`**: A boolean that can be set to `True` to explicitly mark a column as a key in an `AGGREGATE KEY` table. This is optional but improves clarity.
 
-#### Notes on ALTER TABLE ADD/MODIFY COLUMN
+##### Notes on ALTER TABLE ADD/MODIFY COLUMN
 
 - When creating, adding or modifying columns on an `AGGREGATE KEY` table, StarRocks requires that each column’s role be explicit:
   - Key columns can be marked with `starrocks_is_agg_key=True`.

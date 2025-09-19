@@ -1,9 +1,11 @@
+import logging
 from logging.config import fileConfig
 
 from sqlalchemy import engine_from_config
 from sqlalchemy import pool
 
 from alembic import context
+from sqlalchemy.types import TypeEngine
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
@@ -26,6 +28,26 @@ target_metadata = context.config.attributes.get("target_metadata", None)
 # ... etc.
 
 
+logger = logging.getLogger(__name__)
+
+def my_render_item(type_, obj, autogen_context):
+    """
+    自定义渲染函数。
+    """
+    # 检查我们正在渲染的对象是否是我们自定义模块中的类型
+    # logger.debug(f"rendering item: {obj}, type: {type_}, module: {obj.__class__.__module__}")
+    if isinstance(obj, TypeEngine) and obj.__class__.__module__.startswith('starrocks.datatype'):
+        # 添加我们需要的导入
+        autogen_context.imports.add("import starrocks.datatype as sr")
+        # 返回我们想要的字符串表示形式
+        # obj.__class__.__name__ 会得到 'INTEGER', 'VARCHAR' 等
+        # repr(obj) 会包含参数，例如 'VARCHAR(255)'
+        return f"sr.{repr(obj)}"
+
+    # 对于其他所有类型的对象，返回 False，让 Alembic 使用默认的渲染逻辑
+    return False
+
+
 def run_migrations_offline() -> None:
     """Run migrations in 'offline' mode.
 
@@ -44,6 +66,7 @@ def run_migrations_offline() -> None:
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
+        user_module_prefix={'starrocks.datatype.': 'sr.'},
     )
 
     with context.begin_transaction():
@@ -74,6 +97,8 @@ def run_migrations_online() -> None:
             connection=connection,
             target_metadata=target_metadata,
             version_table_kwargs=version_table_kwargs,
+            # user_module_prefix={'starrocks.datatype.': 'sr.'},
+            render_item=my_render_item,
         )
 
         with context.begin_transaction():

@@ -15,9 +15,9 @@
 import re
 from textwrap import dedent
 import logging
-from typing import Any, Dict, Final, Optional, List
+from typing import Any, Dict, Final, Optional, List, Set
 
-from alembic.ddl.base import format_table_name
+from alembic.ddl.base import format_column_name, format_table_name
 from sqlalchemy import Column, Connection, Table, exc, schema as sa_schema, util, log, text, Row
 
 from sqlalchemy.dialects.mysql.pymysql import MySQLDialect_pymysql
@@ -30,20 +30,20 @@ from sqlalchemy.dialects.mysql.base import (
     _DecodingRow,
 )
 from sqlalchemy.orm import properties
-from sqlalchemy.sql import sqltypes
+from sqlalchemy.sql import quoted_name, sqltypes
 from sqlalchemy.sql.expression import Delete, Select
 from sqlalchemy.engine import reflection
-from sqlalchemy.dialects.mysql.types import (
-    TINYINT, SMALLINT, INTEGER, BIGINT, DECIMAL, DOUBLE, FLOAT, CHAR, VARCHAR, DATETIME
-)
-from sqlalchemy.dialects.mysql.json import JSON
 
 from starrocks.types import ColumnAggType, SystemRunMode, TableType
 from starrocks.utils import CaseInsensitiveDict, TableAttributeNormalizer
 
 from .datatype import (
-    LARGEINT, HLL, BITMAP, PERCENTILE, ARRAY, MAP, STRUCT,
-    DATE, STRING, logger
+    TINYINT, SMALLINT, INTEGER, BIGINT, LARGEINT, BOOLEAN,
+    DECIMAL, DOUBLE, FLOAT,
+    DATETIME, DATE,
+    CHAR, VARCHAR, STRING, BINARY, VARBINARY,
+    HLL, BITMAP, PERCENTILE, 
+    ARRAY, MAP, STRUCT, JSON
 )
 from . import reflection as _reflection
 from .sql.ddl import (
@@ -91,7 +91,7 @@ logger = logging.getLogger(__name__)
 # starrocks supported data types
 ischema_names = {
     # === Boolean ===
-    "boolean": sqltypes.BOOLEAN,
+    "boolean": BOOLEAN,
     # === Integer ===
     "tinyint": TINYINT,
     "smallint": SMALLINT,
@@ -114,10 +114,10 @@ ischema_names = {
     # === Date and time ===
     "date": DATE,
     "datetime": DATETIME,
-    "timestamp": sqltypes.DATETIME,
+    "timestamp": DATETIME,
     # == binary ==
-    "binary": sqltypes.BINARY,
-    "varbinary": sqltypes.VARBINARY,
+    "binary": BINARY,
+    "varbinary": VARBINARY,
     # === Structural ===
     "array": ARRAY,
     "map": MAP,
@@ -152,7 +152,8 @@ class StarRocksTypeCompiler(MySQLTypeCompiler):
         return "LARGEINT"
 
     def visit_STRING(self, type_, **kw):
-        return "STRING"
+        # return "STRING"
+        return "VARCHAR(65533)"
 
     def visit_BINARY(self, type_, **kw):
         return "BINARY"
@@ -250,25 +251,16 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
 
         column_text_list = list()
         # if only one primary key, specify it along with the column
-        first_pk = False
+        primary_keys: List[str] = list()
         for create_column in create.columns:
             column = create_column.element
-            if column.primary_key:
-                logger.warning(
-                    "Column '%s' in table '%s' has primary_key=True, which is not supported by the StarRocks dialect "
-                    "and will be ignored. Please define the primary key on the Table object using the "
-                    f"'{TableInfoKeyWithPrefix.PRIMARY_KEY}' keyword argument.",
-                    column.name,
-                    self._get_simple_full_table_name(table.name, table.schema),
-                )
             try:
-                # TODO: what's the usage of first_pk?
-                processed = self.process(create_column, first_pk=column.primary_key and not first_pk)
+                processed = self.process(create_column)
                 # logger.debug(f"column desc for column: {column.name} is '{processed}'")
                 if processed is not None:
                     column_text_list.append(processed)
                 if column.primary_key:
-                    first_pk = True
+                    primary_keys.append(column.name)
             except exc.CompileError as ce:
                 raise exc.CompileError(
                     "(in table '%s', column '%s'): %s"
@@ -285,7 +277,7 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
         # if const:
         #     text += separator + self.indent + const
 
-        text += "\n)\n%s\n" % self.post_create_table(table, **kw)
+        text += "\n)\n%s\n" % self.post_create_table(table, primary_keys=primary_keys, **kw)
         logger.debug(f"create table text for table: {table.name}, schema: {table.schema}, text: {text}")
 
         return text
@@ -398,6 +390,8 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
 
         Args:
             table: The `sqlalchemy.schema.Table` object being compiled.
+            **kw: Additional keyword arguments from the compiler.
+                primary_keys: The list of primary key column names. We need to check it with a talbe's KEY attribute.
 
         Returns:
             A string containing all the compiled table-level DDL clauses.
@@ -416,7 +410,8 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
             table_opts.append(f'ENGINE={engine}')
 
         # Key / Table Type (Primary key, Duplicate key, Aggregate key, Unique key)
-        if key_desc := self._get_create_table_key_desc(opts):
+        primary_keys = kw.get("primary_keys", [])
+        if key_desc := self._get_create_table_key_desc(primary_keys, opts):
             table_opts.append(key_desc)
 
         # Comment
@@ -474,20 +469,37 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
 
         return opts
 
-    def _get_create_table_key_desc(self, opts: dict[str, Any]) -> str:
-        """Visit create table key."""
+    def _get_create_table_key_desc(self, primary_keys: List[str], opts: dict[str, Any]) -> Optional[str]:
+        """Visit create table key description.
+        Args:
+            primary_keys: The list of primary key column names. We need to check it with a talbe's KEY attribute.
+            opts: The table options.
+
+        Returns:
+            The table key description. like "PRIMARY KEY (id, name)"
+        """
         # Key / Table Type (Primary key, Duplicate key, Aggregate key, Unique key)
-        once = False  # only one key type is allowed
-        key_desc = ""
+        key_type = None
+        key_desc = None
         for tbl_type_key_str, table_type in TableInfoKey.KEY_KWARG_MAP.items():
             kwarg_upper = tbl_type_key_str.upper()
             if kwarg_upper in opts:
-                if once:
-                    raise exc.CompileError(f"Multiple key types found: {tbl_type_key_str}")
-                once = True
-                key_columns = TableAttributeNormalizer.remove_outer_parentheses(opts[kwarg_upper])
-                key_desc = f"{table_type} ({key_columns})"
+                if key_type:
+                    raise exc.CompileError(f"Multiple key types found: {tbl_type_key_str}, first_key_type: {key_type}")
+                key_type = table_type
+                key_columns_str: str = TableAttributeNormalizer.remove_outer_parentheses(opts[kwarg_upper])
+                logger.debug(f"get table key info: key_type: {key_type}, key_columns: {key_columns_str}")
+                # check if the key columns are valid
+                if primary_keys:
+                    key_columns_set = set(k.strip().strip('`') for k in key_columns_str.split(','))
+                    primary_keys_set = set(k.strip().strip('`') for k in primary_keys)
+                    logger.debug(f"check constraint keys. primary_key_set: {primary_keys}, key_columns_set: [{key_columns_str}]")
+                    if primary_keys_set != key_columns_set:
+                        raise exc.CompileError(f"Primary key columns doesn't equal to the table KEY columns. "
+                                            f"primary_keys: {primary_keys}, SR's key_columns: ({key_columns_str})")
+                key_desc = f"{key_type} ({key_columns_str})"
         return key_desc
+
 
     def _has_column_info_key(self, column: sa_schema.Column, key: str) -> bool:
         """Check if column has a specific info key (case-insensitive)."""
@@ -649,18 +661,6 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
             generated.sqltext, include_table=False, literal_binds=True
         )
         return text
-
-    def visit_primary_key_constraint(self, constraint: sa_schema.PrimaryKeyConstraint, **kw: Any) -> str:
-        if len(constraint) == 0:
-            return ""
-
-        logger.warning(
-            "PrimaryKeyConstraint detected for table '%s'. This is not supported by the StarRocks dialect "
-            "and will be ignored. Please define the primary key on the Table object using the "
-            "'starrocks_PRIMARY_KEY' keyword argument.",
-            self._get_simple_full_table_name(constraint.table.name, constraint.table.schema)
-        )
-        return ""
 
     def visit_set_table_comment(self, create: sa_schema.SetTableComment, **kw: Any) -> str:
         return "ALTER TABLE %s COMMENT=%s" % (
@@ -1110,7 +1110,7 @@ class StarRocksDialect(MySQLDialect_pymysql):
 
         indexes: list[dict[str, Any]] = []
 
-        # TODO: what's the purpose here?
+        # TODO: same logic as MySQL?
         for spec in parsed_state.keys:
             
             dialect_options: dict[str, Any] = {}
