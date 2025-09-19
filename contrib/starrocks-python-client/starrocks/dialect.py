@@ -801,7 +801,12 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
         return f"ALTER TABLE {table_name} ORDER BY {alter.order_by}"
 
     def visit_alter_table_properties(self, alter: AlterTableProperties, **kw: Any) -> str:
-        """Compile ALTER TABLE SET (...) DDL for StarRocks."""
+        """Compile ALTER TABLE SET (...) DDL for StarRocks.
+
+        Note:
+            Currently, SR only support one property in an ALTER TABLE SET statement.
+            So, we will generate multiple ALTER TABLE SET statements if there are multiple properties.
+        """
         table_name = format_table_name(self, alter.table_name, alter.schema)
         # logger.debug(f"ALTER TABLE '{table_name}' SET ({alter.properties})")
         
@@ -809,8 +814,9 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
         def escape_value(value: str) -> str:
             return value.replace('"', '\\"')
         
-        properties_str = ", ".join([f'"{k}" = "{escape_value(v)}"' for k, v in alter.properties.items()])
-        return f"ALTER TABLE {table_name} SET ({properties_str})"
+        multi_set_statement = "; ".join([f'ALTER TABLE {table_name} SET ("{k}" = "{escape_value(v)}")' for k, v in alter.properties.items()])
+        logger.debug(f"Compiled SQL for AlterTableProperties: \n{multi_set_statement}")
+        return multi_set_statement
 
 
 class StarRocksIdentifierPreparer(MySQLIdentifierPreparer):

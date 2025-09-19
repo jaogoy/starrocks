@@ -1,3 +1,4 @@
+from __future__ import annotations
 import logging
 from typing import Optional
 
@@ -216,6 +217,8 @@ class DropMaterializedViewOp(ops.MigrateOperation):
         raise NotImplementedError("Cannot reverse a DropMaterializedViewOp without the view's definition and properties.")
 
 
+# Implementation functions for alter_table_xxx, ordered:
+# view → mv, alter → create → drop
 @Operations.implementation_for(AlterViewOp)
 def alter_view(operations: Operations, op: AlterViewOp):
     """Execute an ALTER VIEW statement."""
@@ -251,32 +254,6 @@ def drop_view(operations: Operations, op: DropViewOp) -> None:
     operations.execute(DropView(View(op.view_name, None, schema=op.schema)))
 
 
-@Operations.register_operation("alter_table_properties")
-class AlterTablePropertiesOp(ops.AlterTableOp):
-    """Represent an ALTER TABLE SET (...) operation for StarRocks properties."""
-
-    def __init__(
-        self,
-        table_name: str,
-        properties: dict[str, str],
-        schema: Optional[str] = None,
-    ):
-        super().__init__(table_name, schema=schema)
-        self.properties = properties
-
-    @classmethod
-    def alter_table_properties(
-        cls,
-        operations: Operations,
-        table_name: str,
-        properties: dict,
-        schema: Optional[str] = None,
-    ):
-        """Invoke an ALTER TABLE SET (...) operation for StarRocks properties."""
-        op = cls(table_name, properties, schema=schema)
-        return operations.invoke(op)
-
-
 @Operations.implementation_for(CreateMaterializedViewOp)
 def create_materialized_view(operations: Operations, op: CreateMaterializedViewOp) -> None:
     """Implementation for the 'create_materialized_view' operation."""
@@ -308,9 +285,11 @@ class AlterTableEngineOp(ops.AlterTableOp):
         table_name: str,
         engine: str,
         schema: Optional[str] = None,
+        reverse_engine: Optional[str] = None,
     ):
         super().__init__(table_name, schema=schema)
         self.engine = engine
+        self.reverse_engine = reverse_engine
 
     @classmethod
     def alter_table_engine(
@@ -319,10 +298,21 @@ class AlterTableEngineOp(ops.AlterTableOp):
         table_name: str,
         engine: str,
         schema: Optional[str] = None,
+        reverse_engine: Optional[str] = None,
     ):
         """Invoke an ALTER TABLE ENGINE operation for StarRocks."""
-        op = cls(table_name, engine, schema=schema)
+        op = cls(table_name, engine, schema=schema, reverse_engine=reverse_engine)
         return operations.invoke(op)
+
+    def reverse(self) -> AlterTableEngineOp:
+        if self.reverse_engine is None:
+            raise NotImplementedError("Cannot reverse AlterTableEngineOp without reverse_engine")
+        return AlterTableEngineOp(
+            table_name=self.table_name,
+            engine=self.reverse_engine,
+            schema=self.schema,
+            reverse_engine=self.engine,
+        )
 
 
 @Operations.register_operation("alter_table_key")
@@ -335,10 +325,14 @@ class AlterTableKeyOp(ops.AlterTableOp):
         key_type: str,
         key_columns: str,
         schema: Optional[str] = None,
+        reverse_key_type: Optional[str] = None,
+        reverse_key_columns: Optional[str] = None,
     ):
         super().__init__(table_name, schema=schema)
         self.key_type = key_type
         self.key_columns = key_columns
+        self.reverse_key_type = reverse_key_type
+        self.reverse_key_columns = reverse_key_columns
 
     @classmethod
     def alter_table_key(
@@ -348,10 +342,31 @@ class AlterTableKeyOp(ops.AlterTableOp):
         key_type: str,
         key_columns: str,
         schema: Optional[str] = None,
+        reverse_key_type: Optional[str] = None,
+        reverse_key_columns: Optional[str] = None,
     ):
         """Invoke an ALTER TABLE KEY operation for StarRocks."""
-        op = cls(table_name, key_type, key_columns, schema=schema)
+        op = cls(
+            table_name,
+            key_type,
+            key_columns,
+            schema=schema,
+            reverse_key_type=reverse_key_type,
+            reverse_key_columns=reverse_key_columns,
+        )
         return operations.invoke(op)
+
+    def reverse(self) -> "AlterTableKeyOp":
+        if self.reverse_key_type is None or self.reverse_key_columns is None:
+            raise NotImplementedError("Cannot reverse AlterTableKeyOp without reverse_key_type and reverse_key_columns")
+        return AlterTableKeyOp(
+            table_name=self.table_name,
+            key_type=self.reverse_key_type,
+            key_columns=self.reverse_key_columns,
+            schema=self.schema,
+            reverse_key_type=self.key_type,
+            reverse_key_columns=self.key_columns,
+        )
 
 
 @Operations.register_operation("alter_table_partition")
@@ -363,6 +378,7 @@ class AlterTablePartitionOp(ops.AlterTableOp):
         table_name: str,
         partition_method: str,
         schema: Optional[str] = None,
+        reverse_partition_method: Optional[str] = None,
     ):
         """
         Invoke an ALTER TABLE PARTITION BY operation for StarRocks.
@@ -373,7 +389,8 @@ class AlterTablePartitionOp(ops.AlterTableOp):
         """
         super().__init__(table_name, schema=schema)
         self.partition_method = partition_method
-    
+        self.reverse_partition_method = reverse_partition_method
+
     @property
     def partition_by(self) -> str:
         """
@@ -382,7 +399,7 @@ class AlterTablePartitionOp(ops.AlterTableOp):
         Because pre-created partitions should be created with ALTER TABLE ADD PARTITION operation.
         """
         return self.partition_method
-        
+
     @classmethod
     def alter_table_partition(
         cls,
@@ -390,13 +407,24 @@ class AlterTablePartitionOp(ops.AlterTableOp):
         table_name: str,
         partition_method: str,
         schema: Optional[str] = None,
+        reverse_partition_method: Optional[str] = None,
     ):
         """
         Invoke an ALTER TABLE PARTITION BY operation for StarRocks.
         The same as __init__ method.
         """
-        op = cls(table_name, partition_method, schema=schema)
+        op = cls(table_name, partition_method, schema=schema, reverse_partition_method=reverse_partition_method)
         return operations.invoke(op)
+
+    def reverse(self) -> "AlterTablePartitionOp":
+        if self.reverse_partition_method is None:
+            raise NotImplementedError("Cannot reverse AlterTablePartitionOp without reverse_partition_method")
+        return AlterTablePartitionOp(
+            table_name=self.table_name,
+            partition_method=self.reverse_partition_method,
+            schema=self.schema,
+            reverse_partition_method=self.partition_method,
+        )
 
 
 @Operations.register_operation("alter_table_distribution")
@@ -409,6 +437,8 @@ class AlterTableDistributionOp(ops.AlterTableOp):
         distribution_method: str,
         buckets: Optional[int] = None,
         schema: Optional[str] = None,
+        reverse_distribution_method: Optional[str] = None,
+        reverse_buckets: Optional[int] = None,
     ):
         """Invoke an ALTER TABLE DISTRIBUTED BY operation for StarRocks.
         Args:
@@ -420,6 +450,8 @@ class AlterTableDistributionOp(ops.AlterTableOp):
         super().__init__(table_name, schema=schema)
         self.distribution_method = distribution_method
         self.buckets = buckets
+        self.reverse_distribution_method = reverse_distribution_method
+        self.reverse_buckets = reverse_buckets
 
     @property
     def distributed_by(self) -> str:
@@ -436,12 +468,33 @@ class AlterTableDistributionOp(ops.AlterTableOp):
         distribution_method: str,
         buckets: Optional[int] = None,
         schema: Optional[str] = None,
+        reverse_distribution_method: Optional[str] = None,
+        reverse_buckets: Optional[int] = None,
     ):
         """Invoke an ALTER TABLE DISTRIBUTED BY operation for StarRocks.
         The same as __init__ method.
         """
-        op = cls(table_name, distribution_method, buckets, schema=schema)
+        op = cls(
+            table_name,
+            distribution_method,
+            buckets,
+            schema=schema,
+            reverse_distribution_method=reverse_distribution_method,
+            reverse_buckets=reverse_buckets,
+        )
         return operations.invoke(op)
+
+    def reverse(self) -> "AlterTableDistributionOp":
+        if self.reverse_distribution_method is None:
+            raise NotImplementedError("Cannot reverse AlterTableDistributionOp without reverse_distribution_method")
+        return AlterTableDistributionOp(
+            table_name=self.table_name,
+            distribution_method=self.reverse_distribution_method,
+            buckets=self.reverse_buckets,
+            schema=self.schema,
+            reverse_distribution_method=self.distribution_method,
+            reverse_buckets=self.buckets,
+        )
 
 
 @Operations.register_operation("alter_table_order")
@@ -453,9 +506,11 @@ class AlterTableOrderOp(ops.AlterTableOp):
         table_name: str,
         order_by: str,
         schema: Optional[str] = None,
+        reverse_order_by: Optional[str] = None,
     ):
         super().__init__(table_name, schema=schema)
         self.order_by = order_by
+        self.reverse_order_by = reverse_order_by
 
     @classmethod
     def alter_table_order(
@@ -464,13 +519,64 @@ class AlterTableOrderOp(ops.AlterTableOp):
         table_name: str,
         order_by: str,
         schema: Optional[str] = None,
+        reverse_order_by: Optional[str] = None,
     ):
         """Invoke an ALTER TABLE ORDER BY operation for StarRocks."""
-        op = cls(table_name, order_by, schema=schema)
+        op = cls(table_name, order_by, schema=schema, reverse_order_by=reverse_order_by)
         return operations.invoke(op)
 
+    def reverse(self) -> "AlterTableOrderOp":
+        if self.reverse_order_by is None:
+            raise NotImplementedError("Cannot reverse AlterTableOrderOp without reverse_order_by")
+        return AlterTableOrderOp(
+            table_name=self.table_name,
+            order_by=self.reverse_order_by,
+            schema=self.schema,
+            reverse_order_by=self.order_by,
+        )
 
-# Implementation functions ordered according to StarRocks grammar:
+
+
+@Operations.register_operation("alter_table_properties")
+class AlterTablePropertiesOp(ops.AlterTableOp):
+    """Represent an ALTER TABLE SET (...) operation for StarRocks properties."""
+
+    def __init__(
+        self,
+        table_name: str,
+        properties: dict[str, str],
+        schema: Optional[str] = None,
+        reverse_properties: Optional[dict[str, str]] = None,
+    ):
+        super().__init__(table_name, schema=schema)
+        self.properties = properties
+        self.reverse_properties = reverse_properties
+
+    @classmethod
+    def alter_table_properties(
+        cls,
+        operations: Operations,
+        table_name: str,
+        properties: dict,
+        schema: Optional[str] = None,
+        reverse_properties: Optional[dict[str, str]] = None,
+    ):
+        """Invoke an ALTER TABLE SET (...) operation for StarRocks properties."""
+        op = cls(table_name, properties, schema=schema, reverse_properties=reverse_properties)
+        return operations.invoke(op)
+
+    def reverse(self) -> "AlterTablePropertiesOp":
+        if self.reverse_properties is None:
+            raise NotImplementedError("Cannot reverse AlterTablePropertiesOp without reverse_properties")
+        return AlterTablePropertiesOp(
+            table_name=self.table_name,
+            properties=self.reverse_properties,
+            schema=self.schema,
+            reverse_properties=self.properties,
+        )
+
+
+# Implementation functions for alter_table_xxx, ordered according to StarRocks grammar:
 # engine → key → (comment) → partition → distribution → order by → properties
 @Operations.implementation_for(AlterTableEngineOp)
 def alter_table_engine(operations, op: AlterTableEngineOp):

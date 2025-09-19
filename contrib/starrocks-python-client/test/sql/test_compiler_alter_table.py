@@ -64,7 +64,9 @@ class TestSQLGeneration:
             # Multiple properties
             (
                 {"replication_num": "3", "storage_medium": "SSD"},
-                'ALTER TABLE `test_table` SET ("replication_num" = "3", "storage_medium" = "SSD")'
+                # 'ALTER TABLE `test_table` SET ("replication_num" = "3", "storage_medium" = "SSD")'
+                'ALTER TABLE `test_table` SET ("replication_num" = "3"); '
+                'ALTER TABLE `test_table` SET ("storage_medium" = "SSD")'
             ),
             # Dynamic partition properties
             (
@@ -74,9 +76,10 @@ class TestSQLGeneration:
                     "dynamic_partition.start": "-7",
                     "dynamic_partition.end": "3"
                 },
-                ('ALTER TABLE `test_table` SET ("dynamic_partition.enable" = "true", '
-                 '"dynamic_partition.time_unit" = "DAY", '
-                 '"dynamic_partition.start" = "-7", "dynamic_partition.end" = "3")')
+                ('ALTER TABLE `test_table` SET ("dynamic_partition.enable" = "true"); '
+                 'ALTER TABLE `test_table` SET ("dynamic_partition.time_unit" = "DAY"); '
+                 'ALTER TABLE `test_table` SET ("dynamic_partition.start" = "-7"); '
+                 'ALTER TABLE `test_table` SET ("dynamic_partition.end" = "3")')
             ),
             # Bloom filter properties
             (
@@ -377,7 +380,7 @@ class TestErrorCases:
             ddl = AlterTableProperties("test_table", {})
 
             result = self.compiler.visit_alter_table_properties(ddl)
-            expected = "ALTER TABLE `test_table` SET ()"
+            expected = ""
 
             assert result == expected
 

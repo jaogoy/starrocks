@@ -102,7 +102,7 @@ class TableAttributeNormalizer:
         return "".join(out)
 
     @staticmethod
-    def normalize_sql(sql_text: Optional[str]) -> str | None:
+    def normalize_sql(sql_text: Optional[str]) -> Optional[str]:
         """A normalizer for SQL text for diffing."""
         if not sql_text:
             return sql_text
@@ -112,11 +112,11 @@ class TableAttributeNormalizer:
         return sql_text
 
     @staticmethod
-    def normalize_engine(engine: str) -> str | None:
+    def normalize_engine(engine: str) -> Optional[str]:
         return TableAttributeNormalizer._simple_normalize(engine)
 
     @staticmethod
-    def normalize_key(key: str) -> str | None:
+    def normalize_key(key: str) -> Optional[str]:
         return TableAttributeNormalizer.normalize_column_identifiers(key)
 
     @staticmethod
@@ -124,7 +124,7 @@ class TableAttributeNormalizer:
         return value.upper().strip() if value else value
 
     @staticmethod
-    def normalize_partition_method(partition: Union[ReflectedPartitionInfo, str]) -> str:
+    def normalize_partition_method(partition: Union[ReflectedPartitionInfo, str]) -> Optional[str]:
         """Normalize partition string by removing backticks and extra spaces.
         Because there may be column names in this string, we don't simply lowercase it.
         If the partition is a ReflectedPartitionInfo object, return the partition_method only.
@@ -136,7 +136,7 @@ class TableAttributeNormalizer:
         )
 
     @staticmethod
-    def normalize_distribution_string(distribution: Union[ReflectedDistributionInfo, str]) -> str:
+    def normalize_distribution_string(distribution: Union[ReflectedDistributionInfo, str]) -> Optional[str]:
         """Normalize distribution string by removing backticks and extra spaces.
         Because there may be column names in this string, we don't simply lowercase it.
         If the distribution is a ReflectedDistributionInfo object, return the string representation only.
@@ -148,7 +148,7 @@ class TableAttributeNormalizer:
         )
 
     @staticmethod
-    def normalize_order_by_string(order_by: Union[str, List[str], None]) -> str | None:
+    def normalize_order_by_string(order_by: Union[str, List[str], None]) -> Optional[str]:
         """Normalize ORDER BY string by removing backticks and standardizing format.
         Because there may be column names in this string, we don't simply lowercase it.
         """
@@ -160,7 +160,7 @@ class TableAttributeNormalizer:
         return TableAttributeNormalizer.normalize_column_identifiers(order_by)
 
     @staticmethod
-    def normalize_column_identifiers(text: str) -> str | None:
+    def normalize_column_identifiers(text: str) -> Optional[str]:
         """Normalize column identifiers by removing backticks, standardizing spaces, and removing spaces inside parentheses.
         Because there may be column names in this string, we don't simply lowercase it.
         """

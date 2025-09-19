@@ -3,7 +3,7 @@ import logging
 import shutil
 import tempfile
 from pathlib import Path
-from typing import NamedTuple
+from typing import Generator, NamedTuple
 import uuid
 
 import pytest
@@ -61,6 +61,17 @@ class AlembicTestEnv(NamedTuple):
     root_path: Path
     alembic_cfg: Config
     harness: AlembicTestHarness
+
+
+@pytest.fixture(scope="function")
+def sr_engine(sr_root_engine: Engine, database: str) -> Engine:
+    """A function-scoped engine that connects to the temporary test database."""
+    url = sr_root_engine.url.set(database=database)
+    engine = create_engine(url, pool_pre_ping=True)
+    try:
+        yield engine
+    finally:
+        engine.dispose()
 
 
 @pytest.fixture
@@ -156,11 +167,12 @@ datefmt = %H:%M:%S
 
 
 @pytest.fixture(scope="function")
-def database(sr_root_engine: Engine):
+def database(sr_root_engine: Engine) -> Generator[str, None, None]:
     """
     Creates a new database for each test function and drops it afterwards.
     """
     db_name = f"test_db_{uuid.uuid4().hex}"
+    logger.info(f"Creating new test database: {db_name}")
     with sr_root_engine.connect() as conn:
         conn.execute(text(f"CREATE DATABASE {db_name}"))
         conn.commit()

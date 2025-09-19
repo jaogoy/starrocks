@@ -14,9 +14,10 @@ logger = logging.getLogger(__name__)
 
 
 class TestReflectionColumnsAggIntegration:
-    def test_reflect_aggregate_key_table(self, sr_engine: Engine):
+    def test_reflect_aggregate_key_table(self, sr_root_engine: Engine):
         table_name = "test_reflect_columns"
         metadata = MetaData()
+        sr_engine = sr_root_engine
 
         table = Table(
             table_name,

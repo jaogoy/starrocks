@@ -190,6 +190,13 @@ def compare_view(
     
     Check for changes in view definition, comment and security attributes.
     """
+    # currently, conn_view or metadata_view is not None.
+    if conn_view is None or metadata_view is None:
+        logger.warning(f"both conn_view and meta_view should not be None for compare_view: {schema}.{view_name}, "
+                       f"skipping. conn_view: {'not None' if conn_view else 'None'}, "
+                       f"meta_view: {'not None' if metadata_view else 'None'}")
+        return
+    
     conn_def_norm: Optional[str] = TableAttributeNormalizer.normalize_sql(conn_view.definition)
     metadata_def_norm: Optional[str] = TableAttributeNormalizer.normalize_sql(metadata_view.definition)
     definition_changed = conn_def_norm != metadata_def_norm
@@ -380,7 +387,7 @@ def compare_starrocks_table(
         logger.debug(f"compare_starrocks_table: metadata_table is None for '{conn_table.name}', skipping.")
         return
 
-
+    # logger.debug(f"compare_starrocks_table: conn_table: {conn_table!r}, metadata_table: {metadata_table!r}")
     # Get the system run_mode for proper default value comparison
     run_mode = autogen_context.dialect.run_mode
     logger.info(f"compare starrocks table. table: {table_name}, schema:{schema}, run_mode: {run_mode}")
@@ -402,20 +409,23 @@ def compare_starrocks_table(
     # Order follows StarRocks CREATE TABLE grammar:
     #   engine -> key -> comment -> partition -> distribution -> order by -> properties
     table, schema = conn_table.name, conn_table.schema
-    _compare_engine(conn_table_attributes, meta_table_attributes, upgrade_ops.ops, table, schema)
-    _compare_key(conn_table_attributes, meta_table_attributes, upgrade_ops.ops, table, schema)
+    _compare_table_engine(upgrade_ops.ops, schema, table, conn_table_attributes, meta_table_attributes)
+    _compare_table_key(upgrade_ops.ops, schema, table, conn_table_attributes, meta_table_attributes)
     # Note: COMMENT comparison is handled by Alembic's built-in _compare_table_comment
-    _compare_partition(conn_table_attributes, meta_table_attributes, upgrade_ops.ops, table, schema)
-    _compare_distribution(conn_table_attributes, meta_table_attributes, upgrade_ops.ops, table, schema)
-    _compare_order_by(conn_table_attributes, meta_table_attributes, upgrade_ops.ops, table, schema)
-    _compare_properties(conn_table_attributes, meta_table_attributes, upgrade_ops.ops, table, schema, run_mode)
+    _compare_table_partition(upgrade_ops.ops, schema, table, conn_table_attributes, meta_table_attributes)
+    _compare_table_distribution(upgrade_ops.ops, schema, table, conn_table_attributes, meta_table_attributes)
+    _compare_table_order_by(upgrade_ops.ops, schema, table, conn_table_attributes, meta_table_attributes)
+    _compare_table_properties(upgrade_ops.ops, schema, table, conn_table_attributes, meta_table_attributes, run_mode)
 
     return False  # Return False to indicate we didn't add any ops to the list directly
 
 
-def _compare_engine(
-    conn_table_attributes: Dict[str, Any], meta_table_attributes: Dict[str, Any],
-    ops_list: List[AlterTableOp], table_name: str, schema: Optional[str]
+def _compare_table_engine(
+    ops_list: List[AlterTableOp],
+    schema: Optional[str],
+    table_name: str,
+    conn_table_attributes: Dict[str, Any],
+    meta_table_attributes: Dict[str, Any]
 ) -> None:
     """Compare engine changes and add AlterTableEngineOp if needed.
 
@@ -426,9 +436,13 @@ def _compare_engine(
     conn_engine = conn_table_attributes.get(TableInfoKey.ENGINE)
     logger.debug(f"ENGINE. meta_engine: {meta_engine}, conn_engine: {conn_engine}")
 
-    normalized_meta = TableAttributeNormalizer.normalize_engine(meta_engine)
+    # if not meta_engine:
+    #     logger.error(f"Engine info should be specified in metadata to change for table {table_name} in schema {schema}.")
+    #     return
+
+    normalized_meta: Optional[str] = TableAttributeNormalizer.normalize_engine(meta_engine)
     # Reflected table must have a default ENGINE, so we need to normalize it
-    normalized_conn = ReflectionTableDefaults.normalize_engine(conn_engine)
+    normalized_conn: Optional[str] = ReflectionTableDefaults.normalize_engine(conn_engine)
 
     _compare_single_table_attribute(
         table_name,
@@ -441,23 +455,27 @@ def _compare_engine(
     )
 
 
-def _compare_key(
-    conn_table_attributes: Dict[str, Any], meta_table_attributes: Dict[str, Any],
-    ops_list: List[AlterTableOp], table_name: str, schema: Optional[str]
+def _compare_table_key(
+    ops_list: List[AlterTableOp], schema: Optional[str], table_name: str,
+    conn_table_attributes: Dict[str, Any], meta_table_attributes: Dict[str, Any]
 ) -> None:
     """Compare key changes and add AlterTableKeyOp if needed.
     
     Note: StarRocks does not support ALTER TABLE KEY, so this will raise an error
     if a change is detected.
     """
-    conn_key = _get_table_key_type(conn_table_attributes)
-    meta_key = _get_table_key_type(meta_table_attributes)
+    conn_key: Optional[str] = _get_table_key_type(conn_table_attributes)
+    meta_key: Optional[str] = _get_table_key_type(meta_table_attributes)
     logger.debug(f"KEY. conn_key: {conn_key}, meta_key: {meta_key}")
+
+    # if not meta_key:
+    #     logger.error(f"Key info should be specified in metadata to change for table {table_name} in schema {schema}.")
+    #     return
 
     # Reflected table must have a default KEY, so we need to normalize it
     # Actually, the conn key must not be None, because it is inspected from database.
-    normalized_conn = ReflectionTableDefaults.normalize_key(conn_key)
-    normalized_meta = TableAttributeNormalizer.normalize_key(meta_key)
+    normalized_conn: Optional[str] = ReflectionTableDefaults.normalize_key(conn_key)
+    normalized_meta: Optional[str] = TableAttributeNormalizer.normalize_key(meta_key)
 
     _compare_single_table_attribute(
         table_name,
@@ -470,7 +488,7 @@ def _compare_key(
         support_change=AlterTableEnablement.KEY
     )
 
-def _get_table_key_type(table_attributes: Dict[str, Any]) -> str:
+def _get_table_key_type(table_attributes: Dict[str, Any]) -> Optional[str]:
     """Get table key type. like 'PRIMARY KEY (id, name)'"""
     for key_type in TableInfoKey.KEY_KWARG_MAP:
         key_columns = table_attributes.get(key_type)
@@ -541,14 +559,18 @@ def _compare_partition_method(
     return conn_partition == default_partition
 
 
-def _compare_partition(
-    conn_table_attributes: Dict[str, Any], meta_table_attributes: Dict[str, Any],
-    ops_list: List[AlterTableOp], table_name: str, schema: Optional[str]
+def _compare_table_partition(
+    ops_list: List[AlterTableOp], schema: Optional[str], table_name: str,
+    conn_table_attributes: Dict[str, Any], meta_table_attributes: Dict[str, Any]
 ) -> None:
     """Compare partition changes and add AlterTablePartitionOp if needed."""
     conn_partition = conn_table_attributes.get(TableInfoKey.PARTITION_BY)
     meta_partition = meta_table_attributes.get(TableInfoKey.PARTITION_BY)
     logger.debug(f"PARTITION_BY. conn_partition: {conn_partition}, meta_partition: {meta_partition}")
+
+    # if not meta_partition:
+    #     logger.error(f"Partition info should be specified in metadata for table {table_name} in schema {schema}.")
+    #     return
 
     # Parse the partition info if it's a string
     if isinstance(conn_partition, str):
@@ -557,8 +579,8 @@ def _compare_partition(
         meta_partition = StarRocksTableDefinitionParser.parse_partition_clause(meta_partition)
 
     # Normalize the partition method, such as 'RANGE(dt)', 'LIST(dt, col2)', which is used to be compared.
-    normalized_conn = TableAttributeNormalizer.normalize_partition_method(conn_partition)
-    normalized_meta = TableAttributeNormalizer.normalize_partition_method(meta_partition)
+    normalized_conn: Optional[str] = TableAttributeNormalizer.normalize_partition_method(conn_partition)
+    normalized_meta: str = TableAttributeNormalizer.normalize_partition_method(meta_partition)
 
     if _compare_single_table_attribute(
         table_name,
@@ -580,9 +602,12 @@ def _compare_partition(
         )
 
 
-def _compare_distribution(
-    conn_table_attributes: Dict[str, Any], meta_table_attributes: Dict[str, Any],
-    ops_list: List[AlterTableOp], table_name: str, schema: Optional[str]
+def _compare_table_distribution(
+    ops_list: List[AlterTableOp],
+    schema: Optional[str],
+    table_name: str,
+    conn_table_attributes: Dict[str, Any],
+    meta_table_attributes: Dict[str, Any],
 ) -> None:
     """Compare distribution changes and add AlterTableDistributionOp if needed."""
     conn_distribution = conn_table_attributes.get(TableInfoKey.DISTRIBUTED_BY)
@@ -593,8 +618,8 @@ def _compare_distribution(
         meta_distribution = StarRocksTableDefinitionParser.parse_distribution(meta_distribution)
 
     # Normalize both strings for comparison (handles backticks)
-    normalized_conn = TableAttributeNormalizer.normalize_distribution_string(conn_distribution)
-    normalized_meta = TableAttributeNormalizer.normalize_distribution_string(meta_distribution)
+    normalized_conn: Optional[str] = TableAttributeNormalizer.normalize_distribution_string(conn_distribution)
+    normalized_meta: Optional[str] = TableAttributeNormalizer.normalize_distribution_string(meta_distribution)
     logger.debug(f"DISTRIBUTED_BY. normalized_conn: {normalized_conn}, normalized_meta: {normalized_meta}")
 
     # Use generic comparison logic with default distribution
@@ -615,21 +640,26 @@ def _compare_distribution(
                 meta_distribution.distribution_method,
                 meta_distribution.buckets,
                 schema=schema,
+                reverse_distribution_method=conn_distribution.distribution_method if conn_distribution else None,
+                reverse_buckets=conn_distribution.buckets if conn_distribution else None,
             )
         )
 
 
-def _compare_order_by(
-    conn_table_attributes: Dict[str, Any], meta_table_attributes: Dict[str, Any],
-    ops_list: List[AlterTableOp], table_name: str, schema: Optional[str]
+def _compare_table_order_by(
+    ops_list: List[AlterTableOp],
+    schema: Optional[str],
+    table_name: str,
+    conn_table_attributes: Dict[str, Any],
+    meta_table_attributes: Dict[str, Any],
 ) -> None:
     """Compare ORDER BY changes and add AlterTableOrderOp if needed."""
     conn_order = conn_table_attributes.get(TableInfoKey.ORDER_BY)
     meta_order = meta_table_attributes.get(TableInfoKey.ORDER_BY)
 
     # Normalize both for comparison (handles backticks and list vs string)
-    normalized_conn = TableAttributeNormalizer.normalize_order_by_string(conn_order) if conn_order else None
-    normalized_meta = TableAttributeNormalizer.normalize_order_by_string(meta_order) if meta_order else None
+    normalized_conn: Optional[str] = TableAttributeNormalizer.normalize_order_by_string(conn_order) if conn_order else None
+    normalized_meta: Optional[str] = TableAttributeNormalizer.normalize_order_by_string(meta_order) if meta_order else None
     logger.debug(f"ORDERY BY. normalized_conn: {normalized_conn}, normalized_meta: {normalized_meta}")
 
     # if ORDER BY is not set, we directly recoginize it as no change
@@ -652,13 +682,18 @@ def _compare_order_by(
                 table_name,
                 meta_order,  # Use original format
                 schema=schema,
+                reverse_order_by=conn_order if conn_order else None,
             )
         )
 
 
-def _compare_properties(
-    conn_table_attributes: Dict[str, Any], meta_table_attributes: Dict[str, Any],
-    ops_list: List[AlterTableOp], table_name: str, schema: Optional[str], run_mode: str
+def _compare_table_properties(
+    ops_list: List[AlterTableOp],
+    schema: Optional[str],
+    table_name: str,
+    conn_table_attributes: Dict[str, Any],
+    meta_table_attributes: Dict[str, Any],
+    run_mode: str
 ) -> None:
     """Compare properties changes and add AlterTablePropertiesOp if needed.
 
@@ -668,8 +703,8 @@ def _compare_properties(
     - The generated operation will set all properties defined in the metadata, effectively resetting
       any omitted, non-default properties back to their defaults in StarRocks.
     """
-    conn_properties = conn_table_attributes.get(TableInfoKey.PROPERTIES, {})
-    meta_properties = meta_table_attributes.get(TableInfoKey.PROPERTIES, {})
+    conn_properties: dict[str, str] = conn_table_attributes.get(TableInfoKey.PROPERTIES, {})
+    meta_properties: dict[str, str] = meta_table_attributes.get(TableInfoKey.PROPERTIES, {})
     logger.debug(f"PROPERTIES. conn_properties: {conn_properties}, meta_properties: {meta_properties}")
 
     normalized_conn = CaseInsensitiveDict(conn_properties)
@@ -733,6 +768,7 @@ def _compare_properties(
                 table_name,
                 normalized_meta,
                 schema=schema,
+                reverse_properties=normalized_conn,
             )
         )
 

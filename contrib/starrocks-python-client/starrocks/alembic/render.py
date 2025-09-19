@@ -26,14 +26,13 @@ def _alter_view(autogen_context: AutogenContext, op: AlterViewOp) -> str:
     args = [
         f"{op.view_name!r}",
     ]
+    args.append(f"\n{op_param_indent}{op.definition!r}\n")
     if op.schema:
         args.append(f"schema={_quote_schema(op.schema)}")
     if op.comment:
         args.append(f"comment={op.comment!r}")
     if op.security:
         args.append(f"security={op.security!r}")
-    
-    args.append(f"\n{op_param_indent}{op.definition!r}\n")
 
     call = f"op.alter_view({', '.join(args)})"
     logger.debug("render alter_view: %s", call)

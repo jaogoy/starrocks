@@ -1,3 +1,4 @@
+import logging
 import os
 from typing import Generator, Any
 
@@ -9,10 +10,11 @@ from alembic.runtime.migration import MigrationContext
 from sqlalchemy import Engine, create_engine, text, MetaData, inspect
 
 from starrocks.alembic.ops import CreateViewOp, AlterViewOp
-from starrocks.datatype import logger
 from starrocks.sql.schema import View
 from test import conftest_sr
 from test.test_utils import normalize_sql
+
+logger = logging.getLogger(__name__)
 
 
 class TestIntegrationViews:

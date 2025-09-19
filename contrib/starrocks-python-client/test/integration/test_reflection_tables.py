@@ -11,10 +11,11 @@ logger = logging.getLogger(__name__)
 class TestReflectionTablesIntegration:
     """Integration tests for StarRocks table reflection from information_schema."""
 
-    def test_reflect_table_options(self, sr_engine: Engine):
+    def test_reflect_table_options(self, sr_root_engine: Engine):
         """Test that `get_table_options` correctly reflects all StarRocks table options."""
         table_name = "test_reflect_table_options"
         metadata = MetaData()
+        sr_engine = sr_root_engine
 
         # Define a table with various StarRocks-specific options
         table = Table(

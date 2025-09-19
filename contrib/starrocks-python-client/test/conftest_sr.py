@@ -39,17 +39,6 @@ def sr_root_engine() -> Engine:
         eng.dispose()
 
 
-@pytest.fixture(scope="function")
-def sr_engine(sr_root_engine: Engine, database: str) -> Engine:
-    """A function-scoped engine that connects to the temporary test database."""
-    url = sr_root_engine.url.set(database=database)
-    engine = create_engine(url, pool_pre_ping=True)
-    try:
-        yield engine
-    finally:
-        engine.dispose()
-
-
 # Default for local runs; override via environment
 os.environ.setdefault("STARROCKS_URL", "starrocks://a:lj123456@127.0.0.1:9030/test")
 test_default_schema = "test"

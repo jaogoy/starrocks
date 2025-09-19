@@ -14,7 +14,10 @@ import re
 
 def _normalize_py_call(s: str) -> str:
     # strip whitespace and collapse multiple spaces, ignore line breaks
-    return re.sub(r"\s+", " ", s).strip()
+    s = re.sub(r"\s+", " ", s).strip()
+    s = re.sub(r" , ", ", ", s)
+    s = re.sub(r" \)", ")", s)
+    return s
 
 
 class TestViewRendering:
