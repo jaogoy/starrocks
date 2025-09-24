@@ -28,7 +28,7 @@ from unittest.mock import Mock
 from typing import Optional
 
 from starrocks.params import AlterTableEnablement, TableInfoKeyWithPrefix
-from starrocks.reflection_info import ReflectedPartitionInfo
+from starrocks.engine.interfaces import ReflectedPartitionInfo
 from starrocks.types import PartitionType
 from test import test_utils
 from test.conftest_sr import create_test_engine, test_default_schema
@@ -388,7 +388,7 @@ class TestAlterTableIntegration:
                 assert isinstance(op, AlterTablePropertiesOp)
                 assert op.table_name == table_name
                 assert op.schema == self.test_schema
-                assert op.properties == {"replication_num": "2", "storage_medium": "SSD"}
+                assert op.properties == {"default.replication_num": "2", "default.storage_medium": "SSD"}
 
             finally:
                 # Clean up
@@ -541,7 +541,7 @@ class TestAlterTableIntegration:
                 order_op: AlterTableOrderOp = result[1]
                 assert order_op.order_by == "id"
                 properties_op: AlterTablePropertiesOp = result[2]
-                assert properties_op.properties == {"replication_num": "2", "storage_medium": "SSD"}
+                assert properties_op.properties == {"default.replication_num": "2", "default.storage_medium": "SSD"}
 
             finally:
                 conn.exec_driver_sql(f"DROP TABLE IF EXISTS {self.test_schema}.{table_name}")

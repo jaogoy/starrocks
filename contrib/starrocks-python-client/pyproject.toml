@@ -1,0 +1,49 @@
+[tool.ruff]
+line-length = 120
+select = ["E", "F", "W"]   # PEP8 基本规则 (E,W)，F 是 pyflakes
+ignore = ["E501"]          # 忽略行过长 (如果想逐步改，可先忽略)
+fix = false                 # 允许自动修复
+target-version = "py38"
+
+[tool.flake8]
+enabled = false
+max-line-length = 120
+extend-ignore = ["E203", "W503"]  # 常见：和 black 配合时要忽略
+exclude = [".git", "__pycache__", "build", "dist"]
+import-order-style = "google"
+application-import-names = ["starrocks"]  # ?
+
+[tool.autopep8]
+max_line_length = 120
+aggressive = 0
+
+[tool.black]
+line-length = 120
+target-version = ["py38"]
+skip-string-normalization = false
+
+[tool.isort]
+profile = "black"
+line_length = 120
+multi_line_output = 3
+include_trailing_comma = true
+force_grid_wrap = 0
+use_parentheses = true
+
+
+[tool.pytest.ini_options]
+addopts = "--tb native -v -r fxX --maxfail=500 -p no:warnings"
+norecursedirs = ["test/data"]
+testpaths = ["test/"]
+
+# Integration test markers
+markers = [
+    "integration: marks tests as integration tests (require real database)",
+    "slow: marks tests as slow running",
+]
+
+# Logging configuration
+log_cli = true
+log_cli_level = "INFO"
+log_cli_format = "%(asctime)s [%(levelname)s] %(name)s.%(funcName)s:%(lineno)d: %(message)s"
+log_cli_date_format = "%Y-%m-%d %H:%M:%S"

@@ -104,6 +104,10 @@ This provides the custom comparator functions with a single, consistent location
   - `ORDER BY`
   - `PROPERTIES`
 
+  > **Note on Table Properties**: The comparison logic for `PROPERTIES` identifies properties that only affect future partitions, such as `replication_num` and `storage_medium`. When changes to these properties are detected, the generated `AlterTablePropertiesOp` will automatically prefix the property name with `default.` (e.g., `default.replication_num`) to ensure the modification applies only to new partitions.
+
+  > **Note on Distribution Buckets**: The `DISTRIBUTED BY` comparison includes a special case: if the distribution method (e.g., `HASH(col)`) is the same between the database and the metadata, but the metadata does not specify a bucket count, the comparator will consider them equal. This is to accommodate scenarios where StarRocks automatically assigns a default bucket count, preventing `autogenerate` from creating unnecessary `ALTER TABLE` statements.
+  >
   > **Note on Type Handling**: When this comparator runs, the attributes from the database (`conn_table`) may be structured objects (e.g., `ReflectionPartitionInfo`, `ReflectionDistributionInfo`), while the attributes from the user's code (`metadata_table`) are typically strings. The comparison logic is responsible for handling this duality by normalizing the structured objects into a comparable string representation before checking for differences.
 
 - **`compare_view(...)`**: Registered for the `"view"` type. It compares the `SELECT` definition of views.

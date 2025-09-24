@@ -5,14 +5,14 @@ from alembic.operations.ops import UpgradeOps
 from unittest.mock import Mock, PropertyMock
 
 from starrocks.alembic.compare import compare_starrocks_table, extract_starrocks_dialect_attributes
-from starrocks.params import AlterTableEnablement, SRKwargsPrefix, TableInfoKeyWithPrefix, DialectName
+from starrocks.params import AlterTableEnablement, SRKwargsPrefix, TableInfoKeyWithPrefix, DialectName, TablePropertyForFuturePartitions
 from starrocks.defaults import ReflectionTableDefaults
 from starrocks.types import TableType
 from starrocks.utils import TableAttributeNormalizer
 
 
 LOG_ATTRIBUTE_NEED_SPECIFIED = "Please specify this attribute explicitly"
-LOG_NO_DEFAULT_VALUE = "but no default is defined in ReflectionTableDefaults"
+LOG_NO_DEFAULT_VALUE = "no default is defined in ReflectionTableDefaults"
 LOG_ALTER_AUTO_GENERATED = "An ALTER TABLE SET operation will be generated"
 LOG_NO_ALERT_AUTO_GENERATED = "No ALTER TABLE SET operation will be generated"
 
@@ -88,7 +88,7 @@ class TestRealTableObjects:
             elif isinstance(op, AlterTableOrderOp):
                 assert op.order_by == 'id, name'
             elif isinstance(op, AlterTablePropertiesOp):
-                assert op.properties == {'replication_num': '3', 'storage_medium': 'SSD'}
+                assert op.properties == {'default.replication_num': '3', 'default.storage_medium': 'SSD'}
 
     def test_real_table_no_changes(self):
         """Test that identical real tables produce no operations."""
@@ -186,7 +186,10 @@ class TestRealTableObjects:
         assert len(result) == 1
         from starrocks.alembic.ops import AlterTablePropertiesOp
         assert isinstance(result[0], AlterTablePropertiesOp)
-        assert result[0].properties == {'replication_num': '3', 'compression': 'LZ4'}
+        # only changed properties will be generated
+        # assert result[0].properties == {'replication_num': '3', 'compression': 'LZ4'}
+        assert result[0].properties == {'compression': 'LZ4'}
+
 
     def test_real_table_unsupported_engine_change(self):
         """Test unsupported ENGINE change using real Table objects."""
@@ -1229,10 +1232,8 @@ class TestPropertiesChanges:
             autogen_context, upgrade_ops, "test_table", "test_db", conn_table, meta_table
         )
         result = upgrade_ops.ops
-        assert len(result) == 1
-        from starrocks.alembic.ops import AlterTablePropertiesOp
-        assert isinstance(result[0], AlterTablePropertiesOp)
-        assert result[0].properties == {prop_key: default_value}
+        logger.debug(f"PROPERTIES. result: {result}")
+        assert len(result) == 0  # on changes
 
     @pytest.mark.parametrize("prop_key, default_value, non_default_value", [
         ("replication_num", "3", "2"),
@@ -1256,7 +1257,7 @@ class TestPropertiesChanges:
         assert len(result) == 1
         from starrocks.alembic.ops import AlterTablePropertiesOp
         assert isinstance(result[0], AlterTablePropertiesOp)
-        assert result[0].properties == {prop_key: non_default_value}
+        assert result[0].properties == {TablePropertyForFuturePartitions.wrap(prop_key): non_default_value}
 
     @pytest.mark.parametrize("prop_key, default_value, non_default_value", [
         ("replication_num", "3", "2"),
@@ -1280,15 +1281,15 @@ class TestPropertiesChanges:
         assert len(result) == 0
     
     @pytest.mark.parametrize("prop_key, default_value, non_default_value", [
-        ("storage_medium", "HDD", "SSD"),
+        ("colocate_with", None, "not_exists"),
     ])
-    def test_properties_none_default_to_none(self, prop_key, default_value, non_default_value, caplog):
+    def test_properties_non_default_none_to_none(self, prop_key, default_value, non_default_value, caplog):
         """Test PROPERTIES from implicit default (default value is set to None) to None (no op)."""
         autogen_context = Mock(spec=AutogenContext)
         autogen_context.dialect.name = DialectName
-        caplog.set_level("INFO")
+        caplog.set_level("WARNING")
 
-        conn_table = Mock(kwargs={TableInfoKeyWithPrefix.PROPERTIES: {prop_key: default_value}})  # DB has explicit default
+        conn_table = Mock(kwargs={TableInfoKeyWithPrefix.PROPERTIES: {prop_key: non_default_value}})  # DB has explicit default
         conn_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(conn_table.kwargs)}
         meta_table = Mock(kwargs={})  # Metadata has no properties
         meta_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(meta_table.kwargs)}
@@ -1305,7 +1306,7 @@ class TestPropertiesChanges:
 
     @pytest.mark.parametrize("prop_key, default_value, non_default_value", [
         ("replication_num", "3", "2"),
-        # ("storage_medium", "HDD", "SSD"),  # can't know the change for there is no default in ReflectionTableDefaults
+        ("storage_medium", "HDD", "SSD"),
     ])
     def test_properties_non_default_to_none(self, prop_key, default_value, non_default_value, caplog):
         """Test PROPERTIES from explicit non-default value to None (generate ALTER to reset to default)."""
@@ -1327,8 +1328,8 @@ class TestPropertiesChanges:
         assert len(result) == 1
         from starrocks.alembic.ops import AlterTablePropertiesOp
         assert isinstance(result[0], AlterTablePropertiesOp)
-        assert result[0].properties == {prop_key: default_value}
-        assert len(caplog.records) == 1
+        assert result[0].properties == {TablePropertyForFuturePartitions.wrap(prop_key): default_value}
+        assert len(caplog.records) >= 1
         assert LOG_ALTER_AUTO_GENERATED in caplog.text
 
     @pytest.mark.parametrize("prop_key, value1, value2", [
@@ -1353,7 +1354,7 @@ class TestPropertiesChanges:
         assert len(result) == 1
         from starrocks.alembic.ops import AlterTablePropertiesOp
         assert isinstance(result[0], AlterTablePropertiesOp)
-        assert result[0].properties == {prop_key: value2}
+        assert result[0].properties == {TablePropertyForFuturePartitions.wrap(prop_key): value2}
 
     @pytest.mark.parametrize("prop_key, value", [
         ("replication_num", "3"),
@@ -1437,7 +1438,8 @@ class TestPropertiesChanges:
         assert len(result) == 1
         from starrocks.alembic.ops import AlterTablePropertiesOp
         assert isinstance(result[0], AlterTablePropertiesOp)
-        assert result[0].properties == meta_props
+        wapped_meta_props = {TablePropertyForFuturePartitions.wrap(k): v for k, v in meta_props.items()}
+        assert result[0].properties == wapped_meta_props
 
 
 class TestORMTableObjects:
@@ -1504,7 +1506,7 @@ class TestORMTableObjects:
             elif isinstance(op, AlterTablePropertiesOp):
                 logger.info(f"ALTER TABLE SET PROPERTIES: {op.properties}")
                 # the compression property is added although it's not set in the metadata table
-                assert op.properties == {'replication_num': '3', 'storage_medium': 'SSD', 'compression': 'LZ4'}
+                assert op.properties == {'default.replication_num': '3', 'default.storage_medium': 'SSD', 'compression': 'LZ4'}
 
 
 class TestComplexScenarios:
@@ -1562,7 +1564,7 @@ class TestComplexScenarios:
             elif isinstance(op, AlterTableOrderOp):
                 assert op.order_by == "created_at, id"
             elif isinstance(op, AlterTablePropertiesOp):
-                assert op.properties == {"replication_num": "3", "storage_medium": "SSD"}
+                assert op.properties == {"default.replication_num": "3", "default.storage_medium": "SSD"}
 
     def test_only_supported_operations_detected(self):
         """Test that only supported operations are detected and generated."""

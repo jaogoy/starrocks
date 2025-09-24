@@ -57,7 +57,7 @@ from .sql.ddl import (
 )
 from .sql.schema import View
 from .reflection import StarRocksInspector
-from .reflection_info import ReflectedState, ReflectedViewState, ReflectedPartitionInfo
+from .engine.interfaces import ReflectedViewState, ReflectedPartitionInfo, ReflectedState
 from .defaults import ReflectionViewDefaults
 from .params import ColumnAggInfoKey, ColumnSROptionsKey, DialectName, SRKwargsPrefix, TableInfoKey, TableInfoKeyWithPrefix, ColumnAggInfoKeyWithPrefix
 from alembic.operations.ops import AlterColumnOp
@@ -403,7 +403,7 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
         # opts: dict[str, Any] = self._extract_table_options(table)
         # And item with value being None should be removed, because the `defaults` has all the keys.
         opts = {k.upper(): v for k, v in table.dialect_options[DialectName].items() if v is not None}
-        logger.debug(f"table opts for table: {table.name}, schema: {table.schema}, opts: {opts!r}")
+        logger.debug(f"table original opts for table: {table.name}, schema: {table.schema}, opts: {opts!r}")
 
         # ENGINE
         if engine := opts.get(TableInfoKey.ENGINE):

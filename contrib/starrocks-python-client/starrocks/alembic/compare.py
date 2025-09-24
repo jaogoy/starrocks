@@ -19,10 +19,11 @@ from starrocks.params import (
     ColumnAggInfoKey,
     ColumnAggInfoKeyWithPrefix,
     TableInfoKey,
+    TablePropertyForFuturePartitions,
 )
 
 from starrocks.reflection import StarRocksTableDefinitionParser
-from starrocks.reflection_info import ReflectedViewState, ReflectedDistributionInfo, ReflectedPartitionInfo
+from starrocks.engine.interfaces import ReflectedViewState, ReflectedPartitionInfo, ReflectedDistributionInfo
 from starrocks.sql.schema import MaterializedView, View
 
 from starrocks.alembic.ops import (
@@ -617,6 +618,15 @@ def _compare_table_distribution(
     if isinstance(meta_distribution, str):
         meta_distribution = StarRocksTableDefinitionParser.parse_distribution(meta_distribution)
 
+    # If distribution method is the same and meta doesn't specify buckets,
+    # consider it unchanged, as conn buckets might be system-assigned.
+    if (
+        conn_distribution and meta_distribution and
+        conn_distribution.distribution_method == meta_distribution.distribution_method and
+        meta_distribution.buckets is None
+    ):
+        return
+
     # Normalize both strings for comparison (handles backticks)
     normalized_conn: Optional[str] = TableAttributeNormalizer.normalize_distribution_string(conn_distribution)
     normalized_meta: Optional[str] = TableAttributeNormalizer.normalize_distribution_string(meta_distribution)
@@ -693,15 +703,15 @@ def _compare_table_properties(
     table_name: str,
     conn_table_attributes: Dict[str, Any],
     meta_table_attributes: Dict[str, Any],
-    run_mode: str
+    run_mode: str,
 ) -> None:
     """Compare properties changes and add AlterTablePropertiesOp if needed.
 
     - If a property is specified in metadata, it is compared with the database.
     - If a property is NOT specified in metadata but exists in the database with a NON-DEFAULT value,
       a change is detected.
-    - The generated operation will set all properties defined in the metadata, effectively resetting
-      any omitted, non-default properties back to their defaults in StarRocks.
+    - The generated operation will set only the properties that have changed.
+      Because some of the properties are not supported to be changed.
     """
     conn_properties: dict[str, str] = conn_table_attributes.get(TableInfoKey.PROPERTIES, {})
     meta_properties: dict[str, str] = meta_table_attributes.get(TableInfoKey.PROPERTIES, {})
@@ -711,12 +721,15 @@ def _compare_table_properties(
     normalized_meta = CaseInsensitiveDict(meta_properties)
     # logger.debug(f"PROPERTIES. normalized_conn: {normalized_conn}, normalized_meta: {normalized_meta}")
 
-    if normalized_meta == normalized_conn:
+    if normalized_conn == normalized_meta:
         return
 
-    # Check for meaningful changes, ignoring defaults
-    has_meaningful_change = False
-    all_keys = set(normalized_meta.keys()) | set(normalized_conn.keys())
+    properties_to_set = {}
+    properties_for_reverse = {}
+
+    all_keys = set(normalized_conn.keys()) | set(normalized_meta.keys())
+    full_table_name = f"{schema}.{table_name}" if schema else table_name
+
     for key in all_keys:
         conn_value = normalized_conn.get(key)
         meta_value = normalized_meta.get(key)
@@ -727,48 +740,66 @@ def _compare_table_properties(
         meta_str = str(meta_value) if meta_value is not None else None
         default_str = str(default_value) if default_value is not None else None
 
-        if meta_str is not None:
-            # Case 1 & 2: meta specifies a value.
-            # Change if it differs from conn, or if conn is None.
-            if meta_str != conn_str:
-                has_meaningful_change = True
-        else:
-            # Case 3 & 4: meta does NOT specify a value.
-            # Change ONLY if conn has a NON-DEFAULT value.
-            if conn_str is not None and conn_str != default_str:
-                full_table_name = f"{schema}.{table_name}" if schema else table_name or "unknown_table"
-                # If metadata doesn't specify a property that exists in DB with a non-default value,
-                # implicitly add it to meta_properties with its default value for the ALTER operation.
-                if default_value is not None:
-                    has_meaningful_change = True
-                    normalized_meta[key] = default_value
-                    logger.warning(
-                        f"Table '{full_table_name}': Property '{key}' in database has non-default value '{conn_str}' "
-                        f"(default: '{default_str}'), but is not specified in metadata. "
-                        f"An ALTER TABLE SET operation will be generated to effectively reset it to its default. "
-                        f"Consider explicitly setting default properties in your metadata to avoid ambiguity."
-                    )
-                else:
-                    # If there's no explicit default, and meta doesn't specify, it means removal.
-                    # The current meta_properties already reflects this omission.
-                    # Add a warning for this case where no default is known.
-                    logger.info(
-                        f"Table '{full_table_name}': Property '{key}' in database has non-default value '{conn_str}', "
-                        f"but no default is defined in ReflectionTableDefaults and it's not specified in metadata. "
-                        f"No ALTER TABLE SET operation will be generated automatically. "
-                        f"Please specify this property explicitly in your table definition if you want to manage it."
-                    )
-                    pass  # No change needed to meta_properties, its absence implies removal.
+        # The effective value in the database is conn_str if set, otherwise default_str
+        effective_conn_str = conn_str if conn_str is not None else default_str
+        # The effective value in the metadata is meta_str if set, otherwise default_str
+        effective_meta_str = meta_str if meta_str is not None else default_str
 
-    
-    if has_meaningful_change:
+        if effective_conn_str == effective_meta_str:
+            logger.debug(f"Property no changes. key: {key}, effective_conn_str: {effective_conn_str}, effective_meta_str: {effective_meta_str}")
+            continue
+
+        # A meaningful change has been detected for this property.
+        logger.debug(f"Property changes. key: {key}, effective_conn_str: {effective_conn_str}, effective_meta_str: {effective_meta_str}")
+        if meta_value is None:
+            if default_value is None:
+                # Scenario 1: Implicit deletion of a property with no default.
+                if conn_value is not None:
+                    logger.warning(
+                        f"Table '{full_table_name}': Property '{key}' exists in the database with value '{conn_value}' "
+                        f"but is not specified in metadata and no default is defined in ReflectionTableDefaults."
+                        f"Implicit deletion is not recommended. "
+                        f"To manage this property, please specify it explicitly in your metadata. "
+                        f"No ALTER TABLE SET operation will be generated for this property."
+                    )
+                    continue  # Skip generating an op for this property
+            else:
+                # Scenario 2: Implicit reset to default.
+                logger.warning(
+                    f"Table '{full_table_name}': Property '{key}' has non-default value '{conn_value}' in database "
+                    f"but is not specified in metadata. An ALTER TABLE SET operation will be generated to "
+                    f"reset it to its default value '{default_value}'. "
+                    f"Consider explicitly setting default properties in your metadata to avoid ambiguity."
+                )
+        # Determine the value for the upgrade operation.
+        target_val_upgrade = meta_str if meta_str is not None else default_str
+        prop_key = (
+            TablePropertyForFuturePartitions.wrap(key)
+            if TablePropertyForFuturePartitions.contains(key)
+            else key
+        )
+        # logger.debug(f"Newly changed property. prop_key: '{prop_key}', target_val_upgrade: '{target_val_upgrade}'")
+        properties_to_set[prop_key] = target_val_upgrade
+        if prop_key != key:
+            logger.warning(f"The property '{key}' will be changed to '{target_val_upgrade}' "
+                f"for the future partitions only by using '{prop_key}'. "
+                f"If you want to change the property for all partitions, "
+                f"please modify it by removing the 'default.' prefix."
+            )
+
+        # Determine the value for the downgrade (reverse) operation.
+        target_val_downgrade = conn_str if conn_str is not None else default_str
+        properties_for_reverse[prop_key] = target_val_downgrade
+
+    if properties_to_set:
         from starrocks.alembic.ops import AlterTablePropertiesOp
+
         ops_list.append(
             AlterTablePropertiesOp(
                 table_name,
-                normalized_meta,
+                properties_to_set,
                 schema=schema,
-                reverse_properties=normalized_conn,
+                reverse_properties=properties_for_reverse,
             )
         )
 

@@ -3,7 +3,7 @@ from typing import Any, Dict, Optional, Union, Mapping, Iterator, List
 
 from sqlalchemy.exc import StatementError
 
-from starrocks.reflection_info import ReflectedDistributionInfo, ReflectedPartitionInfo
+from starrocks.engine.interfaces import ReflectedPartitionInfo, ReflectedDistributionInfo
 
 
 class SQLParseError(StatementError):

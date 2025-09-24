@@ -1,21 +1,92 @@
 from __future__ import annotations
 
 import dataclasses
-from typing import Optional
+from enum import Enum
+from typing import Any, NamedTuple, Optional, Tuple, TypedDict, Union
 
-from starrocks.params import TableInfoKey
+from sqlalchemy.engine.interfaces import ReflectedColumn
+
+
+"""
+Follow the mysql's ReflectedState, but with more specific types
+It will be much cleaner and easier to use.
+"""
 
 
 @dataclasses.dataclass(**dict(kw_only=True) if 'KW_ONLY' in dataclasses.__all__ else {})
 class ReflectedState(object):
     """Stores information about table or view."""
-
     table_name: str | None = None
     columns: list[dict] = dataclasses.field(default_factory=list)
     table_options: dict[str, str] = dataclasses.field(default_factory=dict)
     keys: list[dict] = dataclasses.field(default_factory=list)
     fk_constraints: list[dict] = dataclasses.field(default_factory=list)
     ck_constraints: list[dict] = dataclasses.field(default_factory=list)
+
+
+class ReflectedTableState(TypedDict):
+    table_name: Optional[str]
+    columns: list[ReflectedColumn]
+    table_options: dict[str, str]
+    keys: list[Union[ReflectedIndexInfo, ReflectedPKInfo, ReflectedUKInfo]]
+    fk_constraints: list[ReflectedFKInfo]
+    ck_constraints: list[ReflectedCKInfo]
+
+
+class MySQLKeyType(Enum):
+    PRIMARY = "PRIMARY"
+    UNIQUE = "UNIQUE"
+    FULLTEXT = "FULLTEXT"
+    SPATIAL = "SPATIAL"
+
+
+class ReflectedIndexInfo(TypedDict):
+    """In ReflectedState.keys
+    And, will be used to form ReflectedIndex
+    """
+    name: str
+    type: MySQLKeyType
+    parser: Optional[Any]  # Object?
+    columns: list[Tuple[str, int, Any]]  # name, length, ...
+    dialect_options: dict[str, Any]
+
+
+class ReflectedFKInfo(TypedDict):
+    """In ReflectedState.fk_constraints
+    And, will be used to form ReflectedForeignKeyConstraint
+    """
+    name: str
+    table: NamedTuple[Optional[str], str]  # schema, name
+    local: list[str]
+    foreign: list[str]
+
+    onupdate: bool
+    ondelete: bool
+
+
+class ReflectedPKInfo(TypedDict):
+    """In ReflectedState.keys
+    And, will be used to form ReflectedPrimaryKeyConstraint
+    """
+    type: MySQLKeyType
+    columns: list[Tuple[str, Any, Any]]
+
+
+class ReflectedUKInfo(TypedDict):
+    """In ReflectedState.keys
+    And, will be used to form ReflectedUniqueConstraint
+    """
+    name: str
+    type: MySQLKeyType
+    columns: list[Tuple[str, Any, Any]]
+
+
+class ReflectedCKInfo(TypedDict):
+    """In ReflectedState.ck_constraints
+    And, will be used to form ReflectedCheckConstraint
+    """
+    name: str
+    sqltext: str
 
 
 @dataclasses.dataclass(kw_only=True)
@@ -43,7 +114,7 @@ class ReflectedPartitionInfo:
 
     Attributes:
         type: The partitioning type (e.g., 'RANGE', 'LIST', 'EXPRESSION').
-        partition_by: The whole partitioning expression string 
+        partition_by: The whole partitioning expression string
             (e.g., 'RANGE(id, name)', 'date_trunc('day', dt)', 'id, col1, col2').
         pre_created_partitions: A string containing the full DDL for all
             pre-created partitions (e.g.,

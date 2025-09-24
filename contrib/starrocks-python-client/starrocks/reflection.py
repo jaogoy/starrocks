@@ -23,18 +23,16 @@ from sqlalchemy.dialects.mysql.types import DATETIME, TIME, TIMESTAMP
 from sqlalchemy.dialects.mysql.base import _DecodingRow
 from sqlalchemy.dialects.mysql.reflection import _re_compile
 from sqlalchemy import log, types as sqltypes, util
-from sqlalchemy.engine.interfaces import ReflectedColumn
 from sqlalchemy.engine.reflection import Inspector
 
-from starrocks.defaults import ReflectionTableDefaults
-from starrocks.sql.types import KeyType
+from starrocks.engine.interfaces import MySQLKeyType
 
 from . import utils
 from .utils import SQLParseError
 
 from .params import ColumnAggInfoKeyWithPrefix, SRKwargsPrefix, TableInfoKeyWithPrefix, TableInfoKey
-from .reflection_info import ReflectedState, ReflectedViewState, ReflectedDistributionInfo, ReflectedPartitionInfo
-from .types import PartitionType, TableModel, TableType, TableEngine
+from .engine.interfaces import ReflectedViewState, ReflectedPartitionInfo, ReflectedDistributionInfo, ReflectedState
+from .types import PartitionType
 from .consts import TableConfigKey
 
 logger = logging.getLogger(__name__)
@@ -129,7 +127,7 @@ class StarRocksTableDefinitionParser(object):
                 table=table, table_config=table_config, columns=columns
             ),
             keys=[{
-                "type": self._get_key_type(table_config=table_config),
+                "type": self._get_mysql_key_type(table_config=table_config),
                 "columns": [(c, None, None) for c in self._get_key_columns(columns=columns)],
                 "parser": None,
                 "name": None,
@@ -220,36 +218,24 @@ class StarRocksTableDefinitionParser(object):
             type_instance = col_type(*type_args, **type_kw)
         return type_instance
 
-    def _get_key_desc(self, table_config: dict[str, Any], columns: list[_DecodingRow]) -> str:
-        """
-        Get key description from information_schema.columns table.
-        It returns string representation of key description.
-        """
-        quoted_cols = [
-            self.preparer.quote_identifier(col)
-            for col in self._get_key_columns(columns=columns)
-        ]
-        key_type = self._get_key_type(table_config=table_config)
-        return f"{key_type}({', '.join(quoted_cols)})"
-
-    def _get_key_type(self, table_config: dict[str, Any]) -> str:
+    def _get_mysql_key_type(self, table_config: dict[str, Any]) -> str:
         """
         Get key type from information_schema.tables_config table.
-        And return the MySQL's key type, as KeyType
+        And return the MySQL's key type, as MySQLKeyType
+        But, directly return the MySQLKeyType.PRIMARY, for check only
         """
-        # return TableModel.TO_TYPE_MAP.get(table_config.get(TableConfigKey.TABLE_MODEL), "")
-        TABLE_MODEL_TO_KEY_TYPE_MAP = {
-            TableModel.DUP_KEYS: KeyType.UNIQUE,
-            TableModel.DUP_KEYS2: KeyType.UNIQUE,
-            TableModel.AGG_KEYS: KeyType.UNIQUE,
-            TableModel.AGG_KEYS2: KeyType.UNIQUE,
-            TableModel.PRI_KEYS: KeyType.PRIMARY,
-            TableModel.PRI_KEYS2: KeyType.PRIMARY,
-            TableModel.UNQ_KEYS: KeyType.UNIQUE,
-            TableModel.UNQ_KEYS2: KeyType.UNIQUE,
-        }
-        return TABLE_MODEL_TO_KEY_TYPE_MAP.get(table_config.get(TableConfigKey.TABLE_MODEL), "").value
-
+        # table_model_to_key_type_map: Dict[str, MySQLKeyType] = {
+        #     TableModel.DUP_KEYS: MySQLKeyType.UNIQUE,
+        #     TableModel.DUP_KEYS2: MySQLKeyType.UNIQUE,
+        #     TableModel.AGG_KEYS: MySQLKeyType.UNIQUE,
+        #     TableModel.AGG_KEYS2: MySQLKeyType.UNIQUE,
+        #     TableModel.PRI_KEYS: MySQLKeyType.PRIMARY,
+        #     TableModel.PRI_KEYS2: MySQLKeyType.PRIMARY,
+        #     TableModel.UNQ_KEYS: MySQLKeyType.UNIQUE,
+        #     TableModel.UNQ_KEYS2: MySQLKeyType.UNIQUE,
+        # }
+        # return str(table_model_to_key_type_map.get(table_config.get(TableConfigKey.TABLE_MODEL), "").value)
+        return str(MySQLKeyType.PRIMARY.value)
 
     def _get_key_columns(self, columns: list[_DecodingRow]) -> list[str]:
         """
@@ -379,7 +365,7 @@ class StarRocksTableDefinitionParser(object):
 
         if table_engine := table_config.get(TableConfigKey.TABLE_ENGINE):
             logger.debug(f"table_config.{TableConfigKey.TABLE_ENGINE}: {table_engine}")
-            # if table_engine != TableEngine.OLAP:
+            # if table_engine.upper() != TableEngine.OLAP:
             #     raise NotImplementedError(f"Table engine {table_engine} is not supported now.")
             opts[TableInfoKeyWithPrefix.ENGINE] = table_engine.upper()
 
@@ -391,10 +377,11 @@ class StarRocksTableDefinitionParser(object):
         # and key columns from information_schema.columns.COLUMN_KEY
         if table_model := table_config.get(TableConfigKey.TABLE_MODEL):
             logger.debug(f"table_config.{TableConfigKey.TABLE_MODEL}: {table_model}")
-            key_type_str = TableInfoKey.MODEL_TO_KEY_MAP.get(table_model)
-            if key_type_str:
+            # convert to key string, such as "PRIMARY_KEY", not PRIMARY KEY"
+            key_str = TableInfoKey.MODEL_TO_KEY_MAP.get(table_model)
+            if key_str:
                 key_columns_str = ", ".join(self._get_key_columns(columns))
-                prefixed_key = f"{SRKwargsPrefix}{key_type_str}"
+                prefixed_key = f"{SRKwargsPrefix}{key_str}"
                 opts[prefixed_key] = key_columns_str
 
         if partition_clause := table_config.get(TableConfigKey.PARTITION_CLAUSE):

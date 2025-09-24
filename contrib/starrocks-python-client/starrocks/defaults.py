@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Optional, Union
 
-from starrocks.reflection_info import ReflectedMVState, ReflectedViewState
+from starrocks.engine.interfaces import ReflectedViewState, ReflectedMVState
 from starrocks.types import SystemRunMode, TableDistribution, TableEngine, TableType, ViewSecurityType
 from starrocks.utils import TableAttributeNormalizer
 
@@ -19,6 +19,12 @@ class ReflectionTableDefaults:
         'replicated_storage': 'true',
         'storage_format': 'DEFAULT',
         'bucket_size': '4294967296',
+        'storage_medium': 'HDD',
+
+        # for following properties, they won't explicitly set in the 'properties' field of the table.
+        'enable_persistent_index': 'true',
+        # 'bloom_filter_columns': None,
+        # 'colocate_with': None,
     }
     _DEFAULT_PROPERTIES_SHARED_NOTHING = {
         'replication_num': '3',

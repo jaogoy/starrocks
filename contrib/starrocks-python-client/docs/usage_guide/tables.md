@@ -102,6 +102,8 @@ Specifies the data distribution (including bucketing) strategy.
 - **Default**: `RANDOM`
 - **Example**: `starrocks_DISTRIBUTED_BY="HASH(user_id) BUCKETS 32"`
 
+> **Note on Buckets**: If you specify a distribution method (e.g., `HASH(user_id)`) but omit the `BUCKETS` clause, StarRocks will automatically assign a bucket count. Alembic's `autogenerate` feature is designed to handle this: if the distribution method in your metadata matches the one in the database and you haven't specified a bucket count, no changes will be detected. This prevents unnecessary `ALTER TABLE` statements when the bucket count is managed by the system.
+
 ##### 6. `starrocks_ORDER_BY`
 
 Specifies the sorting columns.
@@ -124,13 +126,14 @@ A dictionary of additional table properties.
   }
   ```
 
+> **Note on Future Partition Properties**: Certain properties, such as `replication_num` and `storage_medium`, can be modified to apply only to newly created partitions. When `alembic revision --autogenerate` detects changes to these specific properties, it will generate an `ALTER TABLE` statement that prefixes them with `default.` (e.g., `SET ("default.replication_num" = "...")`). This ensures that the changes do not affect existing data.
+
 ### Column Attributes
 
 #### Column Data Types
 
 You should use StarRocks's data types to declare a `Column`.
 All the data types are: `TINYINT`, `SMALLINT`, `INT`, `BIGINT`, `LARGEINT`, `FLOAT`, `DOUBLE`, `DECIMAL`, `BOOLEAN`, `CHAR`, `VARCHAR`, `STRING`, `BINARY`, `VARBINARY`, `DATE`, `DATETIME`, `ARRAY`, `JSON`, `MAP`, `STRUCT`, `BITMAP`, `HLL`, in `starrocks.datatype`.
-
 
 #### Column-Level Properties (`starrocks_*` Prefixes)
 

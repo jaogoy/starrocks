@@ -120,18 +120,18 @@ handlers =
 qualname = sqlalchemy.engine
 
 [logger_alembic]
-level = WARN
+level = INFO
 handlers =
 qualname = alembic
 
 [logger_starrocks]
 level = DEBUG
-handlers = console
+handlers =
 qualname = starrocks
 
 [logger_test]
 level = DEBUG
-handlers = console
+handlers = 
 qualname = test
 
 [handler_console]
@@ -141,7 +141,8 @@ level = NOTSET
 formatter = generic
 
 [formatter_generic]
-format = %(levelname)-5.5s [%(name)s] %(message)s
+# format = %(levelname)-5.5s [%(name)s] %(message)s
+format = %(asctime)s %(levelname)-5.5s [%(name)s.%(funcName)s:%(lineno)d] %(message)s
 datefmt = %H:%M:%S
 """)
 

@@ -3,7 +3,7 @@ from sqlalchemy import text, Table, MetaData, Column, Integer, String, inspect
 from sqlalchemy.engine import Engine
 
 from starrocks.params import TableInfoKeyWithPrefix
-from starrocks.reflection_info import ReflectedPartitionInfo
+from starrocks.engine.interfaces import ReflectedPartitionInfo
 
 logger = logging.getLogger(__name__)
 

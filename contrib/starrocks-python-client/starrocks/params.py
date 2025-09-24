@@ -114,6 +114,26 @@ TableInfoKeyWithPrefix.ALL = {
 }
 
 
+class TablePropertyForFuturePartitions:
+    """Table properties that support change on future partition data, rather than all the data."""
+    REPLICATION_NUM = "replication_num"
+    STORAGE_MEDIUM = "storage_medium"
+
+    @classmethod
+    def contains(cls, property_name: str) -> bool:
+        return property_name.lower() in cls.ALL if property_name else False
+
+    @classmethod
+    def wrap(cls, property_name: str) -> str:
+        return f"default.{property_name}" if TablePropertyForFuturePartitions.contains(property_name) else property_name
+
+
+TablePropertyForFuturePartitions.ALL = {
+    v for k, v in vars(TablePropertyForFuturePartitions).items() 
+        if not k.startswith("__") and isinstance(v, str)
+}
+
+
 class ColumnAggInfoKeyWithPrefix:
     """StarRocks-specific Column.info keys for aggregate-model tables. Full prefixed names.
 

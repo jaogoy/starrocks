@@ -39,16 +39,17 @@ class TableModel:
     UNQ_KEYS = "UNQ_KEYS"
     UNQ_KEYS2 = "UNIQUE_KEYS"
 
-    TO_TYPE_MAP = {
-        DUP_KEYS: TableType.DUPLICATE_KEY,
-        DUP_KEYS2: TableType.DUPLICATE_KEY,
-        AGG_KEYS: TableType.AGGREGATE_KEY,
-        AGG_KEYS2: TableType.AGGREGATE_KEY,
-        PRI_KEYS: TableType.PRIMARY_KEY,
-        PRI_KEYS2: TableType.PRIMARY_KEY,
-        UNQ_KEYS: TableType.UNIQUE_KEY,
-        UNQ_KEYS2: TableType.UNIQUE_KEY,
-    }
+    # useless
+    # TO_TYPE_MAP = {
+    #     DUP_KEYS: TableType.DUPLICATE_KEY,
+    #     DUP_KEYS2: TableType.DUPLICATE_KEY,
+    #     AGG_KEYS: TableType.AGGREGATE_KEY,
+    #     AGG_KEYS2: TableType.AGGREGATE_KEY,
+    #     PRI_KEYS: TableType.PRIMARY_KEY,
+    #     PRI_KEYS2: TableType.PRIMARY_KEY,
+    #     UNQ_KEYS: TableType.UNIQUE_KEY,
+    #     UNQ_KEYS2: TableType.UNIQUE_KEY,
+    # }
 
 
 class PartitionType:

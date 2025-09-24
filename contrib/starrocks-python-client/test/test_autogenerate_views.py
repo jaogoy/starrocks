@@ -3,7 +3,7 @@ from alembic.operations import ops
 from sqlalchemy import MetaData
 from starrocks.sql.schema import View
 from starrocks.alembic.compare import autogen_for_views
-from starrocks.reflection_info import ReflectedViewState
+from starrocks.engine.interfaces import ReflectedViewState
 from starrocks.alembic.ops import (
     CreateViewOp, DropViewOp, AlterViewOp,
 )
