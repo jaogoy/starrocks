@@ -14,7 +14,7 @@ It will be much cleaner and easier to use.
 
 
 @dataclasses.dataclass(**dict(kw_only=True) if 'KW_ONLY' in dataclasses.__all__ else {})
-class ReflectedState(object):
+class ReflectedStateV1(object):
     """Stores information about table or view."""
     table_name: str | None = None
     columns: list[dict] = dataclasses.field(default_factory=list)
@@ -24,13 +24,14 @@ class ReflectedState(object):
     ck_constraints: list[dict] = dataclasses.field(default_factory=list)
 
 
-class ReflectedTableState(TypedDict):
+@dataclasses.dataclass(**dict(kw_only=True) if 'KW_ONLY' in dataclasses.__all__ else {})
+class ReflectedState(object):
     table_name: Optional[str]
     columns: list[ReflectedColumn]
-    table_options: dict[str, str]
-    keys: list[Union[ReflectedIndexInfo, ReflectedPKInfo, ReflectedUKInfo]]
-    fk_constraints: list[ReflectedFKInfo]
-    ck_constraints: list[ReflectedCKInfo]
+    table_options: dict[str, str]  = dataclasses.field(default_factory=dict)
+    keys: list[Union[ReflectedIndexInfo, ReflectedPKInfo, ReflectedUKInfo]]  = dataclasses.field(default_factory=list)
+    fk_constraints: list[ReflectedFKInfo] = dataclasses.field(default_factory=list)
+    ck_constraints: list[ReflectedCKInfo] = dataclasses.field(default_factory=list)
 
 
 class MySQLKeyType(Enum):
@@ -89,7 +90,7 @@ class ReflectedCKInfo(TypedDict):
     sqltext: str
 
 
-@dataclasses.dataclass(kw_only=True)
+@dataclasses.dataclass(**dict(kw_only=True) if 'KW_ONLY' in dataclasses.__all__ else {})
 class ReflectedViewState:
     """Stores reflection information about a view."""
     name: str
@@ -98,7 +99,7 @@ class ReflectedViewState:
     security: str | None = None
 
 
-@dataclasses.dataclass(kw_only=True)
+@dataclasses.dataclass(**dict(kw_only=True) if 'KW_ONLY' in dataclasses.__all__ else {})
 class ReflectedMVState:
     """Stores reflection information about a materialized view."""
     name: str
@@ -107,7 +108,7 @@ class ReflectedMVState:
     security: str | None = None
 
 
-@dataclasses.dataclass(kw_only=True, frozen=True)
+@dataclasses.dataclass(**dict(kw_only=True, frozen=True) if 'KW_ONLY' in dataclasses.__all__ else {})
 class ReflectedPartitionInfo:
     """
     Stores structured reflection information about a table's partitioning scheme.
@@ -133,7 +134,7 @@ class ReflectedPartitionInfo:
         return repr(str(self))
 
 
-@dataclasses.dataclass(kw_only=True)
+@dataclasses.dataclass(**dict(kw_only=True) if 'KW_ONLY' in dataclasses.__all__ else {})
 class ReflectedDistributionInfo:
     """Stores reflection information about a view."""
     type: str | None

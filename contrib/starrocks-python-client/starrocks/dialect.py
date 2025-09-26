@@ -17,7 +17,7 @@ from textwrap import dedent
 import logging
 from typing import Any, Dict, Final, Optional, List, Set
 
-from alembic.ddl.base import format_column_name, format_table_name
+from alembic.ddl.base import format_table_name
 from sqlalchemy import Column, Connection, Table, exc, schema as sa_schema, util, log, text, Row
 
 from sqlalchemy.dialects.mysql.pymysql import MySQLDialect_pymysql
@@ -29,6 +29,7 @@ from sqlalchemy.dialects.mysql.base import (
     MySQLIdentifierPreparer,
     _DecodingRow,
 )
+from sqlalchemy.engine.interfaces import ReflectedTableComment
 from sqlalchemy.orm import properties
 from sqlalchemy.sql import quoted_name, sqltypes
 from sqlalchemy.sql.expression import Delete, Select
@@ -58,7 +59,7 @@ from .sql.ddl import (
 from .sql.schema import View
 from .reflection import StarRocksInspector
 from .engine.interfaces import ReflectedViewState, ReflectedPartitionInfo, ReflectedState
-from .defaults import ReflectionViewDefaults
+from .defaults import ReflectionTableDefaults, ReflectionViewDefaults
 from .params import ColumnAggInfoKey, ColumnSROptionsKey, DialectName, SRKwargsPrefix, TableInfoKey, TableInfoKeyWithPrefix, ColumnAggInfoKeyWithPrefix
 from alembic.operations.ops import AlterColumnOp
 
@@ -96,6 +97,7 @@ ischema_names = {
     "tinyint": TINYINT,
     "smallint": SMALLINT,
     "int": INTEGER,
+    "integer": INTEGER,
     "bigint": BIGINT,
     "largeint": LARGEINT,
     # === Floating-point ===
@@ -129,6 +131,9 @@ ischema_names = {
 
 
 class StarRocksTypeCompiler(MySQLTypeCompiler):
+    """
+    Compile a datatype to StarRocks' SQL type string.
+    """
 
     def visit_BOOLEAN(self, type_, **kw):
         return "BOOLEAN"
@@ -152,8 +157,8 @@ class StarRocksTypeCompiler(MySQLTypeCompiler):
         return "LARGEINT"
 
     def visit_STRING(self, type_, **kw):
-        # return "STRING"
-        return "VARCHAR(65533)"
+        return "STRING"
+        # return "VARCHAR(65533)"
 
     def visit_BINARY(self, type_, **kw):
         return "BINARY"
@@ -161,16 +166,26 @@ class StarRocksTypeCompiler(MySQLTypeCompiler):
     def visit_VARBINARY(self, type_, **kw):
         return "VARBINARY"
 
-    def visit_ARRAY(self, type_, **kw):
+    def visit_ARRAY(self, type_: ARRAY, **kw):
         """Compiles the ARRAY type into the correct StarRocks syntax."""
+        # logger.debug(f"visit_ARRAY: type_: {type_!r}, kw: {kw}")
         inner_type_sql = self.process(type_.item_type, **kw)
         return f"ARRAY<{inner_type_sql}>"
 
-    def visit_MAP(self, type_, **kw):
-        return "MAP<keytype,valuetype>"
+    def visit_MAP(self, type_: MAP, **kw):
+        # logger.debug(f"visit_MAP: type_: {type_!r}, kw: {kw}")
+        key_type_sql = self.process(type_.key_type, **kw)
+        value_type_sql = self.process(type_.value_type, **kw)
+        return f"MAP<{key_type_sql}, {value_type_sql}>"
 
-    def visit_STRUCT(self, type_, **kw):
-        return "STRUCT<name, type>"
+    def visit_STRUCT(self, type_: STRUCT, **kw):
+        # logger.debug(f"visit_STRUCT: type_: {type_!r}, kw: {kw}")
+        fields_sql = []
+        for name, type_ in type_._STRUCT_fields:
+            name_sql = self.process(name, **kw) if isinstance(name, sqltypes.TypeEngine) else name
+            type_sql = self.process(type_, **kw)
+            fields_sql.append(f"{name_sql} {type_sql}")
+        return f"STRUCT<{', '.join(fields_sql)}>"
 
     def visit_HLL(self, type_, **kw):
         return "HLL"
@@ -792,13 +807,31 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
         distribution_clause = f"DISTRIBUTED BY {alter.distribution_method}"
         if alter.buckets is not None:
             distribution_clause += f" BUCKETS {alter.buckets}"
+
+        # notice users about such a time consuming operation
+        from_db_clause = f"FROM {alter.schema} " if alter.schema else ""
+        show_clause = f"SHOW ALTER TABLE OPTIMIZE {from_db_clause}WHERE TableName='{alter.table_name}'"
+        logger.info(f"You probably should use ({show_clause}) to check the execution status "
+                    f"of altering DISTRIBUTION before doing another ALTER TABLE statement.")
+
         return f"ALTER TABLE {table_name} {distribution_clause}"
 
     def visit_alter_table_order(self, alter: AlterTableOrder, **kw: Any) -> str:
         """Compile ALTER TABLE ORDER BY DDL for StarRocks."""
 
         table_name = format_table_name(self, alter.table_name, alter.schema)
-        return f"ALTER TABLE {table_name} ORDER BY {alter.order_by}"
+        if isinstance(alter.order_by, list):
+            order_by = ", ".join(alter.order_by)
+        else:
+            order_by = alter.order_by
+
+        # notice users about such a time consuming operation
+        from_db_clause = f"FROM {alter.schema} " if alter.schema else ""
+        show_clause = f"SHOW ALTER TABLE OPTIMIZE {from_db_clause}WHERE TableName='{alter.table_name}'"
+        logger.info(f"You probably should use ({show_clause}) to check the execution status "
+                    f"of altering ORDER before doing another ALTER TABLE statement.")
+
+        return f"ALTER TABLE {table_name} ORDER BY ({order_by})"
 
     def visit_alter_table_properties(self, alter: AlterTableProperties, **kw: Any) -> str:
         """Compile ALTER TABLE SET (...) DDL for StarRocks.
@@ -1098,6 +1131,24 @@ class StarRocksDialect(MySQLDialect_pymysql):
             if e.orig and e.orig.args[0] == 1146:
                 raise exc.NoSuchTableError(table_name) from e
             raise
+
+    @reflection.cache
+    def get_table_comment(
+            self,
+            connection: Connection,
+            table_name: str,
+            schema: Optional[str] = None,
+            **kw: Any,
+    ) -> ReflectedTableComment:
+        """Get the table comment from the parsed state.
+        Overrides the mysql's implementation, which will use 'mysql_comment' as the key.
+        """
+        parsed_state = self._parsed_state_or_create(connection, table_name, schema, **kw)
+        comment = parsed_state.table_options.get(TableInfoKeyWithPrefix.COMMENT, None)
+        if comment is not None:
+            return {"text": comment}
+        else:
+            return ReflectionTableDefaults.table_comment()
 
     @reflection.cache
     def get_indexes(

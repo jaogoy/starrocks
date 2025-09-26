@@ -1,0 +1,16 @@
+?start: data_type
+
+?data_type: simple_type | array_type | map_type | struct_type
+
+array_type: "array"i "<" data_type ">"
+map_type: "map"i "<" data_type "," data_type ">"
+struct_type: "struct"i "<" struct_field ("," struct_field)* ">"
+struct_field: CNAME data_type
+
+simple_type: CNAME type_args? CNAME?
+type_args: "(" NUMBER ("," NUMBER)? ")"
+
+%import common.CNAME
+%import common.NUMBER
+%import common.WS
+%ignore WS

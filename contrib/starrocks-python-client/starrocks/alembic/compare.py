@@ -875,6 +875,8 @@ def _compare_single_table_attribute(
                 )
                 logger.error(error_msg)
                 raise NotImplementedError(error_msg)
+            logger.debug(f"Table '{full_table_name}', Attribute '{attribute_name}' has changed "
+                         f"from '{conn_str or '(not set)'}' to '{meta_str}' with default value '{default_str}'")
             return True
         # Case 2: meta specified, same as conn -> no change
         return False

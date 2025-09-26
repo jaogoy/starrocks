@@ -19,17 +19,15 @@ import logging
 import re
 from typing import Any, Optional, Union
 
-from sqlalchemy.dialects.mysql.types import DATETIME, TIME, TIMESTAMP
 from sqlalchemy.dialects.mysql.base import _DecodingRow
 from sqlalchemy.dialects.mysql.reflection import _re_compile
 from sqlalchemy import log, types as sqltypes, util
 from sqlalchemy.engine.reflection import Inspector
 
-from starrocks.engine.interfaces import MySQLKeyType
-
 from . import utils
+from .drivers.parsers import parse_data_type
+from .engine.interfaces import MySQLKeyType
 from .utils import SQLParseError
-
 from .params import ColumnAggInfoKeyWithPrefix, SRKwargsPrefix, TableInfoKeyWithPrefix, TableInfoKey
 from .engine.interfaces import ReflectedViewState, ReflectedPartitionInfo, ReflectedDistributionInfo, ReflectedState
 from .types import PartitionType
@@ -173,50 +171,24 @@ class StarRocksTableDefinitionParser(object):
         Parse column type from information_schema.columns table.
         It splits column type into type and arguments.
         After that it creates instance of column type.
+
+        Some special cases:
+            - LARGEINT: treat 'bigint(20) unsigned' as 'LARGEINT'
         """
-        # logger.debug(f"parse column type for column: {column.COLUMN_NAME}, type: {column.COLUMN_TYPE}")
-        match = self._COLUMN_TYPE_PATTERN.match(column.COLUMN_TYPE)
-        if match:
-            type_ = match.group("type")
-            args = match.group("args")
-            attr = match.group("attr")
-        else:
-            logger.error(f"Failed to parse column type. column: '{column.COLUMN_NAME}', type: '{column.COLUMN_TYPE}'")
-            type_ = column.COLUMN_TYPE
-            args = None
-        # There is a problem about LARGEINT in SR, it's `bigint(20) unsigned` in information_schema.columns.
-        if type_ == "bigint" and attr == "unsigned":
-            type_ = "largeint"
-            logger.info(f"Treat 'bigint(20) unsigned' (in information_schema.columns) as 'LARGEINT' for column: '{column.COLUMN_NAME}', type: '{type_}'")
         try:
-            col_type = self.dialect.ischema_names[type_]
-            # logger.debug(f"convert column type: '{type_}' to '{col_type}'")
-        except KeyError:
+            return parse_data_type(column.COLUMN_TYPE)
+        except Exception as e:
+            logger.warning(f"Could not parse type string '{column.COLUMN_TYPE}' for column '{column.COLUMN_NAME}'. Error: {e}")
+            match = self._COLUMN_TYPE_PATTERN.match(column.COLUMN_TYPE)
+            if match:
+                type_ = match.group("type")
+            else:
+                type_ = column.COLUMN_TYPE
+            
             util.warn(
                 "Did not recognize type '%s' of column '%s'" % (type_, column.COLUMN_NAME)
             )
-            col_type = sqltypes.NullType
-
-        # Column type positional arguments eg. varchar(32)
-        if args is None or args == "":
-            type_args = []
-        elif args[0] == "'" and args[-1] == "'":
-            type_args = self._re_csv_str.findall(args)
-        else:
-            type_args = [int(v) for v in self._re_csv_int.findall(args)]
-
-        # Column type keyword options
-        type_kw = {}
-
-        if issubclass(col_type, (DATETIME, TIME, TIMESTAMP)):
-            if type_args:
-                type_kw["fsp"] = type_args.pop(0)
-
-        if col_type.__name__ == "LARGEINT":
-            type_instance = col_type()
-        else:
-            type_instance = col_type(*type_args, **type_kw)
-        return type_instance
+            return sqltypes.NullType
 
     def _get_mysql_key_type(self, table_config: dict[str, Any]) -> str:
         """

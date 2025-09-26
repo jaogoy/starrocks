@@ -1,7 +1,7 @@
-# starrocks-python-client/starrocks/sql/schema.py
 from sqlalchemy.schema import SchemaItem
 from sqlalchemy.sql.elements import quoted_name
 from typing import Any, Optional, List
+
 
 class View(SchemaItem):
     """Represents a View object in Python."""
@@ -14,6 +14,7 @@ class View(SchemaItem):
         self.comment = comment
         self.columns = columns
         self.security = security
+
 
 class MaterializedView(SchemaItem):
     """Represents a Materialized View object in Python."""

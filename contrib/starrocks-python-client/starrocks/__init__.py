@@ -15,3 +15,25 @@
 # limitations under the License.
 
 __version__ = "1.2.3"
+
+# import it to import some internal packages implicitly
+from . import alembic
+
+from .datatype import (
+    BOOLEAN, TINYINT, SMALLINT, INTEGER, BIGINT, LARGEINT,
+    DECIMAL, DOUBLE, FLOAT,
+    DATETIME, DATE,
+    CHAR, VARCHAR, STRING, BINARY, VARBINARY,
+    HLL, BITMAP, PERCENTILE, 
+    ARRAY, MAP, STRUCT, JSON
+)
+
+
+__all__ = (
+    "BOOLEAN", "TINYINT", "SMALLINT", "INTEGER", "BIGINT", "LARGEINT",
+    "DECIMAL", "DOUBLE", "FLOAT",
+    "DATETIME", "DATE",
+    "CHAR", "VARCHAR", "STRING", "BINARY", "VARBINARY",
+    "HLL", "BITMAP", "PERCENTILE", 
+    "ARRAY", "MAP", "STRUCT", "JSON"
+)

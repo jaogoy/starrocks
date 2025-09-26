@@ -142,22 +142,22 @@ class TestSQLGeneration:
             # Single column
             (
                 "id",
-                "ALTER TABLE `events` ORDER BY id"
+                "ALTER TABLE `events` ORDER BY (id)"
             ),
             # Multiple columns
             (
                 "timestamp, event_id",
-                "ALTER TABLE `events` ORDER BY timestamp, event_id"
+                "ALTER TABLE `events` ORDER BY (timestamp, event_id)"
             ),
             # With ASC/DESC
             (
                 "timestamp DESC, event_id ASC",
-                "ALTER TABLE `events` ORDER BY timestamp DESC, event_id ASC"
+                "ALTER TABLE `events` ORDER BY (timestamp DESC, event_id ASC)"
             ),
             # Complex ordering
             (
                 "created_at DESC, updated_at ASC, id",
-                "ALTER TABLE `events` ORDER BY created_at DESC, updated_at ASC, id"
+                "ALTER TABLE `events` ORDER BY (created_at DESC, updated_at ASC, id)"
             ),
         ]
 
@@ -186,7 +186,7 @@ class TestSQLGeneration:
             # Order with schema
             (
                 lambda: self._create_order_ddl_with_schema(),
-                "ALTER TABLE `shop`.`orders` ORDER BY created_at DESC, id ASC"
+                "ALTER TABLE `shop`.`orders` ORDER BY (created_at DESC, id ASC)"
             ),
         ]
 
@@ -359,7 +359,7 @@ class TestStarRocksDocumentationExamples:
             ddl = AlterTableOrder("users", order_by)
 
             result = self.compiler.visit_alter_table_order(ddl)
-            expected = "ALTER TABLE `users` ORDER BY address, last_active"
+            expected = "ALTER TABLE `users` ORDER BY (address, last_active)"
 
             assert result == expected
 
@@ -513,12 +513,12 @@ class TestSpecialCharacterHandling:
         """Test ORDER BY with special column names and expressions."""
         test_cases = [
             # Column names with backticks
-            ("`order` ASC, `select` DESC", "ALTER TABLE `test_table` ORDER BY `order` ASC, `select` DESC"),
+            ("`order` ASC, `select` DESC", "ALTER TABLE `test_table` ORDER BY (`order` ASC, `select` DESC)"),
             # Column names with spaces
-            ("`user id`, `created at` DESC", "ALTER TABLE `test_table` ORDER BY `user id`, `created at` DESC"),
+            ("`user id`, `created at` DESC", "ALTER TABLE `test_table` ORDER BY (`user id`, `created at` DESC)"),
             # Expressions with functions
             ("date_format(`created_at`, '%Y-%m') DESC, `id`",
-             "ALTER TABLE `test_table` ORDER BY date_format(`created_at`, '%Y-%m') DESC, `id`"),
+             "ALTER TABLE `test_table` ORDER BY (date_format(`created_at`, '%Y-%m') DESC, `id`)"),
         ]
 
         for order_by, expected in test_cases:
@@ -572,23 +572,23 @@ class TestSQLSyntaxVariations:
         """Test different ORDER BY syntax variations."""
         test_cases = [
             # Single column
-            ("id", "ALTER TABLE `test_table` ORDER BY id"),
-            ("id ASC", "ALTER TABLE `test_table` ORDER BY id ASC"),
-            ("id DESC", "ALTER TABLE `test_table` ORDER BY id DESC"),
+            ("id", "ALTER TABLE `test_table` ORDER BY (id)"),
+            ("id ASC", "ALTER TABLE `test_table` ORDER BY (id ASC)"),
+            ("id DESC", "ALTER TABLE `test_table` ORDER BY (id DESC)"),
 
             # Multiple columns
-            ("id, name", "ALTER TABLE `test_table` ORDER BY id, name"),
-            ("id ASC, name DESC", "ALTER TABLE `test_table` ORDER BY id ASC, name DESC"),
+            ("id, name", "ALTER TABLE `test_table` ORDER BY (id, name)"),
+            ("id ASC, name DESC", "ALTER TABLE `test_table` ORDER BY (id ASC, name DESC)"),
             ("created_at DESC, id ASC, name",
-             "ALTER TABLE `test_table` ORDER BY created_at DESC, id ASC, name"),
+             "ALTER TABLE `test_table` ORDER BY (created_at DESC, id ASC, name)"),
 
             # Expression-based ordering
             ("date_format(created_at, '%Y-%m') DESC",
-             "ALTER TABLE `test_table` ORDER BY date_format(created_at, '%Y-%m') DESC"),
+             "ALTER TABLE `test_table` ORDER BY (date_format(created_at, '%Y-%m') DESC)"),
             ("substr(name, 1, 1), id DESC",
-             "ALTER TABLE `test_table` ORDER BY substr(name, 1, 1), id DESC"),
+             "ALTER TABLE `test_table` ORDER BY (substr(name, 1, 1), id DESC)"),
             ("CASE WHEN status = 'active' THEN 1 ELSE 2 END, created_at DESC",
-             "ALTER TABLE `test_table` ORDER BY CASE WHEN status = 'active' THEN 1 ELSE 2 END, created_at DESC"),
+             "ALTER TABLE `test_table` ORDER BY (CASE WHEN status = 'active' THEN 1 ELSE 2 END, created_at DESC)"),
         ]
 
         for order_by, expected in test_cases:

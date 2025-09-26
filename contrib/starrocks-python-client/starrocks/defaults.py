@@ -60,6 +60,10 @@ class ReflectionTableDefaults:
         return TableType.DUPLICATE_KEY
 
     @classmethod
+    def table_comment(cls) -> str:
+        return ""
+
+    @classmethod
     def partition_by(cls) -> Optional[str]:
         return None
 

@@ -1,4 +1,3 @@
-# starrocks-python-client/starrocks/sql/ddl.py
 from sqlalchemy.sql.ddl import DDLElement
 from .schema import View, MaterializedView
 from typing import Any, Dict, Optional
@@ -6,7 +5,7 @@ from typing import Any, Dict, Optional
 
 # Currently we choose to use __visit_name__ to identify the DDL statement.
 # If it's not a good idea, maybe it's not easy to understand, then
-# we use the `compiles method to identify the DDL statement.
+# we can use the `compiles` method to identify the DDL statement.
 
 
 class AlterView(DDLElement):

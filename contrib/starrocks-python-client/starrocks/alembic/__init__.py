@@ -1,5 +1,4 @@
-# starrocks/alembic/__init__.py
-from . import compare, ops, render
-from starrocks.alembic.starrocks import StarrocksImpl
+from . import compare, ops, toimpl, render
+from .starrocks import StarrocksImpl
 
-__all__ = ["compare", "ops", "render", "StarrocksImpl"]
+__all__ = []
