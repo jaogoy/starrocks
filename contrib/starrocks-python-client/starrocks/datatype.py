@@ -106,17 +106,17 @@ class PERCENTILE(sqltypes.Numeric):
     __visit_name__ = "PERCENTILE"
 
 
-class _StructuredType(UserDefinedType):
+class StructuredType(UserDefinedType):
     @staticmethod
     def _check_subtype(subtype_obj: Union[sqltypes.TypeEngine, type]) -> sqltypes.TypeEngine:
         if isclass(subtype_obj):
-            if issubclass(subtype_obj, _StructuredType):
+            if issubclass(subtype_obj, StructuredType):
                 raise TypeError(f"Structured type '{subtype_obj}' should have subtypes")
             return subtype_obj()
         return subtype_obj
 
 
-class ARRAY(_StructuredType):
+class ARRAY(StructuredType):
     """
     Usage:
         ARRAY(item_type)
@@ -141,7 +141,7 @@ class ARRAY(_StructuredType):
         return f"ARRAY({repr(self.item_type)})"
 
 
-class MAP(_StructuredType):
+class MAP(StructuredType):
     """
     Usage:
         MAP(key_type, value_type)
@@ -167,7 +167,7 @@ class MAP(_StructuredType):
         return f"MAP({repr(self.key_type)}, {repr(self.value_type)})"
 
 
-class STRUCT(_StructuredType):
+class STRUCT(StructuredType):
     """
     Usage:
         STRUCT((name, type), (name, type), ..., name=type, ...)
@@ -176,17 +176,17 @@ class STRUCT(_StructuredType):
         STRUCT((name, STRING), (age, INTEGER))
         STRUCT(name=STRING, info=STRUCT(age=INTEGER, city=STRING))
         STRUCT(name=STRING, address=MAP(STRING, ARRAY(STRING)))
-    """
+"""
 
     __visit_name__ = "STRUCT"
 
     def __init__(self, *fields: Tuple[STRING, sqltypes.TypeEngine], **kwfields: sqltypes.TypeEngine):
-        self._field_tuples = tuple(
+        self.field_tuples = tuple(
             (name, self._check_subtype(type_))
             for (name, type_) in (fields + tuple(kwfields.items()))
         )
         self._field_dict = {
-            name.lower(): type_ for (name, type_) in self._field_tuples
+            name.lower(): type_ for (name, type_) in self.field_tuples
         }
         super().__init__()
 
@@ -196,7 +196,7 @@ class STRUCT(_StructuredType):
 
     def __repr__(self):
         fields = ", ".join(
-            f"{name}={repr(type_)}" for name, type_ in self._field_tuples
+            f"{name}={repr(type_)}" for name, type_ in self.field_tuples
         )
         return f"STRUCT({fields})"
 

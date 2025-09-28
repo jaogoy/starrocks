@@ -5,12 +5,16 @@ from typing import Any, Dict, List, Optional, Set, Tuple, Union, Callable
 from alembic.autogenerate import comparators
 from alembic.autogenerate.api import AutogenContext
 
+from alembic.ddl import DefaultImpl
 from alembic.operations.ops import AlterColumnOp, AlterTableOp, UpgradeOps
 from sqlalchemy import Column, quoted_name
 from sqlalchemy.engine.reflection import Inspector
 from sqlalchemy.exc import NotSupportedError
+from sqlalchemy.sql import sqltypes
 from sqlalchemy.sql.schema import Table
 
+from starrocks import datatype
+from starrocks.datatype import ARRAY, MAP, STRUCT, BOOLEAN, TINYINT, VARCHAR, STRING
 from starrocks.defaults import ReflectionTableDefaults
 from starrocks.params import (
     AlterTableEnablement,
@@ -35,7 +39,104 @@ from starrocks.alembic.ops import (
 )
 from starrocks.utils import CaseInsensitiveDict, TableAttributeNormalizer
 
+
 logger = logging.getLogger(__name__)
+
+
+def compare_simple_type(impl: DefaultImpl, inspector_column: Column[Any], metadata_column: Column[Any]) -> bool:
+    """
+    Set StarRocks' specific simple type comparison logic for some special cases.
+
+    For some special cases:
+        - meta.BOOLEAN equals to conn.TINYINT(1)
+        - meta.STRING equals to conn.VARCHAR(65533)
+
+    Args:
+        impl: The implementation of the dialect.
+        inspector_column: The column from the inspector.
+        metadata_column: The column from the metadata.
+
+    Returns:
+        True if the types are different, False if the types are the same.
+    """
+    inspector_type = inspector_column.type
+    metadata_type = metadata_column.type
+    
+    # logger.debug(f"compare_simple_type: inspector_type: {inspector_type}, metadata_type: {metadata_type}")
+    # Scenario 1.a: model defined BOOLEAN, database stored TINYINT(1)
+    if (isinstance(metadata_type, BOOLEAN) and 
+        isinstance(inspector_type, TINYINT) and
+        getattr(inspector_type, 'display_width', None) == 1):
+        return False
+        
+    # Scenario 1.b: model defined TINYINT(1), database may display as Boolean (theoretically not possible, but for safety)
+    if (isinstance(metadata_type, TINYINT) and 
+        getattr(metadata_type, 'display_width', None) == 1 and
+        isinstance(inspector_type, BOOLEAN)):
+        return False
+    
+    # Scenario 2.a: model defined STRING, database stored VARCHAR(65533)
+    if (isinstance(metadata_type, STRING) and
+        isinstance(inspector_type, VARCHAR) and
+        getattr(inspector_type, 'length', None) == 65533):
+        return False
+    
+    # Scenario 2.b: model defined VARCHAR(65533), database stored STRING (theoretically not possible, but for safety)
+    if (isinstance(metadata_type, VARCHAR) and
+        getattr(metadata_type, 'length', None) == 65533 and
+        isinstance(inspector_type, STRING)):
+        return False
+        
+    # Other cases use default comparison logic from the parent class
+    from starrocks.alembic.starrocks import StarrocksImpl
+    return super(StarrocksImpl, impl).compare_type(inspector_column, metadata_column)
+
+
+def compare_complex_type(impl: DefaultImpl, inspector_type: sqltypes.TypeEngine, metadata_type: sqltypes.TypeEngine) -> bool:
+    """
+    Recursively compares two StarRocks SQLAlchemy complex types.
+    Returns True if they are different, False if they are the same.
+
+    Args:
+        impl: The implementation of the dialect. It should be a StarRocksImpl instance.
+        inspector_type: The type from the inspector.
+        metadata_type: The type from the metadata.
+
+    Returns:
+        True if the types are different, False if the types are the same.
+    """
+    if type(inspector_type) is not type(metadata_type):
+        return True  # Different classes
+
+    if isinstance(inspector_type, ARRAY):
+        # We know metadata_type is also ARRAY due to the initial type check
+        return compare_complex_type(impl, inspector_type.item_type, metadata_type.item_type)
+
+    if isinstance(inspector_type, MAP):
+        # We know metadata_type is also MAP
+        if compare_complex_type(impl, inspector_type.key_type, metadata_type.key_type):
+            return True
+        return compare_complex_type(impl, inspector_type.value_type, metadata_type.value_type)
+
+    if isinstance(inspector_type, STRUCT):
+        # We know metadata_type is also STRUCT
+        if len(inspector_type.field_tuples) != len(metadata_type.field_tuples):
+            return True  # Different number of fields
+
+        # Compare field names and types in order. StarRocks STRUCTs are order-sensitive.
+        for (name1, type1_sub), (name2, type2_sub) in zip(
+            inspector_type.field_tuples, metadata_type.field_tuples
+        ):
+            if name1 != name2:
+                return True
+            if compare_complex_type(impl, type1_sub, type2_sub):
+                return True
+        return False
+
+    # For simple types and other types, use compare_simple_type by composing fake columns
+    conn_col = Column("fake_conn_col", inspector_type)
+    meta_col = Column("fake_meta_col", metadata_type)
+    return compare_simple_type(impl, conn_col, meta_col)
 
 
 def comparators_dispatch_for_starrocks(dispatch_type: str):

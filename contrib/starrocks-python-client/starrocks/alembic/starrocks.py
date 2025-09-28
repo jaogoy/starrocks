@@ -3,6 +3,8 @@ from sqlalchemy import Column, MetaData, Table
 from typing import Any, Optional
 import logging
 
+from starrocks import datatype
+from starrocks.alembic import compare
 from starrocks.datatype import BIGINT, BOOLEAN, STRING, TINYINT, VARCHAR
 
 
@@ -41,35 +43,29 @@ class StarrocksImpl(MySQLImpl):
         Set StarRocks' specific type comparison logic for some special cases.
 
         For some special cases:
-            - meta.BOOLEAN equals to conn.TINYINT(1)
-            - meta.STRING equals to conn.VARCHAR(65533)
+            - complex type comparison: ARRAY, MAP, STRUCT
+            - simple type comparison:
+                - meta.BOOLEAN equals to conn.TINYINT(1)
+                - meta.STRING equals to conn.VARCHAR(65533)
+        
+        Args:   
+            inspector_column: The column from the inspector.
+            metadata_column: The column from the metadata.
+
+        Returns:
+            True if the types are different, False if the types are the same.
         """
         inspector_type = inspector_column.type
         metadata_type = metadata_column.type
         
-        # Scenario 1.a: model defined BOOLEAN, database stored TINYINT(1)
-        if (isinstance(metadata_type, BOOLEAN) and 
-            isinstance(inspector_type, TINYINT) and
-            getattr(inspector_type, 'display_width', None) == 1):
-            return False
-            
-        # Scenario 1.b: model defined TINYINT(1), database may display as Boolean (theoretically not possible, but for safety)
-        if (isinstance(metadata_type, TINYINT) and 
-            getattr(metadata_type, 'display_width', None) == 1 and
-            isinstance(inspector_type, BOOLEAN)):
-            return False
-        
-        # Scenario 2.a: model defined STRING, database stored VARCHAR(65533)
-        if (isinstance(metadata_type, STRING) and
-            isinstance(inspector_type, VARCHAR) and
-            getattr(inspector_type, 'length', None) == 65533):
-            return False
-        
-        # Scenario 2.b: model defined VARCHAR(65533), database stored STRING (theoretically not possible, but for safety)
-        if (isinstance(metadata_type, VARCHAR) and
-            isinstance(inspector_type, STRING) and
-            getattr(inspector_type, 'length', None) == 65533):
-            return False
-            
-        # Other cases use default comparison logic
-        return super().compare_type(inspector_column, metadata_column)
+        # Handle complex type comparison.
+        if isinstance(metadata_type, datatype.StructuredType):
+            # If the inspector found a different base type, they are different.
+            if not isinstance(inspector_type, type(metadata_type)):
+                return True
+
+            # Perform deep, recursive comparison.
+            # Returns True if different, False if same.
+            return compare.compare_complex_type(self, inspector_type, metadata_type)
+
+        return compare.compare_simple_type(self, inspector_column, metadata_column)
