@@ -9,7 +9,7 @@ from alembic.ddl import DefaultImpl
 from alembic.operations.ops import AlterColumnOp, AlterTableOp, UpgradeOps
 from sqlalchemy import Column, quoted_name
 from sqlalchemy.engine.reflection import Inspector
-from sqlalchemy.exc import NotSupportedError
+from sqlalchemy.exc import ArgumentError, NotSupportedError
 from sqlalchemy.sql import sqltypes
 from sqlalchemy.sql.schema import Table
 
@@ -1064,6 +1064,9 @@ def compare_starrocks_column_agg_type(
     
     Check for changes in StarRocks-specific attributes like aggregate type.
     """
+    if conn_col is None or metadata_col is None:
+        raise ArgumentError(f"Both conn column and meta column should not be None.")
+
     conn_opts = CaseInsensitiveDict(
         {k: v for k, v in conn_col.dialect_options[DialectName].items() if v is not None}
     )
@@ -1085,6 +1088,10 @@ def compare_starrocks_column_agg_type(
             None, None
         )
 
+    # we need to set it in the AlterColumnOp, because the KEY/AGG_TYPE is always needed.
+    # TODO: But currently, it's not passed to MySQLModifyColumn
+    alter_column_op.kw[ColumnAggInfoKeyWithPrefix.AGG_TYPE] = meta_agg_type
+
 
 @comparators_dispatch_for_starrocks("column")
 def compare_starrocks_column_autoincrement(
@@ -1102,6 +1109,9 @@ def compare_starrocks_column_autoincrement(
 
     StarRocks does not support changing the autoincrement of a column.
     """
+    if conn_col is None or metadata_col is None:
+        raise ArgumentError(f"Both conn column and meta column should not be None.")
+
     # Because we can't inpsect the autoincrement, we can't do the check the difference.
     if conn_col.autoincrement != metadata_col.autoincrement and \
             "auto" != metadata_col.autoincrement:

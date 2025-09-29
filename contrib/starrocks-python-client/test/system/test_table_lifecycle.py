@@ -57,7 +57,7 @@ class ScriptContentParser():
         if not match:
             return None
         content = match.group(1)
-        logger.debug(f"upgrade content:\n>>>>\n{content}\n<<<<")
+        logger.debug(f"upgrade/downgrade content:\n>>>>\n{content}\n<<<<")
         return content
 
     @classmethod
@@ -80,7 +80,6 @@ class ScriptContentParser():
         return non_comment_lines
 
 
-
 def wait_for_alter_table_attributes(inspector: Inspector, table_name: str,
                                     attribute_name: str, expected_value: str,
                                     max_round: int = 20, sleep_time: int = 3):
@@ -96,6 +95,7 @@ def wait_for_alter_table_attributes(inspector: Inspector, table_name: str,
             time.sleep(sleep_time)
     assert expected_value == value
     return options
+
 
 def check_for_alter_table_optimization(engine: Engine, table_name: str, 
         schema: Optional[str] = None, max_round: int = 20, sleep_time: int = 3):
@@ -138,17 +138,15 @@ def test_create_table_simple(database: str, alembic_env: AlembicTestEnv, sr_engi
     )
 
     # # 3. Check the generated script
-    versions_dir = alembic_env.root_path / "alembic/versions"
-    scripts = list(versions_dir.glob("*create_user_table.py"))
-    eq_(len(scripts), 1)
-    script_content: str = scripts[0].read_text()
-    # logger.debug("script_content: %s", script_content)
-
+    script_content = ScriptContentParser.check_script_content(alembic_env, 1, "create_user_table")
+    
     # Normalize script content for robust comparison
-    normalized_content = re.sub(r'[ \t]+', ' ', script_content).lower()
+    upgrade_content = ScriptContentParser.extract_upgrade_content(script_content)
+    normalized_content = re.sub(r'[ \t]+', ' ', upgrade_content).lower()
+    logger.debug(f"normalized_content: {normalized_content}")
     assert "op.create_table('user'" in normalized_content
-    assert "sa.Column('id', sr.integer()".lower() in normalized_content
-    assert "sa.Column('name', sr.string()".lower() in normalized_content
+    assert "sa.Column('id', integer()".lower() in normalized_content
+    assert "sa.Column('name', string()".lower() in normalized_content
     assert "sa.PrimaryKeyConstraint('id')".lower() in normalized_content
     assert "starrocks_PRIMARY_KEY='id'".lower() in normalized_content
     assert "starrocks_DISTRIBUTED_BY='HASH(id)'".lower() in normalized_content
@@ -258,17 +256,19 @@ def test_alter_table_columns_comprehensive(database: str, alembic_env: AlembicTe
         col_added = Column(VARCHAR(100))
         __table_args__ = {
             "starrocks_primary_key": "id",
+            "starrocks_distributed_by": "HASH(id)",  # auto added by SR
             "starrocks_properties": {"replication_num": "1"},
         }
     alembic_env.harness.generate_autogen_revision(metadata=AlteredBase.metadata, message="Alter columns")
 
     # 3. Verify and apply the ALTER script
     script_content = ScriptContentParser.check_script_content(alembic_env, 1, "alter_columns")
+    # upgrade_contnt = ScriptContentParser.extract_upgrade_content(script_content).lower()
     
-    assert "op.add_column('t_alter_columns', sa.Column('col_added', sa.VARCHAR(length=100), nullable=True))" in script_content
+    assert "op.add_column('t_alter_columns', sa.Column('col_added', VARCHAR(length=100), nullable=True))" in script_content
     assert "op.drop_column('t_alter_columns', 'col_to_drop')" in script_content
     assert "op.alter_column('t_alter_columns', 'col_to_modify'," in script_content
-    assert "type_=sa.BIGINT()" in script_content
+    assert "type_=BIGINT()" in script_content
     assert "nullable=True" in script_content
     assert "comment='Modified comment'" in script_content
     

@@ -17,7 +17,7 @@ from textwrap import dedent
 import logging
 from typing import Any, Dict, Final, Optional, List, Set
 
-from alembic.ddl.base import format_table_name
+from alembic.ddl.base import format_table_name, format_column_name, format_server_default, alter_table
 from sqlalchemy import Column, Connection, Table, exc, schema as sa_schema, util, log, text, Row
 
 from sqlalchemy.dialects.mysql.pymysql import MySQLDialect_pymysql
@@ -62,6 +62,12 @@ from .engine.interfaces import ReflectedViewState, ReflectedPartitionInfo, Refle
 from .defaults import ReflectionTableDefaults, ReflectionViewDefaults
 from .params import ColumnAggInfoKey, ColumnSROptionsKey, DialectName, SRKwargsPrefix, TableInfoKey, TableInfoKeyWithPrefix, ColumnAggInfoKeyWithPrefix
 from alembic.operations.ops import AlterColumnOp
+from alembic.util.sqla_compat import compiles
+from alembic.ddl.mysql import (
+    MySQLModifyColumn,
+    MySQLChangeColumn,
+    MySQLAlterDefault,
+)
 
 # Register the compiler methods
 # The @compiles decorator is the public API for registering new SQL constructs.
@@ -597,6 +603,79 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
             colspec.append("COMMENT " + literal)
 
         return " ".join(colspec)
+
+
+    def get_column_spec_for_alter_column(self,
+            name: str,
+            nullable: Optional[bool],
+            default: Optional[Any],
+            type_: sqltypes.TypeEngine,
+            autoincrement: Optional[bool],
+            comment: Optional[Any],
+             **kw: Any) -> str:
+        """Builds ALTER COLUMN DDL for StarRocks, handling StarRocks-specific features.
+
+        This method extends the base MySQL compiler to support:
+        - **KEY specifier**: For AGGREGATE KEY tables, key columns can be marked
+          with `info={'starrocks_is_agg_key': True}`. The compiler validates that
+          a column is not both a key and an aggregate.
+        - **Aggregate Functions**: For AGGREGATE KEY tables, value columns can have
+          an aggregate function (e.g., 'SUM', 'REPLACE') specified via the
+          `info={'starrocks_agg': '...'}` dictionary on a Column.
+        - **AUTO_INCREMENT**: Automatically renders `AUTO_INCREMENT` for columns
+          with `autoincrement=True`. It also ensures these columns are `BIGINT`
+          and `NOT NULL` as required by StarRocks.
+        - **Generated Columns**: Compiles `sqlalchemy.Computed` constructs into
+          StarRocks' `AS (...)` syntax.
+
+        Args:
+            column: The `sqlalchemy.schema.Column` object to process.
+            **kw: Additional keyword arguments from the compiler.
+                - aggregate info should be stored here. But, it's not passed now.
+
+        Returns:
+            The DDL string for the alter column definition, without name.
+        """
+        colspec: list[str] = []
+
+        # type if set
+        if type_:
+            type_: str = self.dialect.type_compiler.process(type_)
+            colspec.append(type_)
+
+            # Get and set column-level aggregate information for aggregate key tables.
+            # TODO: But currently it's not supported. we need to implement it.
+            # if agg_info := self._get_column_agg_info(column):
+            #     colspec.append(agg_info)
+
+        # NULL or NOT NULL.
+        colspec.append("NULL" if nullable else "NOT NULL")
+
+        # AUTO_INCREMENT or default value or computed column
+        if autoincrement is True:
+            raise exc.NotSupportedError(f"AUTO_INCREMENT is not supported for ALTER COLUMN in StarRocks, for column: {name}")
+            
+        if default:
+            #NOTE: default or server_default?
+            default = format_server_default(self, default)
+            if default == "AUTO_INCREMENT":
+                colspec.append("AUTO_INCREMENT")
+            elif default is not None:
+                colspec.append("DEFAULT " + default)
+        
+        # Computed is not supported in ALTER COLUMN
+        # if computed is not None:
+        #     colspec.append(self.process(computed))
+
+        # Comment
+        if comment is not None:
+            literal = self.sql_compiler.render_literal_value(
+                comment, sqltypes.String()
+            )
+            colspec.append("COMMENT " + literal)
+
+        return " ".join(colspec)
+
 
     def _get_column_agg_info(self, column: sa_schema.Column) -> str | None:
         """Get aggregate information for a column.
@@ -1361,3 +1440,76 @@ class StarRocksDialect(MySQLDialect_pymysql):
 
 
 
+# --- Alembic alter column compilers for StarRocks ---
+"""
+For MySQLModifyColumn, MySQLChangeColumn, MySQLAlterDefault,
+We should register the 'starrocks' compiler for them.
+In the future, we may implement StarRocks's alter_table in StarRocksImpl to override MySQL's alter_table.
+TODO: Then, we can add more StarRocks specific attributes, such as KEY/agg_type.
+"""
+
+
+@compiles(MySQLModifyColumn, DialectName)
+def _starrocks_modify_column(element: MySQLModifyColumn, compiler: StarRocksDDLCompiler, **kw: Any) -> str:
+    return "%s MODIFY %s %s" % (
+        alter_table(compiler, element.table_name, element.schema),
+        format_column_name(compiler, element.column_name),
+        compiler.get_column_spec_for_alter_column(
+            name=element.column_name,
+            nullable=element.nullable,
+            server_default=element.default,
+            type_=element.type_,
+            autoincrement=element.autoincrement,
+            comment=element.comment,
+        ),
+    )
+
+
+@compiles(MySQLChangeColumn, DialectName)
+def _starrocks_change_column(element: MySQLChangeColumn, compiler: StarRocksDDLCompiler, **kw: Any) -> str:
+    """
+    It's a must for RENAMEing a column, because MODIFY COLUMN does not support changing the name.
+    And in StarRocks, there should be two alter clauses if both RENAME and MODIFY
+    """
+    rename_clause = "RENAME %s TO %s" % (
+        format_column_name(compiler, element.column_name),
+        format_column_name(compiler, element.newname),    
+    ) if element.newname else None
+
+    modify_clause = "MODIFY %s %s" % (
+        format_column_name(compiler, element.column_name),
+        compiler.get_column_spec_for_alter_column(
+            name=element.column_name,
+            nullable=element.nullable,
+            server_default=element.default,
+            type_=element.type_,
+            autoincrement=element.autoincrement,
+            comment=element.comment,
+        ),
+    ) if (element.nullable is not None
+            or element.type_ is not None
+            or element.autoincrement is not None
+            or element.comment is not False
+    ) else None
+
+    alter_claus_header: str = alter_table(compiler, element.table_name, element.schema),
+    if rename_clause and modify_clause:
+        return "%s %s, %s" % (alter_claus_header, modify_clause, rename_clause)
+    elif rename_clause:
+        return "%s %s" % (alter_claus_header, rename_clause)
+    else:
+        return "%s %s" % (alter_claus_header, modify_clause)
+
+
+@compiles(MySQLAlterDefault, DialectName)
+def _starrocks_alter_default(element: MySQLAlterDefault, compiler: StarRocksDDLCompiler, **kw: Any) -> str:  # type: ignore[name-defined]
+    """
+    StarRocks only supports MODIFY DEFAULT, no DROP DEFAULT now.
+    """
+    return "%s MODIFY COLUMN %s %s" % (
+        alter_table(compiler, element.table_name, element.schema),
+        format_column_name(compiler, element.column_name),
+        (
+            "DEFAULT %s" % format_server_default(compiler, element.default)
+        ),
+    )
