@@ -21,32 +21,10 @@ from starrocks.datatype import (
     ARRAY, MAP, STRUCT
 )
 from test.system.conftest import AlembicTestEnv
-from test.system.test_table_lifecycle import UPGRADE_STR, DOWNGRADE_STR
+from test.system.test_table_lifecycle import ScriptContentParser
 
 
 logger = logging.getLogger(__name__)
-
-_UPGRADE_REGEX = re.compile(UPGRADE_STR + r"(.*?)(?=" + DOWNGRADE_STR + r"|\Z)", re.DOTALL)
-
-
-def _extract_upgrade_content(script: str) -> Optional[str]:
-    """Extract the body of the upgrade() function from an Alembic migration script."""
-    match = _UPGRADE_REGEX.search(script)
-    if not match:
-        return None
-    content = match.group(1)
-    logger.debug(f"upgrade content:\n>>>>\n{content}\n<<<<")
-    return content
-
-
-def _extract_non_comment_lines(content: str) -> List[str]:
-    """Extract the non-comment lines from an Alembic migration script."""
-    non_comment_lines = [line for line in content.split('\n') 
-                        if line.strip() and not line.strip().startswith('#')]
-    non_comment_lines_str = '\n'.join(non_comment_lines)
-    logger.debug(f"non comment lines:\n>>>>\n{non_comment_lines_str}\n<<<<")
-
-    return non_comment_lines
 
 
 def test_complex_type_comparison_actually_works(database: str, alembic_env: AlembicTestEnv, sr_engine: Engine):
@@ -131,11 +109,9 @@ def test_complex_type_comparison_actually_works(database: str, alembic_env: Alem
         metadata=Base2.metadata,
         message="Modify complex types"
     )
-    
-    from .test_table_lifecycle import UPGRADE_STR, DOWNGRADE_STR, check_script_content
 
     # 4. Check that migration was actually generated (not empty)
-    script_content = check_script_content(alembic_env, 1, "modify_complex_types")
+    script_content = ScriptContentParser.check_script_content(alembic_env, 1, "modify_complex_types")
     
     # 5. Verify that the migration contains actual changes
     # The script should NOT be empty - it should contain operations to handle the type changes
@@ -145,13 +121,13 @@ def test_complex_type_comparison_actually_works(database: str, alembic_env: Alem
     # The migration should contain some kind of operation
     # Since StarRocks doesn't support direct column type changes for complex types,
     # the migration might contain warnings or custom operations
-    upgrade_content = _extract_upgrade_content(script_content)
+    upgrade_content = ScriptContentParser.extract_upgrade_content(script_content)
     assert upgrade_content is not None
     upgrade_content = upgrade_content.strip()
     
     # The upgrade section should not be empty (should contain at least a pass or some operation)
     # If it only contains comments and pass, that might indicate the comparison logic isn't working
-    non_comment_lines = _extract_non_comment_lines(upgrade_content)
+    non_comment_lines = ScriptContentParser.extract_non_comment_lines(upgrade_content)
     
     # We expect at least some kind of operation or acknowledgment of the change
     # This could be a warning comment, a custom operation, or an error indication
@@ -219,14 +195,13 @@ def test_array_item_type_changes_detected(database: str, alembic_env: AlembicTes
     )
     
     # 4. Verify migration was generated
-    from .test_table_lifecycle import UPGRADE_STR, DOWNGRADE_STR, check_script_content
-    script_content = check_script_content(alembic_env, 1, "change_array_item_types")
+    script_content = ScriptContentParser.check_script_content(alembic_env, 1, "change_array_item_types")
     
     # Verify it's not an empty migration
-    upgrade_content = _extract_upgrade_content(script_content)
+    upgrade_content = ScriptContentParser.extract_upgrade_content(script_content)
     assert upgrade_content is not None
     upgrade_content = upgrade_content.strip()
-    non_comment_lines = _extract_non_comment_lines(upgrade_content)
+    non_comment_lines = ScriptContentParser.extract_non_comment_lines(upgrade_content)
     
     assert len(non_comment_lines) > 0, \
         "Array type change migration should contain operations"
@@ -282,15 +257,14 @@ def test_map_key_value_type_changes_detected(database: str, alembic_env: Alembic
     )
     
     # 4. Verify migration was generated
-    from .test_table_lifecycle import UPGRADE_STR, DOWNGRADE_STR, check_script_content
-    script_content = check_script_content(alembic_env, 1, "change_map_types")
+    script_content = ScriptContentParser.check_script_content(alembic_env, 1, "change_map_types")
     
     # Verify it's not an empty migration
-    upgrade_content = _extract_upgrade_content(script_content)
+    upgrade_content = ScriptContentParser.extract_upgrade_content(script_content)
     assert upgrade_content is not None
     upgrade_content = upgrade_content.strip()
     
-    non_comment_lines = _extract_non_comment_lines(upgrade_content)
+    non_comment_lines = ScriptContentParser.extract_non_comment_lines(upgrade_content)
     
     assert len(non_comment_lines) > 0, \
         "MAP type change migration should contain operations"
@@ -352,16 +326,15 @@ def test_struct_field_changes_detected(database: str, alembic_env: AlembicTestEn
     )
     
     # 4. Verify migration was generated
-    from .test_table_lifecycle import UPGRADE_STR, DOWNGRADE_STR, check_script_content
-    script_content = check_script_content(alembic_env, 1, "change_struct_fields")
+    script_content = ScriptContentParser.check_script_content(alembic_env, 1, "change_struct_fields")
     
     # The migration should detect the VARCHAR length change and INTEGER->STRING change
     # but should NOT detect the BOOLEAN->TINYINT(1) change due to equivalence rules
-    upgrade_content = _extract_upgrade_content(script_content)
+    upgrade_content = ScriptContentParser.extract_upgrade_content(script_content)
     assert upgrade_content is not None
     upgrade_content = upgrade_content.strip()
     
-    non_comment_lines = _extract_non_comment_lines(upgrade_content)
+    non_comment_lines = ScriptContentParser.extract_non_comment_lines(upgrade_content)
     
     # Should contain operations for the real changes (name length, age type)
     assert len(non_comment_lines) > 0, \
@@ -438,11 +411,11 @@ def test_special_equivalence_rules_work_correctly(database: str, alembic_env: Al
     logger.debug("Equivalence test migration: %s", script_content)
     
     # The migration should be essentially empty since all changes are equivalent types
-    upgrade_content = _extract_upgrade_content(script_content)
+    upgrade_content = ScriptContentParser.extract_upgrade_content(script_content)
     assert upgrade_content is not None
     upgrade_content = upgrade_content.strip()
 
-    non_comment_lines = _extract_non_comment_lines(upgrade_content)
+    non_comment_lines = ScriptContentParser.extract_non_comment_lines(upgrade_content)
     # For equivalent types, the migration should be empty or contain only 'pass'
     assert len(non_comment_lines) <= 1, \
         f"Equivalent type changes should not generate operations, got: {non_comment_lines}"

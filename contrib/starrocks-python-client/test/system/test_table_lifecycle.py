@@ -1,7 +1,7 @@
 import logging
 import re
 import time
-from typing import Optional
+from typing import List, Optional
 
 from sqlalchemy import Column, Engine, Inspector, inspect
 from starrocks.datatype import (
@@ -35,15 +35,50 @@ def bind_print_sql_before_execute(engine: Engine):
     event.listen(engine, "before_cursor_execute", print_sql_before_execute)
 
 
-def check_script_content(alembic_env: AlembicTestEnv, script_num: int, script_name: str) -> str:
-    """Check the content of the script.
-    """
-    versions_dir = alembic_env.root_path / "alembic/versions"
-    scripts = list(versions_dir.glob(f"*{script_name}.py"))
-    assert len(scripts) == script_num
-    script_content = scripts[0].read_text()
-    logger.debug(f"script_content:\n>>>>\n{script_content}\n<<<<")
-    return script_content
+class ScriptContentParser():
+    UPGRADE_EXTRACTION_REGEX = re.compile(UPGRADE_STR + r"(.*?)(?=" + DOWNGRADE_STR + r"|\Z)", re.DOTALL)
+    DOWNGRADE_EXTRACTION_REGEX = re.compile(DOWNGRADE_STR + r"(.*?)(?=" + UPGRADE_STR + r"|\Z)", re.DOTALL)
+
+    @classmethod
+    def check_script_content(cls, alembic_env: AlembicTestEnv, script_num: int, script_name: str) -> str:
+        """Check the content of the script.
+        """
+        versions_dir = alembic_env.root_path / "alembic/versions"
+        scripts = list(versions_dir.glob(f"*{script_name}.py"))
+        assert len(scripts) == script_num
+        script_content = scripts[0].read_text()
+        logger.debug(f"script_content:\n>>>>\n{script_content}\n<<<<")
+        return script_content
+
+    @classmethod
+    def _extract_upgrade_or_downgrade_content(cls, header: str, script: str) -> Optional[str]:
+        """Extract the body of the upgrade() function from an Alembic migration script."""
+        match = cls.UPGRADE_EXTRACTION_REGEX.search(script)
+        if not match:
+            return None
+        content = match.group(1)
+        logger.debug(f"upgrade content:\n>>>>\n{content}\n<<<<")
+        return content
+
+    @classmethod
+    def extract_upgrade_content(cls, script: str) -> Optional[str]:
+        """Extract the body of the upgrade() function from an Alembic migration script."""
+        return cls._extract_upgrade_or_downgrade_content(cls.UPGRADE_EXTRACTION_REGEX, script)
+
+    @classmethod
+    def extract_downgrade_content(cls, script: str) -> Optional[str]:
+        return cls._extract_upgrade_or_downgrade_content(cls.DOWNGRADE_EXTRACTION_REGEX, script)
+    
+    @classmethod
+    def extract_non_comment_lines(cls, content: str) -> List[str]:
+        """Extract the non-comment lines from an Alembic migration script."""
+        non_comment_lines = [line for line in content.split('\n') 
+                            if line.strip() and not line.strip().startswith('#')]
+        non_comment_lines_str = '\n'.join(non_comment_lines)
+        logger.debug(f"non comment lines:\n>>>>\n{non_comment_lines_str}\n<<<<")
+
+        return non_comment_lines
+
 
 
 def wait_for_alter_table_attributes(inspector: Inspector, table_name: str,
@@ -143,9 +178,9 @@ def test_idempotency_comprehensive(database: str, alembic_env: AlembicTestEnv, s
     class KitchenSink(Base):
         __tablename__ = "t_kitchen_sink"
         # Column Types
-        col_pk = Column(INTEGER, primary_key=True)
+        col_pk = Column(INTEGER(8), primary_key=True)
         col_bool = Column(BOOLEAN, primary_key=True)
-        col_tinyint = Column(TINYINT, comment="a tiny int")
+        col_tinyint = Column(TINYINT(2), comment="a tiny int")
         col_smallint = Column(SMALLINT)
         col_bigint = Column(BIGINT, nullable=False)
         col_largeint = Column(LARGEINT, default=0)
@@ -157,8 +192,16 @@ def test_idempotency_comprehensive(database: str, alembic_env: AlembicTestEnv, s
         col_string = Column(STRING, comment="a string")
         col_date = Column(DATE)
         col_datetime = Column(DATETIME)
-        col_array = Column(ARRAY(INTEGER))
-        col_map = Column(MAP(STRING, INTEGER))
+        col_array = Column(ARRAY(VARCHAR(20)))
+        col_map = Column(MAP(STRING, DECIMAL(5, 2)))
+        col_struct = Column(STRUCT(name=VARCHAR(50), age=INTEGER(10)))
+        col_nested = Column(STRUCT(
+            name=VARCHAR(100),
+            details=MAP(
+                STRING,
+                ARRAY(STRUCT(item_id=INTEGER, price=DECIMAL(10, 2)))
+            )
+        ))
         col_json = Column(JSON)
         col_hll = Column(HLL)
         col_bitmap = Column(BITMAP)
@@ -174,7 +217,7 @@ def test_idempotency_comprehensive(database: str, alembic_env: AlembicTestEnv, s
 
     # 2. Generate initial revision and upgrade
     alembic_env.harness.generate_autogen_revision(metadata=Base.metadata, message="Create kitchen sink")
-    check_script_content(alembic_env, 1, "create_kitchen_sink")
+    ScriptContentParser.check_script_content(alembic_env, 1, "create_kitchen_sink")
     logger.debug("Upgrade to head.")
     alembic_env.harness.upgrade("head")
 
@@ -182,7 +225,7 @@ def test_idempotency_comprehensive(database: str, alembic_env: AlembicTestEnv, s
     alembic_env.harness.generate_autogen_revision(metadata=Base.metadata, message="Second run kitchen sink")
 
     # 4. Verify that NO new script was generated
-    script_content = check_script_content(alembic_env, 1, "second_run_kitchen_sink")
+    script_content = ScriptContentParser.check_script_content(alembic_env, 1, "second_run_kitchen_sink")
     EMPTY_UPGRADE_PATTERN = re.compile(UPGRADE_STR + r"pass")
     EMPTY_DOWNGRADE_PATTERN = re.compile(DOWNGRADE_STR + r"pass")
     is_true(re.search(EMPTY_UPGRADE_PATTERN, script_content), "Upgrade script should be empty")
@@ -220,7 +263,7 @@ def test_alter_table_columns_comprehensive(database: str, alembic_env: AlembicTe
     alembic_env.harness.generate_autogen_revision(metadata=AlteredBase.metadata, message="Alter columns")
 
     # 3. Verify and apply the ALTER script
-    script_content = check_script_content(alembic_env, 1, "alter_columns")
+    script_content = ScriptContentParser.check_script_content(alembic_env, 1, "alter_columns")
     
     assert "op.add_column('t_alter_columns', sa.Column('col_added', sa.VARCHAR(length=100), nullable=True))" in script_content
     assert "op.drop_column('t_alter_columns', 'col_to_drop')" in script_content
@@ -296,7 +339,7 @@ def test_alter_table_attributes_distribution(database: str, alembic_env: Alembic
     alembic_env.harness.generate_autogen_revision(metadata=AlteredBase.metadata, message="Alter attr")
 
     # 3. Verify and apply the ALTER script
-    script_content = check_script_content(alembic_env, 1, "alter_attr")
+    script_content = ScriptContentParser.check_script_content(alembic_env, 1, "alter_attr")
     # is_true(re.search(r"op\.create_table_comment\(\s*'t_alter_attr',\s*(:comment=)?\s*'A new table comment'", script_content))
     is_true(re.search(r"op\.alter_table_distribution\(\s*'t_alter_attr',\s*'HASH\(id2\)',\s*buckets=3", script_content))
     # is_true(re.search(r"op\.alter_table_order\(\s*'t_alter_attr',\s*'name'", script_content))
@@ -354,7 +397,7 @@ def test_alter_table_order_by(database: str, alembic_env: AlembicTestEnv, sr_eng
     alembic_env.harness.generate_autogen_revision(metadata=AlteredBase.metadata, message="Alter order")
 
     # 3. Verify and apply the ALTER script
-    script_content = check_script_content(alembic_env, 1, "alter_order")
+    script_content = ScriptContentParser.check_script_content(alembic_env, 1, "alter_order")
     is_true(re.search(r"op\.alter_table_order\(\s*'t_alter_order',\s*'name'", script_content))
 
     alembic_env.harness.upgrade("head")
@@ -415,7 +458,7 @@ def test_alter_table_properties_and_comment(database: str, alembic_env: AlembicT
     alembic_env.harness.generate_autogen_revision(metadata=AlteredBase.metadata, message="Alter props")
     
     # 3. Verify and apply the ALTER script
-    script_content = check_script_content(alembic_env, 1, "alter_props")
+    script_content = ScriptContentParser.check_script_content(alembic_env, 1, "alter_props")
     assert "op.alter_table" in script_content
     assert "'replicated_storage': 'false'" in script_content
     assert "'default.storage_medium': 'SSD'" in script_content
