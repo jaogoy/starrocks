@@ -1,4 +1,4 @@
 from . import compare, ops, toimpl, render
-from .starrocks import StarrocksImpl
+from .starrocks import StarRocksImpl
 
-__all__ = []
+__all__ = ["StarRocksImpl"]

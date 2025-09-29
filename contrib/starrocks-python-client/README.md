@@ -178,7 +178,7 @@ Minimal example (env.py):
 ```python
 from alembic import context
 from sqlalchemy import engine_from_config, pool, MetaData
-from starrocks.alembic.starrocks import StarrocksImpl  # ensure impl registered
+from starrocks.alembic.starrocks import StarRocksImpl  # ensure impl registered
 from starrocks.sql.schema import View
 
 config = context.config
@@ -187,18 +187,22 @@ target_metadata = MetaData()
 my_view = View('v_demo', 'SELECT 1 AS c')
 target_metadata.info.setdefault('views', {})[(my_view, None)] = my_view
 
+
 def run_migrations_offline():
     url = config.get_main_option("sqlalchemy.url")
     context.configure(url=url, target_metadata=target_metadata, literal_binds=True)
     with context.begin_transaction():
         context.run_migrations()
 
+
 def run_migrations_online():
-    connectable = engine_from_config(config.get_section(config.config_ini_section), prefix="sqlalchemy.", poolclass=pool.NullPool)
+    connectable = engine_from_config(config.get_section(config.config_ini_section), prefix="sqlalchemy.",
+                                     poolclass=pool.NullPool)
     with connectable.connect() as connection:
         context.configure(connection=connection, target_metadata=target_metadata)
         with context.begin_transaction():
             context.run_migrations()
+
 
 if context.is_offline_mode():
     run_migrations_offline()

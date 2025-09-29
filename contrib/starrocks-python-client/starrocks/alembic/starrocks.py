@@ -11,7 +11,7 @@ from starrocks.datatype import BIGINT, VARCHAR
 logger = logging.getLogger(__name__)
 
 
-class StarrocksImpl(MySQLImpl):
+class StarRocksImpl(MySQLImpl):
     """Alembic DDL implementation for StarRocks."""
 
     __dialect__ = "starrocks"

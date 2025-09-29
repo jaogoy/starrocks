@@ -499,11 +499,11 @@ class TestDataTypeReflection:
         reflected_table = self._create_and_reflect_table(sr_root_engine, table_name, original_table)
         
         # Use the type comparison logic to check consistency
-        from starrocks.alembic.starrocks import StarrocksImpl
+        from starrocks.alembic.starrocks import StarRocksImpl
         from starrocks.dialect import StarRocksDialect
         
         dialect = StarRocksDialect()
-        impl = StarrocksImpl(
+        impl = StarRocksImpl(
             dialect=dialect,
             connection=None,
             as_sql=False,

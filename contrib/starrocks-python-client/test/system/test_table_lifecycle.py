@@ -3,6 +3,7 @@ import re
 import time
 from typing import List, Optional
 
+import pytest
 from sqlalchemy import Column, Engine, Inspector, inspect
 from starrocks.datatype import (
     LARGEINT, VARCHAR, STRING, INTEGER, BIGINT, BOOLEAN, TINYINT, SMALLINT,
@@ -97,21 +98,39 @@ def wait_for_alter_table_attributes(inspector: Inspector, table_name: str,
     return options
 
 
-def check_for_alter_table_optimization(engine: Engine, table_name: str, 
+def wait_for_alter_table_column_or_optimization(engine: Engine, table_name: str, alter_type: str,
         schema: Optional[str] = None, max_round: int = 20, sleep_time: int = 3):
+    states = ['RUNNING', 'PENDING', 'WAITING_TXN']
+    for i in range(max_round):
+        done = False
+        for state in states:
+            done = _wait_for_alter_table_column_or_optimization(
+                engine, table_name, alter_type, schema, 1, 0, state=state)
+            logger.debug(f"show alter table {state}(round={i+1}) for table: {table_name}, schema: {schema}. done: {done}")
+            if not done:
+                break
+        if done:
+            break
+        time.sleep(sleep_time)
+    return done
+
+def _wait_for_alter_table_column_or_optimization(engine: Engine, table_name: str, alter_type: str,
+        schema: Optional[str] = None, max_round: int = 20, sleep_time: int = 3, state='RUNNING'):
     """Wait for the ALTER TABLE to finish.
     Because the state may not change after the ALTER TABLE command is executed successfully.
+    Return:
+        True for done or nothing
     """
     with engine.connect() as conn:
         for i in range(max_round):
-            show_alter_table_optimization = StarRocksDialect.get_show_alter_table_optimization(conn, table_name, schema)
-            logger.debug(f"get show alter table optimization (round={i+1}) for table: {table_name}, schema: {schema}. %s", show_alter_table_optimization)
-            if not show_alter_table_optimization:  # no running alter table
+            show_alter_table_row = StarRocksDialect.get_show_alter_table(conn, table_name, alter_type, schema, state=state)
+            logger.debug(f"show_alter_table_row: {show_alter_table_row}")
+            if not show_alter_table_row:  # no running alter table
                 break
             time.sleep(sleep_time)
-        if show_alter_table_optimization:
+        if show_alter_table_row:
             logger.warning("ALTER TABLE is still running for table: %s", table_name)
-    return not show_alter_table_optimization
+    return not show_alter_table_row
 
 
 def test_create_table_simple(database: str, alembic_env: AlembicTestEnv, sr_engine: Engine):
@@ -230,8 +249,11 @@ def test_idempotency_comprehensive(database: str, alembic_env: AlembicTestEnv, s
     is_true(re.search(EMPTY_DOWNGRADE_PATTERN, script_content), "Downgrade script should be empty")
 
 
+@pytest.mark.skip(reason="SR doesn't support submiting multiple alter table cluases.")
 def test_alter_table_columns_comprehensive(database: str, alembic_env: AlembicTestEnv, sr_engine: Engine):
-    """Tests comprehensive column alterations: ADD, DROP, ALTER."""
+    """Tests comprehensive column alterations: ADD, DROP, ALTER.
+    TODO: we may batch ALTER COLUMN clauses into one clause.
+    """
     # 1. Initial state
     Base = declarative_base()
     class User(Base):
@@ -297,6 +319,182 @@ def test_alter_table_columns_comprehensive(database: str, alembic_env: AlembicTe
             assert isinstance(col['type'], INTEGER)
             assert col['nullable'] is False
             assert col['comment'] == 'Original comment'
+
+
+def test_add_table_column_only(database: str, alembic_env: AlembicTestEnv, sr_engine: Engine):
+    """Tests adding multiple columns via autogenerate and applying them in one revision."""
+    # 1. Initial state
+    Base = declarative_base()
+    class TAddOnly(Base):
+        __tablename__ = "t_add_only"
+        id = Column(INTEGER, primary_key=True)
+        __table_args__ = {
+            "starrocks_primary_key": "id",
+            "starrocks_distributed_by": "HASH(id)",
+            "starrocks_properties": {"replication_num": "1"},
+        }
+    alembic_env.harness.generate_autogen_revision(metadata=Base.metadata, message="Initial add only")
+    alembic_env.harness.upgrade("head")
+
+    # 2. Alter metadata: add two columns
+    AlteredBase = declarative_base()
+    class TAddOnlyAltered(AlteredBase):
+        __tablename__ = "t_add_only"
+        id = Column(INTEGER, primary_key=True)
+        col_added_v = Column(VARCHAR(100))
+        col_added_i = Column(INTEGER)
+        __table_args__ = {
+            "starrocks_primary_key": "id",
+            "starrocks_distributed_by": "HASH(id)",
+            "starrocks_properties": {"replication_num": "1"},
+        }
+    alembic_env.harness.generate_autogen_revision(metadata=AlteredBase.metadata, message="Add column")
+
+    # 3. Verify and apply the ALTER script
+    script_content = ScriptContentParser.check_script_content(alembic_env, 1, "add_column")
+    upgrade_content = ScriptContentParser.extract_upgrade_content(script_content).strip()
+    assert "op.add_column('t_add_only', sa.Column('col_added_v', VARCHAR(length=100), nullable=True))" in upgrade_content
+    assert "op.add_column('t_add_only', sa.Column('col_added_i', INTEGER(), nullable=True))" in upgrade_content
+    assert "op.drop_column(" not in upgrade_content
+    assert "op.alter_column(" not in upgrade_content
+
+    alembic_env.harness.upgrade("head")
+
+    # 4. Verify in DB and then downgrade
+    inspector = inspect(sr_engine)
+    columns = inspector.get_columns("t_add_only")
+    col_names = [c['name'] for c in columns]
+    logger.debug(f"columns after addtion: {col_names}")
+    assert 'col_added_v' in col_names
+    assert 'col_added_i' in col_names
+
+    alembic_env.harness.downgrade("-1")
+    inspector.clear_cache()
+    columns = inspector.get_columns("t_add_only")
+    col_names = [c['name'] for c in columns]
+    logger.debug(f"columns after rollback of addtion: {col_names}")
+    assert 'col_added_v' not in col_names
+    assert 'col_added_i' not in col_names
+
+def test_drop_table_column_only(database: str, alembic_env: AlembicTestEnv, sr_engine: Engine):
+    """Tests dropping multiple columns via autogenerate and applying them in one revision."""
+    # 1. Initial state
+    Base = declarative_base()
+    class TDropOnly(Base):
+        __tablename__ = "t_drop_only"
+        id = Column(INTEGER, primary_key=True)
+        col_to_drop1 = Column(STRING)
+        col_to_drop2 = Column(INTEGER)
+        __table_args__ = {
+            "starrocks_primary_key": "id",
+            "starrocks_distributed_by": "HASH(id)",
+            "starrocks_properties": {"replication_num": "1"},
+        }
+    alembic_env.harness.generate_autogen_revision(metadata=Base.metadata, message="Initial drop only")
+    alembic_env.harness.upgrade("head")
+
+    # 2. Alter metadata: drop one column
+    AlteredBase = declarative_base()
+    class TDropOnlyAltered(AlteredBase):
+        __tablename__ = "t_drop_only"
+        id = Column(INTEGER, primary_key=True)
+        __table_args__ = {
+            "starrocks_primary_key": "id",
+            "starrocks_distributed_by": "HASH(id)",
+            "starrocks_properties": {"replication_num": "1"},
+        }
+    alembic_env.harness.generate_autogen_revision(metadata=AlteredBase.metadata, message="Drop column")
+
+    # 3. Verify and apply the ALTER script
+    script_content = ScriptContentParser.check_script_content(alembic_env, 1, "drop_column")
+    upgrade_content = ScriptContentParser.extract_upgrade_content(script_content)
+    assert "op.drop_column('t_drop_only', 'col_to_drop1')" in upgrade_content
+    assert "op.drop_column('t_drop_only', 'col_to_drop2')" in upgrade_content
+    assert "op.add_column(" not in upgrade_content
+    assert "op.alter_column(" not in upgrade_content
+
+    alembic_env.harness.upgrade("head")
+
+    # 4. Verify in DB and then downgrade
+    inspector = inspect(sr_engine)
+    columns = inspector.get_columns("t_drop_only")
+    col_names = [c['name'] for c in columns]
+    logger.debug(f"columns after drop: {col_names}")
+    assert 'col_to_drop1' not in col_names
+    assert 'col_to_drop2' not in col_names
+
+    alembic_env.harness.downgrade("-1")
+    inspector.clear_cache()
+    columns = inspector.get_columns("t_drop_only")
+    col_names = [c['name'] for c in columns]
+    logger.debug(f"columns after rollback of drop: {col_names}")
+    assert 'col_to_drop1' in col_names
+    assert 'col_to_drop2' in col_names
+
+
+def test_alter_table_column_only(database: str, alembic_env: AlembicTestEnv, sr_engine: Engine):
+    """Tests altering a single column's type/nullability/comment."""
+    # 1. Initial state
+    Base = declarative_base()
+    class TAlterOnly(Base):
+        __tablename__ = "t_alter_only"
+        id = Column(INTEGER, primary_key=True)
+        col_to_modify = Column(INTEGER, nullable=False, comment="Original comment")
+        __table_args__ = {
+            "starrocks_primary_key": "id",
+            "starrocks_distributed_by": "HASH(id)",
+            "starrocks_properties": {"replication_num": "1"},
+        }
+    alembic_env.harness.generate_autogen_revision(metadata=Base.metadata, message="Initial alter only")
+    alembic_env.harness.upgrade("head")
+
+    # 2. Alter metadata: change type, nullability, and comment
+    AlteredBase = declarative_base()
+    class TAlterOnlyAltered(AlteredBase):
+        __tablename__ = "t_alter_only"
+        id = Column(INTEGER, primary_key=True)
+        col_to_modify = Column(BIGINT, nullable=True, comment="Modified comment")
+        __table_args__ = {
+            "starrocks_primary_key": "id",
+            "starrocks_distributed_by": "HASH(id)",
+            "starrocks_properties": {"replication_num": "1"},
+        }
+    alembic_env.harness.generate_autogen_revision(metadata=AlteredBase.metadata, message="Alter column")
+
+    # 3. Verify and apply the ALTER script
+    script_content = ScriptContentParser.check_script_content(alembic_env, 1, "alter_column")
+    upgrade_content = ScriptContentParser.extract_upgrade_content(script_content)
+    assert "op.alter_column('t_alter_only', 'col_to_modify'," in upgrade_content
+    assert "type_=BIGINT()" in script_content
+    assert "nullable=True" in upgrade_content
+    assert "comment='Modified comment'" in upgrade_content
+    assert "op.add_column(" not in upgrade_content
+    assert "op.drop_column(" not in upgrade_content
+
+    alembic_env.harness.upgrade("head")
+
+    wait_for_alter_table_column_or_optimization(sr_engine, "t_alter_only", "COLUMN")
+    # 4. Verify in DB and then downgrade
+    inspector = inspect(sr_engine)
+    columns = inspector.get_columns("t_alter_only")
+    for col in columns:
+        if col['name'] == 'col_to_modify':
+            logger.debug(f"col_to_modify after alter: {col}")
+            assert isinstance(col['type'], BIGINT)
+            assert col['nullable'] is True
+            assert col['comment'] == 'Modified comment'
+
+    # Can't rollback from BITINT -> INT
+    # alembic_env.harness.downgrade("-1")
+    # wait_for_alter_table_column_or_optimization(sr_engine, "t_alter_only", "COLUMN")
+    # inspector.clear_cache()
+    # columns = inspector.get_columns("t_alter_only")
+    # for col in columns:
+    #     if col['name'] == 'col_to_modify':
+    #         logger.debug(f"col_to_modify after rollback of alter: {col}")
+    #         assert isinstance(col['type'], INTEGER)
+    #         assert col['nullable'] is False
+    #         assert col['comment'] == 'Original comment'
 
 
 def test_alter_table_attributes_distribution(database: str, alembic_env: AlembicTestEnv, sr_engine: Engine):

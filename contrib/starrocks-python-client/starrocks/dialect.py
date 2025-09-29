@@ -36,7 +36,7 @@ from sqlalchemy.sql.expression import Delete, Select
 from sqlalchemy.engine import reflection
 
 from starrocks.types import ColumnAggType, SystemRunMode, TableType
-from starrocks.utils import CaseInsensitiveDict, TableAttributeNormalizer
+from starrocks.utils import TableAttributeNormalizer
 
 from .datatype import (
     TINYINT, SMALLINT, INTEGER, BIGINT, LARGEINT, BOOLEAN,
@@ -58,7 +58,7 @@ from .sql.ddl import (
 )
 from .sql.schema import View
 from .reflection import StarRocksInspector
-from .engine.interfaces import ReflectedViewState, ReflectedPartitionInfo, ReflectedState
+from .engine.interfaces import ReflectedViewState, ReflectedState
 from .defaults import ReflectionTableDefaults, ReflectionViewDefaults
 from .params import ColumnAggInfoKey, ColumnSROptionsKey, DialectName, SRKwargsPrefix, TableInfoKey, TableInfoKeyWithPrefix, ColumnAggInfoKeyWithPrefix
 from alembic.operations.ops import AlterColumnOp
@@ -649,14 +649,15 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
             #     colspec.append(agg_info)
 
         # NULL or NOT NULL.
-        colspec.append("NULL" if nullable else "NOT NULL")
+        if nullable is not None:
+            colspec.append("NULL" if nullable else "NOT NULL")
 
         # AUTO_INCREMENT or default value or computed column
         if autoincrement is True:
             raise exc.NotSupportedError(f"AUTO_INCREMENT is not supported for ALTER COLUMN in StarRocks, for column: {name}")
             
-        if default:
-            #NOTE: default or server_default?
+        # DEFAULT: include if provided (even if 0 or empty string), but not when False
+        if default is not False and default is not None:
             default = format_server_default(self, default)
             if default == "AUTO_INCREMENT":
                 colspec.append("AUTO_INCREMENT")
@@ -668,7 +669,7 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
         #     colspec.append(self.process(computed))
 
         # Comment
-        if comment is not None:
+        if comment:
             literal = self.sql_compiler.render_literal_value(
                 comment, sqltypes.String()
             )
@@ -1451,13 +1452,13 @@ TODO: Then, we can add more StarRocks specific attributes, such as KEY/agg_type.
 
 @compiles(MySQLModifyColumn, DialectName)
 def _starrocks_modify_column(element: MySQLModifyColumn, compiler: StarRocksDDLCompiler, **kw: Any) -> str:
-    return "%s MODIFY %s %s" % (
+    return "%s MODIFY COLUMN %s %s" % (
         alter_table(compiler, element.table_name, element.schema),
         format_column_name(compiler, element.column_name),
         compiler.get_column_spec_for_alter_column(
             name=element.column_name,
             nullable=element.nullable,
-            server_default=element.default,
+            default=element.default,
             type_=element.type_,
             autoincrement=element.autoincrement,
             comment=element.comment,
@@ -1470,18 +1471,21 @@ def _starrocks_change_column(element: MySQLChangeColumn, compiler: StarRocksDDLC
     """
     It's a must for RENAMEing a column, because MODIFY COLUMN does not support changing the name.
     And in StarRocks, there should be two alter clauses if both RENAME and MODIFY
+    NOTE: Currently, MySQL will pass column_type even for RENAME COLUMN. SO, it will also generate
+    an MODIFY COLUMN clause, because we don't know whether the column_type is changed, and StarRocks 
+    doesn't support CHANGE COLUMN.
     """
-    rename_clause = "RENAME %s TO %s" % (
+    rename_clause = "RENAME COLUMN %s TO %s" % (
         format_column_name(compiler, element.column_name),
         format_column_name(compiler, element.newname),    
     ) if element.newname else None
 
-    modify_clause = "MODIFY %s %s" % (
+    modify_clause = "MODIFY COLUMN %s %s" % (
         format_column_name(compiler, element.column_name),
         compiler.get_column_spec_for_alter_column(
             name=element.column_name,
             nullable=element.nullable,
-            server_default=element.default,
+            default=element.default,
             type_=element.type_,
             autoincrement=element.autoincrement,
             comment=element.comment,
@@ -1492,7 +1496,7 @@ def _starrocks_change_column(element: MySQLChangeColumn, compiler: StarRocksDDLC
             or element.comment is not False
     ) else None
 
-    alter_claus_header: str = alter_table(compiler, element.table_name, element.schema),
+    alter_claus_header: str = alter_table(compiler, element.table_name, element.schema)
     if rename_clause and modify_clause:
         return "%s %s, %s" % (alter_claus_header, modify_clause, rename_clause)
     elif rename_clause:

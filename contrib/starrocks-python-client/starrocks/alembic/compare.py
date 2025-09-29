@@ -92,8 +92,8 @@ def compare_simple_type(impl: DefaultImpl, inspector_column: Column[Any], metada
         return False
         
     # Other cases use default comparison logic from the parent class
-    from starrocks.alembic.starrocks import StarrocksImpl
-    return super(StarrocksImpl, impl).compare_type(inspector_column, metadata_column)
+    from starrocks.alembic.starrocks import StarRocksImpl
+    return super(StarRocksImpl, impl).compare_type(inspector_column, metadata_column)
 
 
 def compare_complex_type(impl: DefaultImpl, inspector_type: sqltypes.TypeEngine, metadata_type: sqltypes.TypeEngine) -> bool:
@@ -102,7 +102,7 @@ def compare_complex_type(impl: DefaultImpl, inspector_type: sqltypes.TypeEngine,
     Returns True if they are different, False if they are the same.
 
     Args:
-        impl: The implementation of the dialect. It should be a StarrocksImpl instance.
+        impl: The implementation of the dialect. It should be a StarRocksImpl instance.
         inspector_type: The type from the inspector.
         metadata_type: The type from the metadata.
 

@@ -254,3 +254,47 @@ Note that changes to non-alterable attributes like `ENGINE`, `table type`, or `p
 ### Limitations
 
 - **`AUTO_INCREMENT`**: Currently, the reflection process does not detect the `AUTO_INCREMENT` property on columns. This is because this information is not available in a structured way from `information_schema.columns` or `SHOW FULL COLUMNS`. While it is present in the output of `SHOW CREATE TABLE`, parsing this is not yet implemented. Therefore, Alembic's `autogenerate` will not be able to detect or generate migrations for `AUTO_INCREMENT` columns.
+
+### Important Considerations for Autogenerate
+
+#### Handling Time-Consuming ALTER TABLE Operations
+
+StarRocks schema change operations (like `ALTER TABLE ... MODIFY COLUMN`) can be time-consuming. Because one table can have only one ongoing schema change operation at a time, StarRocks does not allow other schema change jobs to be submitted for the same table.
+
+> Some other operations, such as rename, comment, partition, index and swap, are synchronous operations, a command return indicates that the execution is finished. Then, the next operation can be submitted.
+
+Alembic's `autogenerate` feature may produce an `upgrade()` function that contains multiple consecutive `op.alter_column()` or other `ALTER TABLE` calls for a single table. For example:
+
+```python
+def upgrade():
+    # Potentially problematic if schema changes are slow
+    op.alter_column('my_table', 'col1', ...)
+    op.alter_column('my_table', 'col2', ...)
+```
+
+If the first `alter_column` operation takes a long time to complete, the second one will fail when Alembic tries to execute it immediately after the first.
+
+**Recommendation:**
+
+For potentially slow `ALTER TABLE` operations, it is recommended to modify only **one column or one table property at a time**. After `autogenerate` creates a migration script, review it. If you see multiple `ALTER` operations for the same table that you suspect might be slow, you should split them into separate migration scripts.
+
+However, operations that are typically fast, such as adding or dropping multiple columns, can often be executed together without issue.
+
+#### Limitations on Modifying Complex Type Columns
+
+While `alembic autogenerate` may generate migration scripts to modify columns with complex data types (`ARRAY`, `MAP`, `STRUCT`), StarRocks itself imposes strict limitations on what modifications are actually permissible. Attempting to run an unsupported `ALTER TABLE` operation will result in an error from the database.
+
+It is crucial to be aware of the following StarRocks limitations:
+
+- **STRUCT**: StarRocks only supports adding, dropping, or replacing sub-columns within a `STRUCT` type. The dialect does not yet support autogeneration for these changes.
+- **ARRAY/MAP**: Modifying columns of type `ARRAY` or `MAP` is **not supported**.
+- **Type Conversion**: Converting a column from a complex type to any other type (e.g., `ARRAY` to `STRING`) or vice-versa is **not supported**.
+
+**Recommendation:**
+
+Given these limitations, if you need to modify an `ARRAY`, `MAP`, or `STRUCT` column beyond what StarRocks supports, you should perform the migration manually. The recommended approach is to:
+
+1. Create a new column with the desired definition.
+2. Write a data migration script to copy and transform data from the old column to the new one.
+3. Update your application code to use the new column.
+4. Drop the old column in a separate migration.

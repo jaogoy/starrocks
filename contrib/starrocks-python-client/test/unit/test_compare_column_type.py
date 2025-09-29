@@ -5,14 +5,14 @@ from starrocks.datatype import (
     BIGINT, INTEGER, VARCHAR, DECIMAL, TINYINT, BOOLEAN, STRING, ARRAY, MAP, STRUCT,
     SMALLINT, LARGEINT, FLOAT, DOUBLE, CHAR, DATE, DATETIME, HLL, BITMAP, PERCENTILE, JSON
 )
-from starrocks.alembic.starrocks import StarrocksImpl
+from starrocks.alembic.starrocks import StarRocksImpl
 from starrocks.dialect import StarRocksDialect
 
 
 def run_compare(type1, type2):
     """
-    Helper function to compare two types using StarrocksImpl.compare_type.
-    The method under test is `StarrocksImpl.compare_type`.
+    Helper function to compare two types using StarRocksImpl.compare_type.
+    The method under test is `StarRocksImpl.compare_type`.
 
     Args:
         type1: The SQLAlchemy type object for the inspector column.
@@ -25,7 +25,7 @@ def run_compare(type1, type2):
     metadata_column = Column("test_col", type2)
 
     dialect = StarRocksDialect()
-    impl = StarrocksImpl(
+    impl = StarRocksImpl(
         dialect=dialect,
         connection=None,
         as_sql=False,
@@ -200,7 +200,7 @@ complex_nested_params = [
 
 
 class TestCompareColumnType:
-    """Test suite for StarrocksImpl.compare_type."""
+    """Test suite for StarRocksImpl.compare_type."""
 
     @pytest.mark.parametrize("inspector_type, metadata_type, is_different", simple_type_params)
     def test_simple_types(self, inspector_type, metadata_type, is_different):
