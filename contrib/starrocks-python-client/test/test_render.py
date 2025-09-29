@@ -6,10 +6,21 @@ from starrocks.alembic.ops import (
 from starrocks.alembic.render import (
     _create_view, _drop_view, _alter_view,
     _create_materialized_view, _drop_materialized_view,
-    _render_alter_table_properties, _render_alter_table_distribution, _render_alter_table_order
+    _render_alter_table_properties, _render_alter_table_distribution, _render_alter_table_order,
+    render_column_type
 )
+from starrocks.datatype import (
+    TINYINT, SMALLINT, INTEGER, BIGINT, LARGEINT, BOOLEAN,
+    DECIMAL, DOUBLE, FLOAT,
+    CHAR, VARCHAR, STRING, BINARY, VARBINARY,
+    DATETIME, DATE,
+    HLL, BITMAP, PERCENTILE, JSON,
+    ARRAY, MAP, STRUCT
+)
+from alembic.autogenerate.api import AutogenContext
 from unittest.mock import Mock
 import re
+import pytest
 
 
 def _normalize_py_call(s: str) -> str:
@@ -178,3 +189,161 @@ class TestTableRendering:
         op = AlterTablePropertiesOp("t1", {}, schema=None)
         rendered = _render_alter_table_properties(ctx, op)
         assert "op.alter_table_properties('t1', {})" in rendered
+
+
+# Test data for type rendering
+BASIC_RENDER_TEST_CASES = [
+    # (type_instance, expected_render)
+    (INTEGER(), "INTEGER()"),
+    (VARCHAR(255), "VARCHAR(255)"),
+    (DECIMAL(10, 2), "DECIMAL(10, 2)"),
+    (BOOLEAN(), "BOOLEAN()"),
+    (TINYINT(), "TINYINT()"),
+    (TINYINT(1), "TINYINT(1)"),
+    (SMALLINT(), "SMALLINT()"),
+    (BIGINT(), "BIGINT()"),
+    (LARGEINT(), "LARGEINT()"),
+    (FLOAT(), "FLOAT()"),
+    (DOUBLE(), "DOUBLE()"),
+    (CHAR(10), "CHAR(10)"),
+    (STRING(), "STRING()"),
+    (BINARY(10), "BINARY(10)"),
+    (VARBINARY(255), "VARBINARY(255)"),
+    (DATE(), "DATE()"),
+    (DATETIME(), "DATETIME()"),
+    (HLL(), "HLL()"),
+    (BITMAP(), "BITMAP()"),
+    (PERCENTILE(), "PERCENTILE()"),
+    (JSON(), "JSON()"),
+]
+
+COMPLEX_RENDER_TEST_CASES = [
+    # ARRAY types
+    (ARRAY(INTEGER), "ARRAY(INTEGER())"),
+    (ARRAY(VARCHAR(50)), "ARRAY(VARCHAR(50))"),
+    (ARRAY(ARRAY(STRING)), "ARRAY(ARRAY(STRING()))"),
+    (ARRAY(DECIMAL(10, 2)), "ARRAY(DECIMAL(10, 2))"),
+    
+    # MAP types
+    (MAP(STRING, INTEGER), "MAP(STRING(), INTEGER())"),
+    (MAP(VARCHAR(50), DOUBLE), "MAP(VARCHAR(50), DOUBLE())"),
+    (MAP(STRING, MAP(INTEGER, STRING)), "MAP(STRING(), MAP(INTEGER(), STRING()))"),
+    (MAP(STRING, DECIMAL(8, 2)), "MAP(STRING(), DECIMAL(8, 2))"),
+    
+    # STRUCT types
+    (STRUCT(name=STRING, age=INTEGER), "STRUCT(name=STRING(), age=INTEGER())"),
+    (STRUCT(id=INTEGER, name=VARCHAR(100), active=BOOLEAN), 
+     "STRUCT(id=INTEGER(), name=VARCHAR(100), active=BOOLEAN())"),
+    (STRUCT(user=STRUCT(id=INTEGER, name=STRING), metadata=MAP(STRING, STRING)), 
+     "STRUCT(user=STRUCT(id=INTEGER(), name=STRING()), metadata=MAP(STRING(), STRING()))"),
+]
+
+EDGE_CASE_RENDER_TEST_CASES = [
+    (VARCHAR(65533), "VARCHAR(65533)"),
+    (DECIMAL(38, 18), "DECIMAL(38, 18)"),
+    (STRUCT(id=INTEGER), "STRUCT(id=INTEGER())"),
+    (ARRAY(ARRAY(ARRAY(INTEGER))), "ARRAY(ARRAY(ARRAY(INTEGER())))"),
+]
+
+NON_STARROCKS_TYPE_TEST_CASES = [
+    # These should return False
+    ('column', INTEGER()),  # Wrong parameter type
+    ('type', "not_a_type"),  # Not a type object
+]
+
+
+class TestDataTypeRendering:
+    """Test rendering of StarRocks data types in Alembic autogenerate"""
+    
+    def _create_mock_autogen_context(self):
+        """Create a mock AutogenContext for testing"""
+        ctx = Mock()
+        ctx.imports = set()
+        return AutogenContext(ctx, {}, None, None, None)
+
+    @pytest.mark.parametrize("type_instance, expected_render", BASIC_RENDER_TEST_CASES)
+    def test_render_basic_types(self, type_instance, expected_render):
+        """Test rendering of basic data types"""
+        autogen_context = self._create_mock_autogen_context()
+        result = render_column_type('type', type_instance, autogen_context)
+        assert result == expected_render
+        assert "from starrocks import *" in autogen_context.imports
+
+    @pytest.mark.parametrize("type_instance, expected_render", COMPLEX_RENDER_TEST_CASES)
+    def test_render_complex_types(self, type_instance, expected_render):
+        """Test rendering of complex data types"""
+        autogen_context = self._create_mock_autogen_context()
+        result = render_column_type('type', type_instance, autogen_context)
+        assert result == expected_render
+
+    @pytest.mark.parametrize("type_instance, expected_render", EDGE_CASE_RENDER_TEST_CASES)
+    def test_render_edge_cases(self, type_instance, expected_render):
+        """Test edge cases in type rendering"""
+        autogen_context = self._create_mock_autogen_context()
+        result = render_column_type('type', type_instance, autogen_context)
+        assert result == expected_render
+
+    def test_render_deeply_nested_complex_type(self):
+        """Test rendering of deeply nested complex data types"""
+        autogen_context = self._create_mock_autogen_context()
+        
+        # Test ARRAY of MAP
+        result = render_column_type('type', ARRAY(MAP(STRING, INTEGER)), autogen_context)
+        assert result == "ARRAY(MAP(STRING(), INTEGER()))"
+        
+        # Test MAP of ARRAY
+        result = render_column_type('type', MAP(STRING, ARRAY(INTEGER)), autogen_context)
+        assert result == "MAP(STRING(), ARRAY(INTEGER()))"
+        
+        # Test STRUCT with ARRAY and MAP
+        result = render_column_type('type', STRUCT(
+            id=INTEGER,
+            tags=ARRAY(STRING),
+            metadata=MAP(STRING, STRUCT(value=STRING, count=INTEGER))
+        ), autogen_context)
+        expected = "STRUCT(id=INTEGER(), tags=ARRAY(STRING()), metadata=MAP(STRING(), STRUCT(value=STRING(), count=INTEGER())))"
+        assert result == expected
+
+    def test_render_non_starrocks_types(self):
+        """Test that non-StarRocks types are not handled by our renderer"""
+        from sqlalchemy import String as SQLAString, Integer as SQLAInteger
+        
+        autogen_context = self._create_mock_autogen_context()
+        
+        # Test SQLAlchemy String (should return False)
+        result = render_column_type('type', SQLAString(255), autogen_context)
+        assert result is False
+        
+        # Test SQLAlchemy Integer (should return False)
+        result = render_column_type('type', SQLAInteger(), autogen_context)
+        assert result is False
+
+    def test_render_non_type_objects(self):
+        """Test that non-type objects are not handled by our renderer"""
+        autogen_context = self._create_mock_autogen_context()
+        
+        # Test with non-type parameter (should return False)
+        result = render_column_type('column', INTEGER(), autogen_context)
+        assert result is False
+        
+        # Test with string object (should return False)
+        result = render_column_type('type', "not_a_type", autogen_context)
+        assert result is False
+
+    def test_imports_added_correctly(self):
+        """Test that proper imports are added to autogen context"""
+        autogen_context = self._create_mock_autogen_context()
+        
+        # Initially no imports
+        assert len(autogen_context.imports) == 0
+        
+        # Render a StarRocks type
+        render_column_type('type', INTEGER(), autogen_context)
+        
+        # Check that the import was added
+        assert "from starrocks import *" in autogen_context.imports
+        assert len(autogen_context.imports) == 1
+        
+        # Render another type, should not add duplicate import
+        render_column_type('type', VARCHAR(50), autogen_context)
+        assert len(autogen_context.imports) == 1

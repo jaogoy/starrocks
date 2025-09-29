@@ -5,7 +5,7 @@ import logging
 
 from starrocks import datatype
 from starrocks.alembic import compare
-from starrocks.datatype import BIGINT, BOOLEAN, STRING, TINYINT, VARCHAR
+from starrocks.datatype import BIGINT, VARCHAR
 
 
 logger = logging.getLogger(__name__)
@@ -61,11 +61,20 @@ class StarrocksImpl(MySQLImpl):
         # Handle complex type comparison.
         if isinstance(metadata_type, datatype.StructuredType):
             # If the inspector found a different base type, they are different.
+            is_different = False
             if not isinstance(inspector_type, type(metadata_type)):
-                return True
-
-            # Perform deep, recursive comparison.
-            # Returns True if different, False if same.
-            return compare.compare_complex_type(self, inspector_type, metadata_type)
+                is_different = True
+            else:
+                # Perform deep, recursive comparison.
+                # Returns True if different, False if same.
+                is_different = compare.compare_complex_type(self, inspector_type, metadata_type)
+            if is_different:
+                table: Optional[Table] = metadata_column.table
+                table_info_msg = f" of table: {table.name}, schema: {table.schema}," if table is not None else ""
+                logger.warning(f"Detected type change{table_info_msg} from inspector_type: {inspector_type!r} to metadata_type: {metadata_type!r}. "
+                            f"But, StarRocks does not support schema change for complex type columns. "
+                            f"You should check and change the metadata carefully to make sure there is no type difference for this column. "
+                            )
+            return is_different
 
         return compare.compare_simple_type(self, inspector_column, metadata_column)

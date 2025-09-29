@@ -67,24 +67,28 @@ def compare_simple_type(impl: DefaultImpl, inspector_column: Column[Any], metada
     if (isinstance(metadata_type, BOOLEAN) and 
         isinstance(inspector_type, TINYINT) and
         getattr(inspector_type, 'display_width', None) == 1):
+        logger.debug(f"compare_simple_type with BOOLEAN vs TINYINT(1), treat them as the same.")
         return False
         
     # Scenario 1.b: model defined TINYINT(1), database may display as Boolean (theoretically not possible, but for safety)
     if (isinstance(metadata_type, TINYINT) and 
         getattr(metadata_type, 'display_width', None) == 1 and
         isinstance(inspector_type, BOOLEAN)):
+        logger.debug(f"compare_simple_type with TINYINT(1) vs BOOLEAN, treat them as the same.")
         return False
     
     # Scenario 2.a: model defined STRING, database stored VARCHAR(65533)
     if (isinstance(metadata_type, STRING) and
         isinstance(inspector_type, VARCHAR) and
         getattr(inspector_type, 'length', None) == 65533):
+        logger.debug(f"compare_simple_type with STRING vs VARCHAR(65533), treat them as the same.")
         return False
     
     # Scenario 2.b: model defined VARCHAR(65533), database stored STRING (theoretically not possible, but for safety)
     if (isinstance(metadata_type, VARCHAR) and
         getattr(metadata_type, 'length', None) == 65533 and
         isinstance(inspector_type, STRING)):
+        logger.debug(f"compare_simple_type with VARCHAR(65533) vs STRING, treat them as the same.")
         return False
         
     # Other cases use default comparison logic from the parent class
@@ -98,14 +102,24 @@ def compare_complex_type(impl: DefaultImpl, inspector_type: sqltypes.TypeEngine,
     Returns True if they are different, False if they are the same.
 
     Args:
-        impl: The implementation of the dialect. It should be a StarRocksImpl instance.
+        impl: The implementation of the dialect. It should be a StarrocksImpl instance.
         inspector_type: The type from the inspector.
         metadata_type: The type from the metadata.
 
     Returns:
         True if the types are different, False if the types are the same.
     """
+    # First check if they are the exact same type class
+    # logger.debug(f"compare_complex_type with inspector_type: {inspector_type}, metadata_type: {metadata_type}.")
+    if not isinstance(metadata_type, datatype.StructuredType):
+        # For simple types and other types, use compare_simple_type by composing fake columns
+        conn_col = Column("fake_conn_col", inspector_type)
+        meta_col = Column("fake_meta_col", metadata_type)
+        return compare_simple_type(impl, conn_col, meta_col)
+
+    # Now, the type should be StructuredType (complex data type)
     if type(inspector_type) is not type(metadata_type):
+        logger.debug(f"compare_complex_type with different classes: inspector_type: {inspector_type}, metadata_type: {metadata_type}.")
         return True  # Different classes
 
     if isinstance(inspector_type, ARRAY):
@@ -115,12 +129,14 @@ def compare_complex_type(impl: DefaultImpl, inspector_type: sqltypes.TypeEngine,
     if isinstance(inspector_type, MAP):
         # We know metadata_type is also MAP
         if compare_complex_type(impl, inspector_type.key_type, metadata_type.key_type):
+            logger.debug(f"compare_complex_type with different key types of MAP: inspector_type: {inspector_type}, metadata_type: {metadata_type}.")
             return True
         return compare_complex_type(impl, inspector_type.value_type, metadata_type.value_type)
 
     if isinstance(inspector_type, STRUCT):
         # We know metadata_type is also STRUCT
         if len(inspector_type.field_tuples) != len(metadata_type.field_tuples):
+            logger.debug(f"compare_complex_type with different number of fields of STRUCT: inspector_type: {inspector_type}, metadata_type: {metadata_type}.")
             return True  # Different number of fields
 
         # Compare field names and types in order. StarRocks STRUCTs are order-sensitive.
@@ -128,15 +144,15 @@ def compare_complex_type(impl: DefaultImpl, inspector_type: sqltypes.TypeEngine,
             inspector_type.field_tuples, metadata_type.field_tuples
         ):
             if name1 != name2:
+                logger.debug(f"compare_complex_type with different field names of STRUCT: inspector_type: {inspector_type}, metadata_type: {metadata_type}.")
                 return True
             if compare_complex_type(impl, type1_sub, type2_sub):
+                logger.debug(f"compare_complex_type with different field types of STRUCT: inspector_type: {inspector_type}, metadata_type: {metadata_type}.")
                 return True
         return False
 
-    # For simple types and other types, use compare_simple_type by composing fake columns
-    conn_col = Column("fake_conn_col", inspector_type)
-    meta_col = Column("fake_meta_col", metadata_type)
-    return compare_simple_type(impl, conn_col, meta_col)
+    # should not reach here
+    return True
 
 
 def comparators_dispatch_for_starrocks(dispatch_type: str):
@@ -1056,7 +1072,7 @@ def compare_starrocks_column_agg_type(
     )
     conn_agg_type: str | None = conn_opts.get(ColumnAggInfoKey.AGG_TYPE)
     meta_agg_type: str | None = meta_opts.get(ColumnAggInfoKey.AGG_TYPE)
-    logger.debug(f"AGG_TYPE. conn_agg_type: {conn_agg_type}, meta_agg_type: {meta_agg_type}")
+    # logger.debug(f"AGG_TYPE. conn_agg_type: {conn_agg_type}, meta_agg_type: {meta_agg_type}")
 
     if meta_agg_type != conn_agg_type:
         # Update the alter_column_op with the new aggregate type. useless now
@@ -1087,7 +1103,8 @@ def compare_starrocks_column_autoincrement(
     StarRocks does not support changing the autoincrement of a column.
     """
     # Because we can't inpsect the autoincrement, we can't do the check the difference.
-    if conn_col.autoincrement != metadata_col.autoincrement:
+    if conn_col.autoincrement != metadata_col.autoincrement and \
+            "auto" != metadata_col.autoincrement:
         logger.warning(
             f"Detected AUTO_INCREMENT is changed for column {cname}. "
             f"conn_col.autoincrement: {conn_col.autoincrement}, "

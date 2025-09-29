@@ -21,8 +21,8 @@ from test.system.conftest import AlembicTestEnv
 logger = logging.getLogger(__name__)
 
 # the leading lines of upgrade and downgrade python script
-UPGRADE_STR = r"def upgrade\(\).*:\s*\n\s*#.*\n\s*"
-DOWNGRADE_STR = r"def downgrade\(\).*:\s*\n\s*#.*\n\s*"
+UPGRADE_STR = r"def upgrade\(\).*?:\s*\n\s*#.*?\n\s*"
+DOWNGRADE_STR = r"def downgrade\(\).*?:\s*\n\s*#.*?\n\s*"
 
 
 def print_sql_before_execute(conn, cursor, statement, parameters, context, executemany):
@@ -42,7 +42,7 @@ def check_script_content(alembic_env: AlembicTestEnv, script_num: int, script_na
     scripts = list(versions_dir.glob(f"*{script_name}.py"))
     assert len(scripts) == script_num
     script_content = scripts[0].read_text()
-    logger.debug("script_content: %s", script_content)
+    logger.debug(f"script_content:\n>>>>\n{script_content}\n<<<<")
     return script_content
 
 
@@ -174,8 +174,9 @@ def test_idempotency_comprehensive(database: str, alembic_env: AlembicTestEnv, s
 
     # 2. Generate initial revision and upgrade
     alembic_env.harness.generate_autogen_revision(metadata=Base.metadata, message="Create kitchen sink")
-    alembic_env.harness.upgrade("head")
     check_script_content(alembic_env, 1, "create_kitchen_sink")
+    logger.debug("Upgrade to head.")
+    alembic_env.harness.upgrade("head")
 
     # 3. Run autogenerate again
     alembic_env.harness.generate_autogen_revision(metadata=Base.metadata, message="Second run kitchen sink")

@@ -1,5 +1,6 @@
-from typing import Final
+from typing import Any, Final
 from alembic.autogenerate import renderers
+from sqlalchemy.types import TypeEngine
 from .ops import (
     CreateViewOp, DropViewOp, CreateMaterializedViewOp, DropMaterializedViewOp, AlterViewOp,
     AlterTablePropertiesOp, AlterTableDistributionOp, AlterTableOrderOp
@@ -7,10 +8,66 @@ from .ops import (
 from alembic.autogenerate.api import AutogenContext
 import logging
 
+from ..datatype import ARRAY, MAP, STRUCT
+
 logger = logging.getLogger("starrocks.alembic.render")
 
 
 op_param_indent: Final[str] = " " * 4
+
+
+def render_column_type(type_: str, obj: Any, autogen_context: AutogenContext):
+    """
+    Custom rendering function. To reander ARRAY, MAP, STRUCT, etc.
+    Currently, it's only used to import the starrocks.datatype module.
+    We will use __repr__ to render the type, without the prefix "sr."
+    """
+    # only care about the column type
+    if type_ != "type":
+        return False
+
+    logger.debug(f"rendering type: {obj!r}, type: {type_}, module: {obj.__class__.__module__}")
+    # Check if the object is a user-defined type in our custom module
+    if not isinstance(obj, TypeEngine) or not obj.__class__.__module__.startswith('starrocks.datatype'):
+        # For other objects, return False, let Alembic use the default rendering logic
+        return False
+
+    # Add the import we need
+    # autogen_context.imports.add("import starrocks.datatype as sr")
+    autogen_context.imports.add("from starrocks import *")
+    # Return the string representation we want
+    # obj.__class__.__name__ will get 'INTEGER', 'VARCHAR' etc.
+    # repr(obj) will contain parameters, such as 'VARCHAR(255)'
+
+    # if isinstance(obj, ARRAY):
+    #     return _render_array_type(obj, autogen_context)
+    # elif isinstance(obj, MAP):
+    #     return _render_map_type(obj, autogen_context)
+    # elif isinstance(obj, STRUCT):
+    #     return _render_struct_type(obj, autogen_context)
+    # else:
+    #     return f"sr.{repr(obj)}"
+
+    return f"{repr(obj)}"
+
+
+def _render_array_type(type_, autogen_context: AutogenContext) -> str:
+    """Render an ARRAY type for autogenerate."""
+    item_type_repr = render_column_type('type', type_.item_type, autogen_context)
+    return f"sr.ARRAY({item_type_repr})"
+
+
+def _render_map_type(type_, autogen_context: AutogenContext) -> str:
+    """Render a MAP type for autogenerate."""
+    key_type_repr = render_column_type('type', type_.key_type, autogen_context)
+    value_type_repr = render_column_type('type', type_.value_type, autogen_context)
+    return f"sr.MAP({key_type_repr}, {value_type_repr})"
+
+
+def _render_struct_type(type_, autogen_context: AutogenContext) -> str:
+    """Render a STRUCT type for autogenerate."""
+    fields_repr = render_column_type('type', type_.fields, autogen_context)
+    return f"sr.STRUCT({fields_repr})"
 
 
 def _quote_schema(schema: str) -> str:

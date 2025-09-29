@@ -1,7 +1,10 @@
 import pytest
 from sqlalchemy import Column
 
-from starrocks.datatype import BIGINT, INTEGER, VARCHAR, DECIMAL, TINYINT, BOOLEAN, STRING, ARRAY, MAP, STRUCT
+from starrocks.datatype import (
+    BIGINT, INTEGER, VARCHAR, DECIMAL, TINYINT, BOOLEAN, STRING, ARRAY, MAP, STRUCT,
+    SMALLINT, LARGEINT, FLOAT, DOUBLE, CHAR, DATE, DATETIME, HLL, BITMAP, PERCENTILE, JSON
+)
 from starrocks.alembic.starrocks import StarrocksImpl
 from starrocks.dialect import StarRocksDialect
 
@@ -42,16 +45,42 @@ simple_type_params = [
     pytest.param(INTEGER(), INTEGER(), False, id="INTEGER vs INTEGER (same)"),
     pytest.param(VARCHAR(10), VARCHAR(10), False, id="VARCHAR(10) vs VARCHAR(10) (same)"),
     pytest.param(DECIMAL(10, 2), DECIMAL(10, 2), False, id="DECIMAL(10, 2) vs DECIMAL(10, 2) (same)"),
+    pytest.param(TINYINT(), TINYINT(), False, id="TINYINT vs TINYINT (same)"),
+    pytest.param(SMALLINT(), SMALLINT(), False, id="SMALLINT vs SMALLINT (same)"),
+    pytest.param(LARGEINT(), LARGEINT(), False, id="LARGEINT vs LARGEINT (same)"),
+    pytest.param(FLOAT(), FLOAT(), False, id="FLOAT vs FLOAT (same)"),
+    pytest.param(DOUBLE(), DOUBLE(), False, id="DOUBLE vs DOUBLE (same)"),
+    pytest.param(CHAR(10), CHAR(10), False, id="CHAR(10) vs CHAR(10) (same)"),
+    pytest.param(DATE(), DATE(), False, id="DATE vs DATE (same)"),
+    pytest.param(DATETIME(), DATETIME(), False, id="DATETIME vs DATETIME (same)"),
+    pytest.param(HLL(), HLL(), False, id="HLL vs HLL (same)"),
+    pytest.param(BITMAP(), BITMAP(), False, id="BITMAP vs BITMAP (same)"),
+    # pytest.param(PERCENTILE(), PERCENTILE(), False, id="PERCENTILE vs PERCENTILE (same)"),  # Not supported by compiler yet
+    pytest.param(JSON(), JSON(), False, id="JSON vs JSON (same)"),
+    
     # 1.2 Equivalent types (special rules)
     pytest.param(TINYINT(1), BOOLEAN(), False, id="TINYINT(1) vs BOOLEAN (equivalent)"),
     pytest.param(BOOLEAN(), TINYINT(1), False, id="BOOLEAN vs TINYINT(1) (equivalent)"),
     pytest.param(VARCHAR(65533), STRING(), False, id="VARCHAR(65533) vs STRING (equivalent)"),
     pytest.param(STRING(), VARCHAR(65533), False, id="STRING vs VARCHAR(65533) (equivalent)"),
+    
     # 1.3 Different types
     pytest.param(INTEGER(), STRING(), True, id="INTEGER vs STRING (different)"),
     pytest.param(VARCHAR(10), VARCHAR(20), True, id="VARCHAR(10) vs VARCHAR(20) (different)"),
     pytest.param(DECIMAL(10, 2), DECIMAL(12, 4), True, id="DECIMAL(10,2) vs DECIMAL(12,4) (different)"),
     pytest.param(INTEGER(), BIGINT(), True, id="INTEGER vs BIGINT (different)"),
+    pytest.param(TINYINT(), SMALLINT(), True, id="TINYINT vs SMALLINT (different)"),
+    pytest.param(FLOAT(), DOUBLE(), True, id="FLOAT vs DOUBLE (different)"),
+    pytest.param(CHAR(10), VARCHAR(10), True, id="CHAR(10) vs VARCHAR(10) (different)"),
+    pytest.param(DATE(), DATETIME(), True, id="DATE vs DATETIME (different)"),
+    pytest.param(HLL(), BITMAP(), True, id="HLL vs BITMAP (different)"),
+    pytest.param(JSON(), STRING(), True, id="JSON vs STRING (different)"),
+    
+    # 1.4 Edge cases with parameters
+    pytest.param(TINYINT(2), BOOLEAN(), True, id="TINYINT(2) vs BOOLEAN (not equivalent)"),
+    pytest.param(VARCHAR(65532), STRING(), True, id="VARCHAR(65532) vs STRING (not equivalent)"),
+    pytest.param(DECIMAL(1, 0), DECIMAL(1, 1), True, id="DECIMAL precision/scale difference"),
+    pytest.param(FLOAT(10), FLOAT(20), False, id="FLOAT precision difference (ignored)"),
 ]
 
 # 2. Complex type vs Simple type
@@ -75,6 +104,10 @@ array_type_params = [
     pytest.param(ARRAY(ARRAY(INTEGER)), ARRAY(ARRAY(INTEGER)), False, id="Nested ARRAY (same)"),
     pytest.param(ARRAY(ARRAY(INTEGER)), ARRAY(ARRAY(STRING)), True, id="Nested ARRAY (different item type)"),
     pytest.param(ARRAY(MAP(STRING, INTEGER)), ARRAY(MAP(STRING, STRING)), True, id="Nested ARRAY with MAP (deep difference)"),
+    # Test special equivalence cases in ARRAY item types
+    pytest.param(ARRAY(TINYINT(1)), ARRAY(BOOLEAN), False, id="ARRAY item: TINYINT(1) vs BOOLEAN (equivalent)"),
+    pytest.param(ARRAY(VARCHAR(65533)), ARRAY(STRING), False, id="ARRAY item: VARCHAR(65533) vs STRING (equivalent)"),
+    pytest.param(ARRAY(BOOLEAN), ARRAY(TINYINT(1)), False, id="ARRAY item: BOOLEAN vs TINYINT(1) (equivalent)"),
 ]
 
 # 5. MAP type comparison
@@ -87,6 +120,11 @@ map_type_params = [
     pytest.param(MAP(STRING, ARRAY(INTEGER)), MAP(STRING, ARRAY(INTEGER)), False, id="Nested MAP with ARRAY (same)"),
     pytest.param(MAP(STRING, ARRAY(INTEGER)), MAP(STRING, ARRAY(STRING)), True, id="Nested MAP with ARRAY (deep difference)"),
     pytest.param(MAP(STRING, STRUCT(a=INTEGER)), MAP(STRING, STRUCT(a=STRING)), True, id="Nested MAP with STRUCT (deep difference)"),
+    # Test special equivalence cases in MAP key/value types
+    pytest.param(MAP(VARCHAR(65533), INTEGER), MAP(STRING(), INTEGER), False, id="MAP key: VARCHAR(65533) vs STRING (equivalent)"),
+    pytest.param(MAP(STRING(), INTEGER), MAP(VARCHAR(65533), INTEGER), False, id="MAP key: STRING vs VARCHAR(65533) (equivalent)"),
+    pytest.param(MAP(STRING, TINYINT(1)), MAP(STRING, BOOLEAN), False, id="MAP value: TINYINT(1) vs BOOLEAN (equivalent)"),
+    pytest.param(MAP(TINYINT(1), STRING), MAP(BOOLEAN, STRING), False, id="MAP key: TINYINT(1) vs BOOLEAN (equivalent)"),
 ]
 
 # 6. STRUCT type comparison
@@ -98,6 +136,10 @@ struct_type_params = [
     pytest.param(STRUCT(a=INTEGER), STRUCT(a=STRING), True, id="STRUCT (different field type)"),
     pytest.param(STRUCT(a=INTEGER, b=MAP(STRING, INTEGER)), STRUCT(a=INTEGER, b=MAP(STRING, INTEGER)), False, id="Nested STRUCT with MAP (same)"),
     pytest.param(STRUCT(a=INTEGER, b=MAP(STRING, INTEGER)), STRUCT(a=INTEGER, b=MAP(STRING, STRING)), True, id="Nested STRUCT with MAP (deep difference)"),
+    # Test special equivalence cases in STRUCT fields
+    pytest.param(STRUCT(flag=TINYINT(1)), STRUCT(flag=BOOLEAN), False, id="STRUCT field: TINYINT(1) vs BOOLEAN (equivalent)"),
+    pytest.param(STRUCT(text=VARCHAR(65533)), STRUCT(text=STRING), False, id="STRUCT field: VARCHAR(65533) vs STRING (equivalent)"),
+    pytest.param(STRUCT(flag=BOOLEAN), STRUCT(flag=TINYINT(1)), False, id="STRUCT field: BOOLEAN vs TINYINT(1) (equivalent)"),
 ]
 
 # 7. Complex nested types (ARRAY, MAP, STRUCT combined)
@@ -194,3 +236,109 @@ class TestCompareColumnType:
     def test_complex_nested_types(self, inspector_type, metadata_type, is_different):
         """Tests comparison of deeply nested complex types combining ARRAY, MAP, and STRUCT."""
         assert run_compare(inspector_type, metadata_type) == is_different
+
+    def test_real_world_scenarios(self):
+        """Test real-world complex type scenarios that might be problematic."""
+        
+        # E-commerce product catalog scenario
+        product_v1 = STRUCT(
+            id=BIGINT,
+            name=VARCHAR(255),
+            price=DECIMAL(10, 2),
+            categories=ARRAY(VARCHAR(50)),
+            attributes=MAP(VARCHAR(100), STRING),
+            inventory=STRUCT(
+                warehouse_id=INTEGER,
+                quantity=INTEGER,
+                last_updated=DATETIME
+            )
+        )
+        
+        # Same structure
+        product_v2 = STRUCT(
+            id=BIGINT,
+            name=VARCHAR(255),
+            price=DECIMAL(10, 2),
+            categories=ARRAY(VARCHAR(50)),
+            attributes=MAP(VARCHAR(100), STRING),
+            inventory=STRUCT(
+                warehouse_id=INTEGER,
+                quantity=INTEGER,
+                last_updated=DATETIME
+            )
+        )
+        
+        # Should be the same
+        assert run_compare(product_v1, product_v2) is False
+        
+        # Subtle difference: quantity INTEGER -> BIGINT
+        product_v3 = STRUCT(
+            id=BIGINT,
+            name=VARCHAR(255),
+            price=DECIMAL(10, 2),
+            categories=ARRAY(VARCHAR(50)),
+            attributes=MAP(VARCHAR(100), STRING),
+            inventory=STRUCT(
+                warehouse_id=INTEGER,
+                quantity=BIGINT,  # Changed from INTEGER
+                last_updated=DATETIME
+            )
+        )
+        
+        # Should be different
+        assert run_compare(product_v1, product_v3) is True
+
+    def test_edge_case_parameters(self):
+        """Test edge cases with type parameters that should be carefully handled."""
+        
+        # VARCHAR length edge cases
+        assert run_compare(VARCHAR(1), VARCHAR(1)) is False
+        assert run_compare(VARCHAR(1), VARCHAR(2)) is True
+        assert run_compare(VARCHAR(65533), VARCHAR(65533)) is False
+        
+        # DECIMAL precision/scale edge cases  
+        assert run_compare(DECIMAL(1, 0), DECIMAL(1, 0)) is False
+        assert run_compare(DECIMAL(1, 0), DECIMAL(1, 1)) is True
+        assert run_compare(DECIMAL(38, 18), DECIMAL(38, 18)) is False
+        assert run_compare(DECIMAL(38, 18), DECIMAL(38, 17)) is True
+        
+        # TINYINT display width edge cases
+        assert run_compare(TINYINT(1), TINYINT(1)) is False
+        assert run_compare(TINYINT(1), TINYINT(2)) is False  # no print width in SR?
+
+    def test_special_equivalence_in_deep_nesting(self):
+        """Test that special equivalence rules work correctly in deeply nested structures."""
+        
+        # Deep nesting with BOOLEAN <-> TINYINT(1) equivalence
+        deep1 = ARRAY(MAP(STRING, STRUCT(
+            flags=ARRAY(BOOLEAN),
+            metadata=MAP(VARCHAR(65533), TINYINT(1))
+        )))
+        
+        deep2 = ARRAY(MAP(STRING, STRUCT(
+            flags=ARRAY(TINYINT(1)),
+            metadata=MAP(STRING, BOOLEAN)
+        )))
+        
+        # Should be equivalent due to special rules
+        assert run_compare(deep1, deep2) is False
+        
+        # But this should be different (TINYINT(2) != BOOLEAN)
+        deep3 = ARRAY(MAP(STRING, STRUCT(
+            flags=ARRAY(TINYINT(2)),  # Not equivalent to BOOLEAN
+            metadata=MAP(STRING, BOOLEAN)
+        )))
+        
+        assert run_compare(deep1, deep3) is True
+
+    def test_case_sensitivity_in_struct_fields(self):
+        """Test case sensitivity behavior in STRUCT field names."""
+        
+        # Different case in field names
+        struct1 = STRUCT(Name=STRING, Age=INTEGER)
+        struct2 = STRUCT(name=STRING, age=INTEGER)
+        
+        # Current implementation treats names as case-sensitive, so they differ
+        # TODO: we may need to implement case-insensitive comparison
+        result = run_compare(struct1, struct2)
+        assert result is True
