@@ -17,6 +17,8 @@ from lark import LarkError
 import pytest
 from starrocks.drivers.parsers import parse_data_type
 from starrocks import datatype as datatype
+from starrocks.reflection import StarRocksTableDefinitionParser
+from starrocks.engine.interfaces import ReflectedTableKeyInfo
 
 
 # logger = logging.getLogger(__name__)
@@ -158,3 +160,40 @@ class TestDataTypeParser:
     def test_invalid_syntax(self, type_str):
         with pytest.raises(LarkError):
             parse_data_type(type_str)
+
+
+class TestKeyClauseParser:
+    @pytest.mark.parametrize(
+        "clause, expected",
+        [
+            ("PRIMARY KEY(id)", ReflectedTableKeyInfo(type="PRIMARY KEY", columns="id")),
+            ("PRIMARY KEY ( id )", ReflectedTableKeyInfo(type="PRIMARY KEY", columns="id")),
+            ("primary key(id, name)", ReflectedTableKeyInfo(type="PRIMARY KEY", columns="id, name")),
+            ("PRIMARY KEY ( id, name )", ReflectedTableKeyInfo(type="PRIMARY KEY", columns="id, name")),
+            ("DUPLICATE KEY (k)", ReflectedTableKeyInfo(type="DUPLICATE KEY", columns="k")),
+            ("duplicate key ( k1, k2 )", ReflectedTableKeyInfo(type="DUPLICATE KEY", columns="k1, k2")),
+            ("AGGREGATE KEY(k)", ReflectedTableKeyInfo(type="AGGREGATE KEY", columns="k")),
+            ("aggregate key ( k1, k2 )", ReflectedTableKeyInfo(type="AGGREGATE KEY", columns="k1, k2")),
+        ],
+    )
+    def test_valid_clauses(self, clause, expected):
+        got = StarRocksTableDefinitionParser.parse_key_clause(clause)
+        assert isinstance(got, ReflectedTableKeyInfo)
+        assert str(got) == str(expected)
+
+    @pytest.mark.parametrize(
+        "clause",
+        [
+            None,
+            "",
+            "   ",
+            "KEY (id)",
+            "PRIMARY(id)",
+            "PRIMARY KEY",  # missing columns
+            "PRIMARY KEY (",  # bad paren
+            "PRIMARY KEY )",
+        ],
+    )
+    def test_invalid_clauses(self, clause):
+        got = StarRocksTableDefinitionParser.parse_key_clause(clause)
+        assert got is None

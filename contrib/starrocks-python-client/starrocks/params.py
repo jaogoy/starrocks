@@ -14,7 +14,7 @@ class AlterTableEnablement:
     Only support the operations that are supported by StarRocks.
     """
     ENGINE = False
-    KEY = False
+    KEY = True  # columns may be changed, but type is not supported to change
     TABLE_TYPE = KEY
     COMMENT = True
     PARTITION_BY = False

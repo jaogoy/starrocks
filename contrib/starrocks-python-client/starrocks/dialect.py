@@ -602,8 +602,9 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
             )
             colspec.append("COMMENT " + literal)
 
-        return " ".join(colspec)
-
+        column_spec_str = " ".join(colspec)
+        logger.debug(f"column spec for column: {column.name} is [{column_spec_str}]")
+        return column_spec_str
 
     def get_column_spec_for_alter_column(self,
             name: str,

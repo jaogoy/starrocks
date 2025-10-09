@@ -26,7 +26,7 @@ from sqlalchemy.engine.reflection import Inspector
 
 from . import utils
 from .drivers.parsers import parse_data_type
-from .engine.interfaces import MySQLKeyType
+from .engine.interfaces import MySQLKeyType, ReflectedTableKeyInfo
 from .utils import SQLParseError
 from .params import ColumnAggInfoKeyWithPrefix, SRKwargsPrefix, TableInfoKeyWithPrefix, TableInfoKey
 from .engine.interfaces import ReflectedViewState, ReflectedPartitionInfo, ReflectedDistributionInfo, ReflectedState
@@ -86,6 +86,7 @@ class StarRocksTableDefinitionParser(object):
     """
 
     _COLUMN_TYPE_PATTERN = re.compile(r"^(?P<type>\w+)(?:\s*\((?P<args>.*?)\))?\s*(?:(?P<attr>unsigned))?$")
+    _TABLE_KEY_PATTERN = re.compile(r'\s*(\w+\s+KEY)\s*\((.*)\)\s*', re.IGNORECASE)
     _BUCKETS_PATTERN = re.compile(r'\sBUCKETS\s+(\d+)', re.IGNORECASE)
     _BUCKETS_REPLACE_PATTERN = re.compile(r'\s+BUCKETS\s+\d+', re.IGNORECASE)
 
@@ -218,6 +219,23 @@ class StarRocksTableDefinitionParser(object):
         """
         sorted_columns = sorted(columns, key=lambda col: col.ORDINAL_POSITION)
         return [c.COLUMN_NAME for c in sorted_columns if c.COLUMN_KEY]
+
+    @staticmethod
+    def parse_key_clause(table_key: str) -> Optional[ReflectedTableKeyInfo]:
+        """
+        Parses a raw TABLE KEY clause string into a structured ReflectedTableKeyInfo object.
+        It's not used now.
+        """
+        if not table_key or table_key.strip() == "":
+            return None
+        key_match = StarRocksTableDefinitionParser._TABLE_KEY_PATTERN.search(table_key)
+        if key_match:
+            type = key_match.group(1)
+            columns = key_match.group(2)
+            return ReflectedTableKeyInfo(type=type, columns=columns)
+        else:
+            logger.error(f"Invalid table key clause: '{table_key}'")
+            return None
 
     @staticmethod
     def parse_partition_clause(partition_clause: str) -> Optional[ReflectedPartitionInfo]:

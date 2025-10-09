@@ -85,6 +85,8 @@ def wait_for_alter_table_attributes(inspector: Inspector, table_name: str,
                                     attribute_name: str, expected_value: str,
                                     max_round: int = 20, sleep_time: int = 3):
     """Wait for the ALTER TABLE to finish."""
+    options = None
+    value = None
     for i in range(max_round):
         inspector.clear_cache()
         options = inspector.get_table_options(table_name)
@@ -101,6 +103,8 @@ def wait_for_alter_table_attributes(inspector: Inspector, table_name: str,
 def wait_for_alter_table_column_or_optimization(engine: Engine, table_name: str, alter_type: str,
         schema: Optional[str] = None, max_round: int = 20, sleep_time: int = 3):
     states = ['RUNNING', 'PENDING', 'WAITING_TXN']
+    # alter_type in ["COLUMN", "OPTIMIZE"]
+    done = False
     for i in range(max_round):
         done = False
         for state in states:
@@ -321,8 +325,191 @@ def test_alter_table_columns_comprehensive(database: str, alembic_env: AlembicTe
             assert col['comment'] == 'Original comment'
 
 
+def test_add_agg_table_key_column(database: str, alembic_env: AlembicTestEnv, sr_engine: Engine):
+    """Tests adding a key column to an AGGREGATE KEY table.
+    Adding a key column is time-consuming, so we need to wait for the table to be created.
+    Therefore, we can't submit multiple alter table clauses at once.
+    """
+    # 1. Initial state
+    Base = declarative_base()
+    class TAggAddKey(Base):
+        __tablename__ = "t_agg_add_key"
+        id = Column(INTEGER, primary_key=True)
+        __table_args__ = {
+            "starrocks_aggregate_key": "id",
+            "starrocks_distributed_by": "HASH(id)",
+            "starrocks_properties": {"replication_num": "1"},
+        }
+    alembic_env.harness.generate_autogen_revision(metadata=Base.metadata, message="Initial agg key")
+    alembic_env.harness.upgrade("head")
+
+    # 2. Alter metadata: add one key column
+    AlteredBase = declarative_base()
+    class TAggAddKeyAltered(AlteredBase):
+        __tablename__ = "t_agg_add_key"
+        id = Column(INTEGER, primary_key=True)
+        site_id = Column(INTEGER, primary_key=True, nullable=True, starrocks_is_agg_key=True)
+        __table_args__ = {
+            # Keep table-level attributes minimal in alter context; role is on the column
+            "starrocks_aggregate_key": "id, site_id",
+            "starrocks_distributed_by": "HASH(id)",
+            "starrocks_properties": {"replication_num": "1"},
+        }
+    alembic_env.harness.generate_autogen_revision(metadata=AlteredBase.metadata, message="Add agg key column")
+
+    # 3. Verify and apply the ALTER script
+    script_content = ScriptContentParser.check_script_content(alembic_env, 1, "add_agg_key_column")
+    upgrade_content = ScriptContentParser.extract_upgrade_content(script_content)
+    assert "op.add_column('t_agg_add_key', sa.Column('site_id', INTEGER(), nullable=True" in upgrade_content
+    assert "starrocks_is_agg_key=True" in upgrade_content
+    assert "op.drop_column(" not in upgrade_content
+    assert "op.alter_column(" not in upgrade_content
+
+    alembic_env.harness.upgrade("head")
+
+    # 4. Verify in DB and then downgrade
+    inspector = inspect(sr_engine)
+    wait_for_alter_table_column_or_optimization(sr_engine, "t_agg_add_key", "COLUMN", None, 20, 3)
+    columns = inspector.get_columns("t_agg_add_key")
+    col_names = [c['name'] for c in columns]
+    logger.debug(f"columns after adding key column: {col_names}")
+    assert 'site_id' in col_names
+
+    alembic_env.harness.downgrade("-1")
+    wait_for_alter_table_column_or_optimization(sr_engine, "t_agg_add_key", "COLUMN", None, 20, 3)
+    inspector.clear_cache()
+    columns = inspector.get_columns("t_agg_add_key")
+    col_names = [c['name'] for c in columns]
+    logger.debug(f"columns after rollback of key column: {col_names}")
+    assert 'site_id' not in col_names
+
+
+def test_add_agg_table_value_column(database: str, alembic_env: AlembicTestEnv, sr_engine: Engine):
+    """Tests adding value columns to an AGGREGATE KEY table.
+    Adding value columns is simple, so it's quick to finish.
+    Therefore, we can submit multiple alter table clauses at once.
+    """
+    # 1. Initial state
+    Base = declarative_base()
+    class TAggAddValue(Base):
+        __tablename__ = "t_agg_add_value"
+        id = Column(INTEGER, primary_key=True)
+        __table_args__ = {
+            "starrocks_aggregate_key": "id",
+            "starrocks_distributed_by": "HASH(id)",
+            "starrocks_properties": {"replication_num": "1"},
+        }
+    alembic_env.harness.generate_autogen_revision(metadata=Base.metadata, message="Initial agg value")
+    alembic_env.harness.upgrade("head")
+
+    # 2. Alter metadata: add one value column
+    AlteredBase = declarative_base()
+    class TAggAddValueAltered(AlteredBase):
+        __tablename__ = "t_agg_add_value"
+        id = Column(INTEGER, primary_key=True)
+        page_views2 = Column(INTEGER, server_default='0', nullable=False, starrocks_agg_type='SUM')
+        last_visit_time2 = Column(DATE, nullable=True, starrocks_agg_type='REPLACE')
+        __table_args__ = {
+            "starrocks_aggregate_key": "id",
+            "starrocks_distributed_by": "HASH(id)",
+            "starrocks_properties": {"replication_num": "1"},
+        }
+    alembic_env.harness.generate_autogen_revision(metadata=AlteredBase.metadata, message="Add agg value column")
+
+    # 3. Verify and apply the ALTER script
+    script_content = ScriptContentParser.check_script_content(alembic_env, 1, "add_agg_value_column")
+    upgrade_content = ScriptContentParser.extract_upgrade_content(script_content)
+    assert "op.add_column('t_agg_add_value', sa.Column('page_views2', INTEGER(), server_default='0', nullable=False" in upgrade_content
+    assert "starrocks_agg_type='SUM'" in upgrade_content
+    assert "op.add_column('t_agg_add_value', sa.Column('last_visit_time2', DATE(), nullable=True" in upgrade_content
+    assert "starrocks_agg_type='REPLACE'" in upgrade_content
+    assert "op.drop_column(" not in upgrade_content
+    assert "op.alter_column(" not in upgrade_content
+
+    alembic_env.harness.upgrade("head")
+
+    # 4. Verify in DB and then downgrade
+    inspector = inspect(sr_engine)
+    columns = inspector.get_columns("t_agg_add_value")
+    col_names = [c['name'] for c in columns]
+    logger.debug(f"columns after adding value column: {col_names}")
+    assert 'page_views2' in col_names
+    assert 'last_visit_time2' in col_names
+
+    alembic_env.harness.downgrade("-1")
+    inspector.clear_cache()
+    columns = inspector.get_columns("t_agg_add_value")
+    col_names = [c['name'] for c in columns]
+    logger.debug(f"columns after rollback of value column: {col_names}")
+    assert 'page_views2' not in col_names
+    assert 'last_visit_time2' not in col_names
+
+
+@pytest.mark.skip(reason="Adding a key column is time-consuming, so it fails to add a value column immediately after the key column.")
+def test_add_agg_table_key_and_value_columns(database: str, alembic_env: AlembicTestEnv, sr_engine: Engine):
+    """Tests adding both a key column and a value column to an AGGREGATE KEY table."""
+    # 1. Initial state
+    Base = declarative_base()
+    class TAggAddBoth(Base):
+        __tablename__ = "t_agg_add_both"
+        id = Column(INTEGER, primary_key=True)
+        __table_args__ = {
+            "starrocks_aggregate_key": "id",
+            "starrocks_distributed_by": "HASH(id)",
+            "starrocks_properties": {"replication_num": "1"},
+        }
+    alembic_env.harness.generate_autogen_revision(metadata=Base.metadata, message="Initial agg both")
+    alembic_env.harness.upgrade("head")
+
+    # 2. Alter metadata: add one key column and one value column
+    AlteredBase = declarative_base()
+    class TAggAddBothAltered(AlteredBase):
+        __tablename__ = "t_agg_add_both"
+        id = Column(INTEGER, primary_key=True)
+        site_id = Column(INTEGER, server_default='10', nullable=False, starrocks_is_agg_key=True)
+        page_views = Column(INTEGER, nullable=True, starrocks_agg_type='SUM')
+        __table_args__ = {
+            "starrocks_aggregate_key": "id, site_id",
+            "starrocks_distributed_by": "HASH(id)",
+            "starrocks_properties": {"replication_num": "1"},
+        }
+    alembic_env.harness.generate_autogen_revision(metadata=AlteredBase.metadata, message="Add agg key and value columns")
+
+    # 3. Verify and apply the ALTER script
+    script_content = ScriptContentParser.check_script_content(alembic_env, 1, "add_agg_key_and_value_columns")
+    upgrade_content = ScriptContentParser.extract_upgrade_content(script_content)
+    assert "op.add_column('t_agg_add_both', sa.Column('site_id', INTEGER(), server_default='10', nullable=False" in upgrade_content
+    assert "starrocks_is_agg_key=True" in upgrade_content
+    assert "op.add_column('t_agg_add_both', sa.Column('page_views', INTEGER(), nullable=True" in upgrade_content
+    assert "starrocks_agg_type='SUM'" in upgrade_content
+    assert "op.drop_column(" not in upgrade_content
+    assert "op.alter_column(" not in upgrade_content
+
+    alembic_env.harness.upgrade("head")
+
+    # 4. Verify in DB and then downgrade
+    inspector = inspect(sr_engine)
+    wait_for_alter_table_column_or_optimization(sr_engine, "t_agg_add_both", "COLUMN", None, 20, 3)
+    columns = inspector.get_columns("t_agg_add_both")
+    col_names = [c['name'] for c in columns]
+    logger.debug(f"columns after adding key and value columns: {col_names}")
+    assert 'site_id' in col_names
+    assert 'page_views' in col_names
+
+    alembic_env.harness.downgrade("-1")
+    wait_for_alter_table_column_or_optimization(sr_engine, "t_agg_add_both", "COLUMN", None, 20, 3)
+    inspector.clear_cache()
+    columns = inspector.get_columns("t_agg_add_both")
+    col_names = [c['name'] for c in columns]
+    logger.debug(f"columns after rollback of key and value columns: {col_names}")
+    assert 'site_id' not in col_names
+    assert 'page_views' not in col_names
+
+
 def test_add_table_column_only(database: str, alembic_env: AlembicTestEnv, sr_engine: Engine):
-    """Tests adding multiple columns via autogenerate and applying them in one revision."""
+    """Tests adding multiple columns via autogenerate and applying them in one revision, 
+    into a PRIMARY KEY table (not an AGGREGATE KEY table).
+    """
     # 1. Initial state
     Base = declarative_base()
     class TAddOnly(Base):

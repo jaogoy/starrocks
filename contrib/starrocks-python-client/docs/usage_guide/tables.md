@@ -2,13 +2,13 @@
 
 This guide provides a comprehensive overview of how to define StarRocks tables using SQLAlchemy, which allows you to manage your database schema in Python code and integrate with tools like Alembic for migrations.
 
-## Defining Table Properties
+## Defining Table Attributes
 
-When defining a StarRocks table using SQLAlchemy, you can specify both table-level and column-level properties using keyword arguments prefixed with `starrocks_`.
+When defining a StarRocks table using SQLAlchemy, you can specify both table-level and column-level attributes using keyword arguments prefixed with `starrocks_`.
 
-### Table-Level Properties (`starrocks_*` Prefixes)
+### Table-Level Attributes (`starrocks_*` Prefixes)
 
-StarRocks-specific physical properties for a table are configured by passing special keyword arguments, prefixed with `starrocks_`, either directly to the `Table` constructor or within the `__table_args__` dictionary (in [ORM style](#defining-tables-with-the-orm-declarative-style)).
+StarRocks-specific physical attributes for a table are configured by passing special keyword arguments, prefixed with `starrocks_`, either directly to the `Table` constructor or within the `__table_args__` dictionary (in [ORM style](#defining-tables-with-the-orm-declarative-style)).
 
 #### General Syntax
 
@@ -25,7 +25,7 @@ my_table = Table(
     Column('data', String(255)),
     comment="my first sqlalchemy table",
 
-    # StarRocks-specific table-level options follow [optional]
+    # StarRocks-specific table-level attributes follow [optional]
     starrocks_ENGINE="OLAP",
     starrocks_PRIMARY_KEY="id, dt",
     starrocks_PARTITION_BY="date_trunc('day', dt)",
@@ -35,7 +35,7 @@ my_table = Table(
 )
 ```
 
-StarRocks-specific physical properties for a table are configured by passing special keyword arguments, prefixed with `starrocks_`, either directly to the `Table` constructor or within the `__table_args__` dictionary for ORM style.
+StarRocks-specific physical attributes for a table are configured by passing special keyword arguments, prefixed with `starrocks_`, either directly to the `Table` constructor or within the `__table_args__` dictionary for ORM style.
 
 #### Available Table-Level Options
 
@@ -113,7 +113,7 @@ Specifies the sorting columns.
 
 ##### 7. `starrocks_PROPERTIES`
 
-A dictionary of additional table properties.
+A dictionary of additional table attributes.
 
 - **Type**: `dict[str, str]`
 - **Example**:
@@ -135,9 +135,9 @@ A dictionary of additional table properties.
 You should use StarRocks's data types to declare a `Column`.
 All the data types are: `TINYINT`, `SMALLINT`, `INT`, `BIGINT`, `LARGEINT`, `FLOAT`, `DOUBLE`, `DECIMAL`, `BOOLEAN`, `CHAR`, `VARCHAR`, `STRING`, `BINARY`, `VARBINARY`, `DATE`, `DATETIME`, `ARRAY`, `JSON`, `MAP`, `STRUCT`, `BITMAP`, `HLL`, in `starrocks.datatype`.
 
-#### Column-Level Properties (`starrocks_*` Prefixes)
+#### Column-Level Attributes (`starrocks_*` Prefixes)
 
-For `AGGREGATE KEY` tables, you can specify properties for each column by passing a `starrocks_` prefixed keyword argument directly to the `Column` constructor.
+For `AGGREGATE KEY` tables, you can specify attributes for each column by passing a `starrocks_` prefixed keyword argument directly to the `Column` constructor.
 
 ##### Available Column-Level Options
 
@@ -151,7 +151,7 @@ For `AGGREGATE KEY` tables, you can specify properties for each column by passin
   - Key columns can be marked with `starrocks_is_agg_key=True`.
   - Value columns must specify `starrocks_agg_type` (e.g., `'SUM'`, `'REPLACE'`, etc.).
 - Column-level `starrocks_is_agg_key`/`starrocks_agg_type` are only valid for `AGGREGATE KEY` tables.
-- In `ALTER TABLE ... ADD COLUMN`/`MODIFY COLUMN` contexts, Alembic may not provide table-level options to the compiler. The dialect therefore allows specifying `starrocks_is_agg_key` or `starrocks_agg_type` directly on the column for these operations.
+- In `ALTER TABLE ... ADD COLUMN`/`MODIFY COLUMN` contexts, Alembic may not provide table-level attributes to the compiler. The dialect therefore allows specifying `starrocks_is_agg_key` or `starrocks_agg_type` directly on the column for these operations.
 
 Examples:
 
@@ -181,7 +181,7 @@ op.alter_column(
 
 ### Example: Aggregate Key Table
 
-Here is a complete example of an `AGGREGATE KEY` table that demonstrates both table-level and column-level properties.
+Here is a complete example of an `AGGREGATE KEY` table that demonstrates both table-level and column-level attributes.
 
 ```python
 from sqlalchemy import Table, MetaData, Column, Integer, Date
@@ -202,7 +202,7 @@ aggregate_table = Table(
     Column('user_ids', BITMAP, starrocks_agg_type='BITMAP_UNION'),
     Column('uv_estimate', HLL, starrocks_agg_type='HLL_UNION'),
 
-    # Table-level options
+    # Table-level attributes
     starrocks_AGGREGATE_KEY="event_date, site_id",
     starrocks_PARTITION_BY="date_trunc('day', event_date)",
     starrocks_DISTRIBUTED_BY="RANDOM",
@@ -212,7 +212,7 @@ aggregate_table = Table(
 
 ## Defining Tables with the ORM (Declarative Style)
 
-When using SQLAlchemy's Declarative style, you define table-level properties within the `__table_args__` dictionary. Column-level properties are passed directly as keyword arguments to each `Column`.
+When using SQLAlchemy's Declarative style, you define table-level attributes within the `__table_args__` dictionary. Column-level attributes are passed directly as keyword arguments to each `Column`.
 
 ### Example: ORM Aggregate Key Table
 
@@ -247,9 +247,50 @@ class PageViewAggregates(Base):
 
 ## Integration with Alembic
 
-The `sqlalchemy-starrocks` dialect integrates with Alembic to support autogeneration of schema migrations. When you run `alembic revision --autogenerate`, it will compare both the table-level and column-level `starrocks_` options against the database and generate the appropriate DDL.
+The `sqlalchemy-starrocks` dialect integrates with Alembic to support autogeneration of schema migrations. When you run `alembic revision --autogenerate`, it will compare both the table-level and column-level attributes (mainly for `starrocks_` prefixed attributes) against the database and generate the appropriate DDL.
 
-Note that changes to non-alterable attributes like `ENGINE`, `table type`, or `partitioning` will be detected, but will raise an error to prevent generating an unsupported migration. Additionally, changing a column’s aggregation type is not supported by StarRocks; autogenerate will detect differences and raise an error instead of producing DDL.
+**To ensure Alembic correctly recognizes StarRocks column types during autogeneration, you need to configure your `env.py` file and model definitions as follows:**
+
+### 1. Configure `env.py` for Column Type Rendering
+
+In your Alembic `env.py` file, within both the `run_migrations_offline` and `run_migrations_online` functions, you must add the `render_item=render.render_column_type` parameter to `context.configure()`. This enables Alembic to correctly interpret and generate DDL for StarRocks-specific column types.
+
+First, ensure you have the necessary import:
+
+```python
+from starrocks.alembic import render
+```
+
+Then, modify `context.configure()`:
+
+```python
+# In run_migrations_offline() and run_migrations_online()
+context.configure(
+    # ... other parameters ...
+    render_item=render.render_column_type,
+)
+```
+
+### 2. Import StarRocks Data Types in Model Files
+
+When defining your database models (e.g., in `models.py` or similar files), use StarRocks's column types. The simplest way to make all StarRocks data types available is to import them directly:
+
+```python
+from starrocks import *
+```
+
+Alternatively, you can import specific types as needed:
+
+```python
+from starrocks.types import TINYINT, VARCHAR
+```
+
+This ensures that your model definitions correctly map to StarRocks's native data types, allowing `alembic revision --autogenerate` to produce accurate migration scripts.
+
+### Notes
+
+- Changes to **non-alterable attributes** like `ENGINE`, `table type`, or `partitioning` will be detected, but will raise an error to prevent generating an unsupported migration.
+- Changing a column’s **aggregation type** is not supported by StarRocks; autogenerate will detect differences and raise an error instead of producing DDL.
 
 ### Limitations
 

@@ -27,7 +27,7 @@ from starrocks.params import (
 )
 
 from starrocks.reflection import StarRocksTableDefinitionParser
-from starrocks.engine.interfaces import ReflectedViewState, ReflectedPartitionInfo, ReflectedDistributionInfo
+from starrocks.engine.interfaces import ReflectedTableKeyInfo, ReflectedViewState, ReflectedPartitionInfo, ReflectedDistributionInfo
 from starrocks.sql.schema import MaterializedView, View
 
 from starrocks.alembic.ops import (
@@ -581,42 +581,61 @@ def _compare_table_key(
     
     Note: StarRocks does not support ALTER TABLE KEY, so this will raise an error
     if a change is detected.
+    But, if only the key columns are changed, we can generate an WARNING, but not .
     """
-    conn_key: Optional[str] = _get_table_key_type(conn_table_attributes)
-    meta_key: Optional[str] = _get_table_key_type(meta_table_attributes)
+    conn_key: Optional[ReflectedTableKeyInfo] = _get_table_key_type(conn_table_attributes)
+    meta_key: Optional[ReflectedTableKeyInfo] = _get_table_key_type(meta_table_attributes)
     logger.debug(f"KEY. conn_key: {conn_key}, meta_key: {meta_key}")
 
-    # if not meta_key:
-    #     logger.error(f"Key info should be specified in metadata to change for table {table_name} in schema {schema}.")
-    #     return
+    if isinstance(conn_key, str):
+        conn_key = StarRocksTableDefinitionParser.parse_key_clause(conn_key)
+    if isinstance(meta_key, str):
+        meta_key = StarRocksTableDefinitionParser.parse_key_clause(meta_key)
 
     # Reflected table must have a default KEY, so we need to normalize it
     # Actually, the conn key must not be None, because it is inspected from database.
-    normalized_conn: Optional[str] = ReflectionTableDefaults.normalize_key(conn_key)
+    normalized_conn: Optional[str] = TableAttributeNormalizer.normalize_key(conn_key)
     normalized_meta: Optional[str] = TableAttributeNormalizer.normalize_key(meta_key)
 
-    _compare_single_table_attribute(
+    if _compare_single_table_attribute(
         table_name,
         schema,
         TableInfoKey.KEY,
         normalized_conn,
         normalized_meta,
         default_value=ReflectionTableDefaults.key(),
-        equal_to_default_cmp_func=_compare_key_with_defaults,
+        equal_to_default_cmp_func=_is_equal_key_with_defaults,
         support_change=AlterTableEnablement.KEY
-    )
+    ):
+        if conn_key.type != meta_key.type:
+            raise NotSupportedError(f"Table '{table_name}' has different key types: {conn_key.type} to {meta_key.type}, "
+            "but it's not supported to change the key type.")
+        else:
+            logger.warning(f"Table '{table_name}' has different key columns: ({conn_key.columns}) to ({meta_key.columns}), "
+                           f"with the same table type: {conn_key.type}. "
+                           f"But it's not explicitly supported to change the key columns.")
 
-def _get_table_key_type(table_attributes: Dict[str, Any]) -> Optional[str]:
-    """Get table key type. like 'PRIMARY KEY (id, name)'"""
+def _get_table_key_type(table_attributes: Dict[str, Any]) -> Optional[ReflectedTableKeyInfo]:
+    """Get table key type. like 'PRIMARY KEY (id, name)'
+    The key in table_attributes is like 'PRIMARY_KEY' without prefix 'starrocks_',
+    and the value is like 'id, name'.
+
+    Args:
+        table_attributes: All table attributes without prefix 'starrocks_'.
+
+    Returns:
+        The table key type. like ReflectedTableKeyInfo('PRIMARY KEY', 'id, name').
+        None if the table key type is not found.
+    """
     for key_type in TableInfoKey.KEY_KWARG_MAP:
-        key_columns = table_attributes.get(key_type)
+        key_columns: str = table_attributes.get(key_type)
         if key_columns:
             key_columns = TableAttributeNormalizer.remove_outer_parentheses(key_columns)
-            return f"{TableInfoKey.KEY_KWARG_MAP[key_type]} ({key_columns})"
+            # return f"{TableInfoKey.KEY_KWARG_MAP[key_type]} ({key_columns})"
+            return ReflectedTableKeyInfo(type=TableInfoKey.KEY_KWARG_MAP[key_type], columns=key_columns)
     return None
 
-
-def _compare_key_with_defaults(
+def _is_equal_key_with_defaults(
     conn_value: Optional[str], default_value: Optional[str]
 ) -> bool:
     """
@@ -646,7 +665,7 @@ def _compare_key_with_defaults(
     return conn_norm.startswith(default_norm)
 
 
-def _compare_partition_method(
+def _is_equal_partition_method(
     conn_partition: Optional[ReflectedPartitionInfo | str],
     default_partition: Optional[str]
 ) -> bool:
@@ -708,7 +727,7 @@ def _compare_table_partition(
         normalized_meta, 
         default_value=ReflectionTableDefaults.partition_by(),
         support_change=AlterTableEnablement.PARTITION_BY,
-        equal_to_default_cmp_func=_compare_partition_method
+        equal_to_default_cmp_func=_is_equal_partition_method
     ):
         from starrocks.alembic.ops import AlterTablePartitionOp
         ops_list.append(

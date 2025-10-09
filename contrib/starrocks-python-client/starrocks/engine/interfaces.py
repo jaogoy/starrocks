@@ -108,7 +108,49 @@ class ReflectedMVState:
     security: str | None = None
 
 
-@dataclasses.dataclass(**dict(kw_only=True, frozen=True) if 'KW_ONLY' in dataclasses.__all__ else {})
+def add_cached_clause(cls):
+    """Add cached full clause for a table attribute."""
+
+    cls._cached_clause = None
+
+    original_str = getattr(cls, "__str__", None)
+
+    def __str__(self):
+        if getattr(self, "_cached_clause", None) is None:
+            self._cached_clause = original_str(self)
+        return self._cached_clause
+
+    cls.__str__ = __str__
+    return cls
+
+
+@add_cached_clause
+@dataclasses.dataclass(**dict(kw_only=True) if 'KW_ONLY' in dataclasses.__all__ else {})
+class ReflectedTableKeyInfo:
+    """
+    Stores structed reflection information about a table' key/type.
+
+    Attributes:
+        type: The key type string (e.g., 'PRIMARY KEY', 'UNIQUE KEY', 'DUPLICATE KEY').
+        columns: The key columns as a list of strings or a single string (e.g., ['id', 'name'] or 'id, name').
+    """
+    type: str
+    columns: Optional[list[str], str]
+
+    def __str__(self) -> str:
+        self.type = self.type.upper() if self.type else self.type
+        if self.columns:
+            self.columns = self.columns.strip()
+        if isinstance(self.columns, list):
+            return f"{self.type} ({', '.join(self.columns)})"
+        return f"{self.type} ({self.columns})"
+
+    def __repr__(self) -> str:
+        return repr(str(self))
+        
+
+@add_cached_clause
+@dataclasses.dataclass(**dict(kw_only=True) if 'KW_ONLY' in dataclasses.__all__ else {})
 class ReflectedPartitionInfo:
     """
     Stores structured reflection information about a table's partitioning scheme.
@@ -122,10 +164,12 @@ class ReflectedPartitionInfo:
             "(PARTITION p1 VALUES LESS THAN ('100'), PARTITION p2 VALUES LESS THAN ('200'))").
     """
     type: str
-    partition_method: str
+    partition_method: str  # includes the type and expressions
     pre_created_partitions: Optional[str] = None
 
     def __str__(self) -> str:
+        self.type = self.type.upper() if self.type else self.type
+        self.partition_method = self.partition_method.strip() if self.partition_method else self.partition_method
         if self.pre_created_partitions:
             return f"{self.partition_method} {self.pre_created_partitions}"
         return f"{self.partition_method}"
@@ -134,6 +178,7 @@ class ReflectedPartitionInfo:
         return repr(str(self))
 
 
+@add_cached_clause
 @dataclasses.dataclass(**dict(kw_only=True) if 'KW_ONLY' in dataclasses.__all__ else {})
 class ReflectedDistributionInfo:
     """Stores reflection information about a view."""

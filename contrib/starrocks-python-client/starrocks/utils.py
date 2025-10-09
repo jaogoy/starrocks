@@ -3,7 +3,7 @@ from typing import Any, Dict, Optional, Union, Mapping, Iterator, List
 
 from sqlalchemy.exc import StatementError
 
-from starrocks.engine.interfaces import ReflectedPartitionInfo, ReflectedDistributionInfo
+from starrocks.engine.interfaces import ReflectedPartitionInfo, ReflectedDistributionInfo, ReflectedTableKeyInfo
 
 
 class SQLParseError(StatementError):
@@ -112,16 +112,24 @@ class TableAttributeNormalizer:
         return sql_text
 
     @staticmethod
+    def _simple_normalize(value: str) -> str:
+        return value.upper().strip() if value else value
+
+    @staticmethod
     def normalize_engine(engine: str) -> Optional[str]:
         return TableAttributeNormalizer._simple_normalize(engine)
 
     @staticmethod
-    def normalize_key(key: str) -> Optional[str]:
-        return TableAttributeNormalizer.normalize_column_identifiers(key)
-
-    @staticmethod
-    def _simple_normalize(value: str) -> str:
-        return value.upper().strip() if value else value
+    def normalize_key(table_key: Union[ReflectedTableKeyInfo, str]) -> Optional[str]:
+        """Normalize table key string by removing backticks and extra spaces.
+        Because there may be column names in this string, we don't simply lowercase it.
+        If the table key is a ReflectedTableKeyInfo object, return the string representation only.
+        """
+        if not table_key:
+            return table_key
+        return TableAttributeNormalizer.normalize_column_identifiers(
+            str(table_key) if isinstance(table_key, ReflectedTableKeyInfo) else table_key
+        )
 
     @staticmethod
     def normalize_partition_method(partition: Union[ReflectedPartitionInfo, str]) -> Optional[str]:
