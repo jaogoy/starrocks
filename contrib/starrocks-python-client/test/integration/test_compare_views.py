@@ -17,8 +17,16 @@ from test.test_utils import normalize_sql
 logger = logging.getLogger(__name__)
 
 
+"""
+It will use reflection to get the view definition from the database, and compare it
+with the view definition in the metadata.
+
+So, it needs a integration test environment.
+"""
+
+
 class TestIntegrationViews:
-    STARROCKS_URI = conftest_sr._get_starrocks_url()
+    STARROCKS_URI = conftest_sr.get_starrocks_url()
     engine: Engine = create_engine(STARROCKS_URI)
 
     @classmethod
@@ -32,7 +40,7 @@ class TestIntegrationViews:
         if os.path.exists(script_dir_path):
             shutil.rmtree(script_dir_path)
         os.makedirs(script_dir_path)
-        shutil.copy("test/data/autogen_env.py", os.path.join(script_dir_path, "env.py"))
+        shutil.copy("test/integration/templates/env.py", os.path.join(script_dir_path, "env.py"))
         config = Config()
         config.set_main_option("script_location", script_dir_path)
         config.set_main_option("sqlalchemy.url", TestIntegrationViews.STARROCKS_URI)
@@ -48,7 +56,7 @@ class TestIntegrationViews:
             try:
                 target_metadata = MetaData()
                 view = View(view_name, "SELECT 1 AS val", comment="Integration test view")
-                target_metadata.info['views'] = {(view, None): view}
+                target_metadata.info['views'] = {(None, view_name): view}
                 mc: MigrationContext = MigrationContext.configure(connection=conn)
                 migration_script: api.MigrationScript = api.produce_migrations(mc, target_metadata)
                 assert len(migration_script.upgrade_ops.ops) == 1
@@ -95,7 +103,7 @@ class TestIntegrationViews:
                         {'name': 'new_c2', 'comment': 'new col 2'},
                     ]
                 )
-                target_metadata.info['views'] = {(altered_view, None): altered_view}
+                target_metadata.info['views'] = {(None, view_name): altered_view}
                 mc: MigrationContext = MigrationContext.configure(connection=conn)
                 migration_script = api.produce_migrations(mc, target_metadata)
                 assert len(migration_script.upgrade_ops.ops) == 1

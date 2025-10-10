@@ -23,11 +23,12 @@ daily_sales_mv = MaterializedView(
         "DISTRIBUTED BY": "HASH(order_date) BUCKETS 8",
         "REFRESH": "ASYNC START('2025-01-01 00:00:00') EVERY(INTERVAL 1 DAY)",
         "replication_num": "3"
-    }
+    },
+    metadata=metadata  # Associate the materialized view with the metadata object
 )
 
-# Associate the materialized view with the metadata object
-metadata.add_object(daily_sales_mv)
+# You can associate the materialized view with the metadata object,if you don't set it in MaterializedView()
+# metadata.info.setdefault('materialized_views', {})[('analytics', 'daily_sales_mv')] = daily_sales_mv
 ```
 
 The `MaterializedView` object is used to define a materialized view in your Python code.

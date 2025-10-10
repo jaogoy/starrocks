@@ -16,17 +16,17 @@ metadata = MetaData()
 
 my_view = View(
     "my_view",
-    "SELECT id, name, salary FROM employees WHERE department =
-    'Sales'",
-    schema="my_schema"
+    "SELECT id, name, salary FROM employees WHERE department = 'Sales'",
+    schema="my_schema",
     # other optional options
     comment="A view to aggregate sales data by product.",
     columns=["product", "amount", "date"],
-    security="INVOKER"
+    security="INVOKER",
+    metadata=metadata  # Associate the view with the metadata object
 )
 
-# Associate the view with the metadata object
-metadata.add_object(my_view)
+# You can associate the view with the metadata object manually, if you don't set it in View()
+# metadata.info.setdefault('views', {})[('my_schema', 'my_view')] = my_view
 ```
 
 The `View` object is the primary way to define a database view in your Python code.

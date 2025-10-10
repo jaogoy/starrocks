@@ -24,6 +24,8 @@ logger = logging.getLogger(__name__)
 # the leading lines of upgrade and downgrade python script
 UPGRADE_STR = r"def upgrade\(\).*?:\s*\n\s*#.*?\n\s*"
 DOWNGRADE_STR = r"def downgrade\(\).*?:\s*\n\s*#.*?\n\s*"
+EMPTY_UPGRADE_STR = UPGRADE_STR + r"pass"
+EMPTY_DOWNGRADE_STR = DOWNGRADE_STR + r"pass"
 
 
 def print_sql_before_execute(conn, cursor, statement, parameters, context, executemany):
@@ -37,8 +39,8 @@ def bind_print_sql_before_execute(engine: Engine):
 
 
 class ScriptContentParser():
-    UPGRADE_EXTRACTION_REGEX = re.compile(UPGRADE_STR + r"(.*?)(?=" + DOWNGRADE_STR + r"|\Z)", re.DOTALL)
-    DOWNGRADE_EXTRACTION_REGEX = re.compile(DOWNGRADE_STR + r"(.*?)(?=" + UPGRADE_STR + r"|\Z)", re.DOTALL)
+    UPGRADE_EXTRACTION_REGEX = re.compile(UPGRADE_STR + r"(.*?)" + DOWNGRADE_STR, re.DOTALL)
+    DOWNGRADE_EXTRACTION_REGEX = re.compile(DOWNGRADE_STR + r"(.*)", re.DOTALL)
 
     @classmethod
     def check_script_content(cls, alembic_env: AlembicTestEnv, script_num: int, script_name: str) -> str:
@@ -52,12 +54,13 @@ class ScriptContentParser():
         return script_content
 
     @classmethod
-    def _extract_upgrade_or_downgrade_content(cls, header: str, script: str) -> Optional[str]:
+    def _extract_upgrade_or_downgrade_content(cls, header: re.Pattern, script: str) -> Optional[str]:
         """Extract the body of the upgrade() function from an Alembic migration script."""
-        match = cls.UPGRADE_EXTRACTION_REGEX.search(script)
+        match = header.search(script)
         if not match:
             return None
         content = match.group(1)
+        content = f"    {content.rstrip()}" if content else None
         logger.debug(f"upgrade/downgrade content:\n>>>>\n{content}\n<<<<")
         return content
 
@@ -68,6 +71,7 @@ class ScriptContentParser():
 
     @classmethod
     def extract_downgrade_content(cls, script: str) -> Optional[str]:
+        """Extract the body of the downgrade() function from an Alembic migration script."""
         return cls._extract_upgrade_or_downgrade_content(cls.DOWNGRADE_EXTRACTION_REGEX, script)
     
     @classmethod

@@ -29,7 +29,7 @@ Here's what the connection string looks like:
 starrocks://<User>:<Password>@<Host>:<Port>/<Catalog>.<Database>
 ```
 
-*Note: The `Catalog` can be omitted and is managed by StarRocks' `default_catalog`.*
+_Note: The `Catalog` can be omitted and is managed by StarRocks' `default_catalog`._
 
 ### Example: Basic Operations
 
@@ -90,7 +90,7 @@ class MyTable(Base):
     __tablename__ = 'my_table'
     id = Column(Integer, primary_key=True)
     name = Column(String(50))
-    
+
     __table_args__ = {
         "starrocks_PRIMARY_KEY": "id",
         "starrocks_engine": "OLAP",
@@ -128,19 +128,22 @@ my_view = View(
     schema='my_schema',
     comment='A sample view with all options.',
     columns=['user_id', 'user_name'],
-    security='INVOKER'
+    security='INVOKER',
+    metadata=metadata  # Associate with metadata automatically
 )
 
 # Define a Materialized View
 my_mv = MaterializedView(
     'my_mv',
     "SELECT name, count(1) FROM my_table GROUP BY name",
-    properties={'replication_num': '1'}
+    properties={'replication_num': '1'},
+    metadata=metadata  # Associate with metadata automatically
 )
 
-# Associate with metadata so autogenerate can find them
-metadata.info.setdefault('views', {})[(my_view, 'my_schema')] = my_view
-metadata.info.setdefault('materialized_views', {})[(my_mv, None)] = my_mv
+# You can also associate with the metadata manually if you don't set it in View or MaterializedView
+#  (so autogenerate can find them)
+# metadata.info.setdefault('views', {})[('my_schema', 'my_view')] = my_view
+# metadata.info.setdefault('materialized_views', {})[('my_schema', 'my_mv')] = my_mv
 ```
 
 ### 3. Generating and Applying Migrations
@@ -148,21 +151,21 @@ metadata.info.setdefault('materialized_views', {})[(my_mv, None)] = my_mv
 Follow the standard Alembic workflow:
 
 1. **Generate a new revision:**
-    Alembic will compare your Python models with the database and generate a migration script.
+   Alembic will compare your Python models with the database and generate a migration script.
 
-    ```bash
-    alembic revision --autogenerate -m "Create initial tables and views"
-    ```
+   ```bash
+   alembic revision --autogenerate -m "Create initial tables and views"
+   ```
 
 2. **Review the script:**
-    Check the generated file in your `versions/` directory. It will contain `op.create_table()`, `op.create_view()`, etc.
+   Check the generated file in your `versions/` directory. It will contain `op.create_table()`, `op.create_view()`, etc.
 
 3. **Apply the migration:**
-    Run the `upgrade` command to apply the changes to your StarRocks database.
+   Run the `upgrade` command to apply the changes to your StarRocks database.
 
-    ```bash
-    alembic upgrade head
-    ```
+   ```bash
+   alembic upgrade head
+   ```
 
 ### 3.1 View Autogenerate Details and Limitations
 

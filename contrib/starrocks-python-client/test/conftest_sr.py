@@ -7,7 +7,7 @@ from sqlalchemy.engine import Engine
 from starrocks.alembic.compare import logger
 
 
-def _get_starrocks_url() -> Optional[URL]:
+def get_starrocks_url() -> Optional[str]:
     dsn = os.getenv("STARROCKS_URL")
     if not dsn:
         logger.warning("environment variable STARROCKS_URL is not set")
@@ -16,7 +16,7 @@ def _get_starrocks_url() -> Optional[URL]:
 
 
 def create_test_engine() -> Engine:
-    url = _get_starrocks_url()
+    url = get_starrocks_url()
     if not url:
         pytest.skip("STARROCKS URL is not set; skipping integration tests")
     engine = create_engine(url, pool_pre_ping=True)

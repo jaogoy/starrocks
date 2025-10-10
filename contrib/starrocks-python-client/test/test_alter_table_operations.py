@@ -4,9 +4,11 @@ Tests for ALTER TABLE operation edge cases and error handling.
 """
 import logging
 import pytest
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
-from starrocks.alembic.ops import AlterTableEngineOp, AlterTableKeyOp, AlterTablePartitionOp, alter_table_engine, alter_table_key, alter_table_partition
+from alembic.operations import Operations
+from alembic.runtime.migration import MigrationContext
+from starrocks.dialect import StarRocksDialect
 
 
 logger = logging.getLogger(__name__)
@@ -15,14 +17,18 @@ logger = logging.getLogger(__name__)
 class TestUnsupportedOperations:
     """Test error handling for unsupported ALTER TABLE operations."""
 
-    def test_alter_table_engine_not_supported(self):
-        """Test that ALTER TABLE ENGINE raises NotImplementedError with proper logging."""
-        operations = Mock()
-        op = AlterTableEngineOp("test_table", "OLAP", schema="test_db")
+    @pytest.fixture
+    def op(self) -> Operations:
+        """Provide an Operations object for testing."""
+        dialect = StarRocksDialect()
+        context = MigrationContext.configure(dialect=dialect)
+        return Operations(context)
 
-        with patch('starrocks.alembic.ops.logger') as mock_logger:
+    def test_alter_table_engine_not_supported(self, op: Operations):
+        """Test that op.alter_table_engine raises NotImplementedError with proper logging."""
+        with patch('starrocks.alembic.toimpl.logger') as mock_logger:
             with pytest.raises(NotImplementedError, match="ALTER TABLE ENGINE is not yet supported"):
-                alter_table_engine(operations, op)
+                op.alter_table_engine("test_table", "OLAP", schema="test_db")
 
             # Verify error was logged
             mock_logger.error.assert_called_once()
@@ -31,14 +37,11 @@ class TestUnsupportedOperations:
             assert "test_table" in error_call[1]
             assert "OLAP" in error_call[2]
 
-    def test_alter_table_key_not_supported(self):
-        """Test that ALTER TABLE KEY raises NotImplementedError with proper logging."""
-        operations = Mock()
-        op = AlterTableKeyOp("test_table", "PRIMARY KEY", "id", schema="test_db")
-
-        with patch('starrocks.alembic.ops.logger') as mock_logger:
+    def test_alter_table_key_not_supported(self, op: Operations):
+        """Test that op.alter_table_key raises NotImplementedError with proper logging."""
+        with patch('starrocks.alembic.toimpl.logger') as mock_logger:
             with pytest.raises(NotImplementedError, match="ALTER TABLE KEY is not yet supported"):
-                alter_table_key(operations, op)
+                op.alter_table_key("test_table", "PRIMARY KEY", "id", schema="test_db")
 
             # Verify error was logged
             mock_logger.error.assert_called_once()
@@ -48,14 +51,11 @@ class TestUnsupportedOperations:
             assert "PRIMARY KEY" in error_call[2]
             assert "id" in error_call[3]
 
-    def test_alter_table_partition_not_supported(self):
-        """Test that ALTER TABLE PARTITION raises NotImplementedError with proper logging."""
-        operations = Mock()
-        op = AlterTablePartitionOp("test_table", "RANGE(date_col)", schema="test_db")
-
-        with patch('starrocks.alembic.ops.logger') as mock_logger:
+    def test_alter_table_partition_not_supported(self, op: Operations):
+        """Test that op.alter_table_partition raises NotImplementedError with proper logging."""
+        with patch('starrocks.alembic.toimpl.logger') as mock_logger:
             with pytest.raises(NotImplementedError, match="ALTER TABLE PARTITION is not yet supported"):
-                alter_table_partition(operations, op)
+                op.alter_table_partition("test_table", "RANGE(date_col)", schema="test_db")
 
             # Verify error was logged
             mock_logger.error.assert_called_once()

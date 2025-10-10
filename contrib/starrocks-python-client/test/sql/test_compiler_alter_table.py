@@ -238,7 +238,7 @@ class TestOperationToSQLFlow:
         )
 
         # Test that implementation creates correct DDL
-        from starrocks.alembic.ops import alter_table_properties
+        from starrocks.alembic.toimpl import alter_table_properties
 
         with patch.object(self.operations, 'execute') as mock_execute:
             alter_table_properties(self.operations, op)
@@ -262,7 +262,7 @@ class TestOperationToSQLFlow:
         )
 
         # Test that implementation creates correct DDL
-        from starrocks.alembic.ops import alter_table_distribution
+        from starrocks.alembic.toimpl import alter_table_distribution
 
         with patch.object(self.operations, 'execute') as mock_execute:
             alter_table_distribution(self.operations, op)
@@ -286,7 +286,7 @@ class TestOperationToSQLFlow:
         )
 
         # Test that implementation creates correct DDL
-        from starrocks.alembic.ops import alter_table_order
+        from starrocks.alembic.toimpl import alter_table_order
 
         with patch.object(self.operations, 'execute') as mock_execute:
             alter_table_order(self.operations, op)

@@ -102,14 +102,37 @@ class TableAttributeNormalizer:
         return "".join(out)
 
     @staticmethod
-    def normalize_sql(sql_text: Optional[str]) -> Optional[str]:
-        """A normalizer for SQL text for diffing."""
-        if not sql_text:
-            return sql_text
-        sql_text = re.sub(r"--.*?(?:\n|$)", " ", sql_text)
-        sql_text = TableAttributeNormalizer.strip_identifier_backticks(sql_text)
-        sql_text = re.sub(r"\s+", " ", sql_text).strip().lower()
-        return sql_text
+    def normalize_sql(sql: Optional[str], lowercase: bool = True, remove_qualifiers: bool = False) -> Optional[str]:
+        """
+        Normalize an SQL string for comparison.
+        - Converts to lowercase
+        - Removes leading/trailing whitespace
+        - Replaces multiple spaces with a single space
+        - Removes trailing semicolons
+        - Removes all qualifiers (e.g., ``schema.table.``) from identifiers.
+
+        Args:
+            sql: The SQL string to normalize.
+            lowercase: Whether to convert the SQL string to lowercase.
+            remove_qualifiers: Whether to remove all qualifiers (e.g., ``schema.table.``) from identifiers.
+        """
+        if sql is None:
+            return None
+        sql = re.sub(r"--.*?(?:\n|$)", " ", sql)
+        if lowercase:
+            sql = sql.lower().strip()
+
+        # Removes qualifiers like `schema`. from `schema`.`table`.`column`
+        # It handles multiple qualifiers.
+        if remove_qualifiers:
+            sql = re.sub(r"(`?\w+`?\.)+", "", sql)
+        
+        # Removes backticks
+        sql = TableAttributeNormalizer.strip_identifier_backticks(sql)
+
+        sql = re.sub(r"\s+", " ", sql).strip()
+        sql = sql.rstrip(";")
+        return sql
 
     @staticmethod
     def _simple_normalize(value: str) -> str:

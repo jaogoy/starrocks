@@ -215,9 +215,7 @@ def autogen_for_views(
 
     metadata_views_info = autogen_context.metadata.info.get("views", {})
     metadata_views: Dict[Tuple[Optional[str], str], View] = {
-        (view_obj.schema or schema, view_obj.name): view_obj
-        for key, view_obj in metadata_views_info.items()
-        for schema in schemas
+        key: view for key, view in metadata_views_info.items() if key[0] in schemas
     }
 
     logger.debug(f"_compare_views: conn_views: ({conn_views}), metadata_views: ({metadata_views})")
@@ -269,7 +267,8 @@ def _compare_views(
 
         conn_view = View(
             name=view_info.name,
-            definition=view_info.definition,
+            # definition=view_info.definition,
+            definition=TableAttributeNormalizer.normalize_sql(view_info.definition, remove_qualifiers=True),
             schema=schema,
             comment=view_info.comment,
             security=view_info.security
@@ -318,10 +317,12 @@ def compare_view(
     conn_def_norm: Optional[str] = TableAttributeNormalizer.normalize_sql(conn_view.definition)
     metadata_def_norm: Optional[str] = TableAttributeNormalizer.normalize_sql(metadata_view.definition)
     definition_changed = conn_def_norm != metadata_def_norm
+
     # Comment/security normalized for comparison
     conn_view_comment = (conn_view.comment or "").strip()
     metadata_view_comment = (metadata_view.comment or "").strip()
     comment_changed = conn_view_comment != metadata_view_comment
+
     conn_view_security = (conn_view.security or "").upper()
     metadata_view_security = (metadata_view.security or "").upper()
     security_changed = conn_view_security != metadata_view_security
@@ -391,11 +392,7 @@ def autogen_for_materialized_views(
 
     metadata_mvs_info = autogen_context.metadata.info.get("materialized_views", {})
     metadata_mvs: Dict[Tuple[Optional[str], str], MaterializedView] = {
-        (
-            mv_obj.schema or autogen_context.dialect.default_schema_name,
-            mv_obj.name,
-        ): mv_obj
-        for key, mv_obj in metadata_mvs_info.items()
+        key: mv for key, mv in metadata_mvs_info.items() if key[0] in schemas
     }
     _compare_materialized_views(conn_mvs, metadata_mvs, autogen_context, upgrade_ops)
 
@@ -1109,7 +1106,8 @@ def compare_starrocks_column_agg_type(
 
     # we need to set it in the AlterColumnOp, because the KEY/AGG_TYPE is always needed.
     # TODO: But currently, it's not passed to MySQLModifyColumn
-    alter_column_op.kw[ColumnAggInfoKeyWithPrefix.AGG_TYPE] = meta_agg_type
+    if alter_column_op:
+        alter_column_op.kw[ColumnAggInfoKeyWithPrefix.AGG_TYPE] = meta_agg_type
 
 
 @comparators_dispatch_for_starrocks("column")

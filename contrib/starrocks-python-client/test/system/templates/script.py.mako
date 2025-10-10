@@ -10,7 +10,7 @@ from typing import Sequence, Union
 from alembic import op
 import sqlalchemy as sa
 import starrocks.datatype as sr
-from starrocks import *
+#from starrocks import *
 ${imports if imports else ""}
 
 # revision identifiers, used by Alembic.
