@@ -101,4 +101,131 @@ class TestViewCompiler:
         """
         assert normalize_sql(sql) == normalize_sql(expected)
 
+    def test_compile_alter_view_with_schema(self):
+        """Test ALTER VIEW with schema qualification."""
+        sql = str(AlterView(View("my_view", "SELECT id, name FROM users", schema="test_db")).compile(dialect=self.dialect))
+        expected = """
+        ALTER VIEW test_db.my_view
+        AS
+        SELECT id, name FROM users
+        """
+        assert normalize_sql(sql) == normalize_sql(expected)
+
+    def test_compile_alter_view_complex_query(self):
+        """Test ALTER VIEW with complex SELECT query."""
+        complex_query = """
+        SELECT u.id, u.name, COUNT(o.id) as order_count
+        FROM users u
+        LEFT JOIN orders o ON u.id = o.user_id
+        WHERE u.active = true
+        GROUP BY u.id, u.name
+        HAVING COUNT(o.id) > 0
+        ORDER BY order_count DESC
+        """
+        sql = str(AlterView(View("user_order_summary", complex_query)).compile(dialect=self.dialect))
+        expected = f"""
+        ALTER VIEW user_order_summary
+        AS
+        {complex_query.strip()}
+        """
+        assert normalize_sql(sql) == normalize_sql(expected)
+
+    def test_compile_alter_view_with_subquery(self):
+        """Test ALTER VIEW with subqueries and CTEs."""
+        query_with_subquery = """
+        WITH monthly_stats AS (
+            SELECT user_id, COUNT(*) as monthly_orders
+            FROM orders
+            WHERE order_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 1 MONTH)
+            GROUP BY user_id
+        )
+        SELECT u.name, COALESCE(ms.monthly_orders, 0) as orders
+        FROM users u
+        LEFT JOIN monthly_stats ms ON u.id = ms.user_id
+        """
+        sql = str(AlterView(View("user_monthly_stats", query_with_subquery)).compile(dialect=self.dialect))
+        expected = f"""
+        ALTER VIEW user_monthly_stats
+        AS
+        {query_with_subquery.strip()}
+        """
+        assert normalize_sql(sql) == normalize_sql(expected)
+
+    def test_compile_alter_view_with_special_chars(self):
+        """Test ALTER VIEW with special characters in column names and values."""
+        special_query = """
+        SELECT `user-id`, `user name`, `email@domain.com`
+        FROM `user-table`
+        WHERE `status` = 'active' AND `created-at` > '2023-01-01'
+        """
+        sql = str(AlterView(View("special_chars_view", special_query)).compile(dialect=self.dialect))
+        expected = f"""
+        ALTER VIEW special_chars_view
+        AS
+        {special_query.strip()}
+        """
+        assert normalize_sql(sql) == normalize_sql(expected)
+
+    def test_compile_alter_view_with_window_functions(self):
+        """Test ALTER VIEW with window functions."""
+        window_query = """
+        SELECT 
+            user_id,
+            order_date,
+            amount,
+            ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY order_date DESC) as rn,
+            SUM(amount) OVER (PARTITION BY user_id ORDER BY order_date) as running_total
+        FROM orders
+        """
+        sql = str(AlterView(View("user_order_window", window_query)).compile(dialect=self.dialect))
+        expected = f"""
+        ALTER VIEW user_order_window
+        AS
+        {window_query.strip()}
+        """
+        assert normalize_sql(sql) == normalize_sql(expected)
+
+    def test_compile_alter_view_with_joins(self):
+        """Test ALTER VIEW with various JOIN types."""
+        join_query = """
+        SELECT 
+            u.id,
+            u.name,
+            p.title as product_name,
+            o.quantity,
+            o.price
+        FROM users u
+        INNER JOIN orders o ON u.id = o.user_id
+        LEFT JOIN products p ON o.product_id = p.id
+        RIGHT JOIN categories c ON p.category_id = c.id
+        """
+        sql = str(AlterView(View("user_order_details", join_query)).compile(dialect=self.dialect))
+        expected = f"""
+        ALTER VIEW user_order_details
+        AS
+        {join_query.strip()}
+        """
+        assert normalize_sql(sql) == normalize_sql(expected)
+
+    def test_compile_alter_view_with_aggregation(self):
+        """Test ALTER VIEW with aggregation functions."""
+        agg_query = """
+        SELECT 
+            category_id,
+            COUNT(*) as product_count,
+            AVG(price) as avg_price,
+            MIN(price) as min_price,
+            MAX(price) as max_price,
+            SUM(stock_quantity) as total_stock
+        FROM products
+        GROUP BY category_id
+        """
+        sql = str(AlterView(View("category_summary", agg_query)).compile(dialect=self.dialect))
+        expected = f"""
+        ALTER VIEW category_summary
+        AS
+        {agg_query.strip()}
+        """
+        assert normalize_sql(sql) == normalize_sql(expected)
+
 

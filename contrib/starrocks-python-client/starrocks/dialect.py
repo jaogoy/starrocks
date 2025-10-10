@@ -1347,28 +1347,44 @@ class StarRocksDialect(MySQLDialect_pymysql):
     ) -> Optional[ReflectedViewState]:
         """Gets all information about a view.
 
-        Note: comment is currently not fetched from information_schema and defaults to empty.
+        TODO: Comment is currently fetched from information_schema.tables,
+            But it's better to fetch it from information_schema.views.
         """
         if schema is None:
             schema = self.default_schema_name
         try:
-            view_details = self._read_from_information_schema(
+            view_rows = self._read_from_information_schema(
                 connection,
                 "views",
                 table_schema=schema,
                 table_name=view_name,
-            )[0]
+            )
+            if not view_rows:
+                return None
+            view_details = view_rows[0]
+
+            # The comment is in information_schema.tables
+            table_rows = self._read_from_information_schema(
+                connection,
+                "tables",
+                table_schema=schema,
+                table_name=view_name,
+            )
+            table_comment = table_rows[0].TABLE_COMMENT if table_rows else ""
+            if not table_rows:
+                logger.warning(
+                    "View '%s' found in information_schema.views but not in "
+                    "information_schema.tables. Comment will be empty.",
+                    view_name,
+                )
+
             rv = ReflectedViewState(
                 name=view_details.TABLE_NAME,
                 definition=view_details.VIEW_DEFINITION,
-                # TODO: comment is not queried for now, it's not in information_schema.views
-                comment="",
+                comment=table_comment,
                 security=view_details.SECURITY_TYPE.upper(),
             )
-            logger.debug(
-                "_get_view_info fetched: schema=%s, name=%s, security=%s, definition=(%s)",
-                schema, rv.name, rv.security, rv.definition
-            )
+            logger.debug(f"_get_view_info fetched: {rv!r}")
             return rv
         except Exception:
             return None
@@ -1436,10 +1452,9 @@ class StarRocksDialect(MySQLDialect_pymysql):
                 table_schema=schema,
                 table_name=view_name,
             )
-            return rows[0].VIEW_DEFINITION
+            return rows[0].VIEW_DEFINITION if rows else None
         except Exception:
             return None
-
 
 
 # --- Alembic alter column compilers for StarRocks ---

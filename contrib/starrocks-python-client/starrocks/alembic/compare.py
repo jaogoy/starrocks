@@ -313,6 +313,7 @@ def compare_view(
                        f"skipping. conn_view: {'not None' if conn_view else 'None'}, "
                        f"meta_view: {'not None' if metadata_view else 'None'}")
         return
+    logger.debug(f"compare_view: conn_view: {conn_view!r}, metadata_view: {metadata_view!r}")
     
     conn_def_norm: Optional[str] = TableAttributeNormalizer.normalize_sql(conn_view.definition)
     metadata_def_norm: Optional[str] = TableAttributeNormalizer.normalize_sql(metadata_view.definition)
@@ -339,17 +340,21 @@ def compare_view(
     if comment_changed:
         logger.warning(
             "StarRocks does not support altering view comments via ALTER VIEW; "
-            "comment change detected for %s.%s and will be ignored",
+            "comment change detected for %s.%s, from '%s' to '%s', and will be ignored",
             schema or autogen_context.dialect.default_schema_name,
             view_name,
+            conn_view_comment,
+            metadata_view_comment,
         )
 
     if security_changed:
         logger.warning(
             "StarRocks does not support altering view security via ALTER VIEW; "
-            "security change detected for %s.%s and will be ignored",
+            "security change detected for %s.%s, from '%s' to '%s', and will be ignored",
             schema or autogen_context.dialect.default_schema_name,
             view_name,
+            conn_view_security,
+            metadata_view_security,
         )
 
     if definition_changed:
@@ -391,8 +396,10 @@ def autogen_for_materialized_views(
         )
 
     metadata_mvs_info = autogen_context.metadata.info.get("materialized_views", {})
+    # Expect strictly (schema, name) -> MaterializedView mapping
     metadata_mvs: Dict[Tuple[Optional[str], str], MaterializedView] = {
-        key: mv for key, mv in metadata_mvs_info.items() if key[0] in schemas
+        key: mv for key, mv in metadata_mvs_info.items()
+        if isinstance(key, tuple) and len(key) == 2 and key[0] in schemas
     }
     _compare_materialized_views(conn_mvs, metadata_mvs, autogen_context, upgrade_ops)
 
@@ -593,6 +600,7 @@ def _compare_table_key(
     # Actually, the conn key must not be None, because it is inspected from database.
     normalized_conn: Optional[str] = TableAttributeNormalizer.normalize_key(conn_key)
     normalized_meta: Optional[str] = TableAttributeNormalizer.normalize_key(meta_key)
+    logger.debug(f"KEY. normalized_conn: {normalized_conn!r}, normalized_meta: {normalized_meta!r}")
 
     if _compare_single_table_attribute(
         table_name,
@@ -604,9 +612,17 @@ def _compare_table_key(
         equal_to_default_cmp_func=_is_equal_key_with_defaults,
         support_change=AlterTableEnablement.KEY
     ):
+        if conn_key is None:
+            conn_key = ReflectionTableDefaults.reflected_key_info()
+        if meta_key is None:
+            meta_key = ReflectionTableDefaults.reflected_key_info()
         if conn_key.type != meta_key.type:
-            raise NotSupportedError(f"Table '{table_name}' has different key types: {conn_key.type} to {meta_key.type}, "
-            "but it's not supported to change the key type.")
+            raise NotSupportedError(
+                f"Table '{table_name}' has different key types: {conn_key.type} to {meta_key.type}, "
+                "but it's not supported to change the key type.",
+                None,
+                None,
+            )
         else:
             logger.warning(f"Table '{table_name}' has different key columns: ({conn_key.columns}) to ({meta_key.columns}), "
                            f"with the same table type: {conn_key.type}. "

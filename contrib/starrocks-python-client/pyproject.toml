@@ -36,7 +36,6 @@ use_parentheses = true
 
 [tool.pytest.ini_options]
 addopts = "--tb native -v -r fxX --maxfail=500 -p no:warnings"
-norecursedirs = ["test/data"]
 testpaths = ["test/"]
 
 # Integration test markers

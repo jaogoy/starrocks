@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Optional, Union
 
-from starrocks.engine.interfaces import ReflectedViewState, ReflectedMVState
+from starrocks.engine.interfaces import ReflectedTableKeyInfo, ReflectedViewState, ReflectedMVState
 from starrocks.types import SystemRunMode, TableDistribution, TableEngine, TableType, ViewSecurityType
 from starrocks.utils import TableAttributeNormalizer
 
@@ -58,6 +58,10 @@ class ReflectionTableDefaults:
     @classmethod
     def key(cls) -> str:
         return TableType.DUPLICATE_KEY
+    
+    @classmethod
+    def reflected_key_info(cls) -> ReflectedTableKeyInfo:
+        return ReflectedTableKeyInfo(type=cls.key(), columns=None)
 
     @classmethod
     def table_comment(cls) -> str:

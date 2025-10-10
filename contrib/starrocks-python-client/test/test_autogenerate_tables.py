@@ -3,6 +3,7 @@ import pytest
 from alembic.autogenerate.api import AutogenContext
 from alembic.operations.ops import UpgradeOps
 from unittest.mock import Mock, PropertyMock
+from sqlalchemy.exc import NotSupportedError
 
 from starrocks.alembic.compare import compare_starrocks_table, extract_starrocks_dialect_attributes
 from starrocks.params import AlterTableEnablement, SRKwargsPrefix, TableInfoKeyWithPrefix, DialectName, TablePropertyForFuturePartitions
@@ -249,13 +250,12 @@ class TestRealTableObjects:
             starrocks_PRIMARY_KEY='id',
             schema='test_db'
         )
-
-        with pytest.raises(NotImplementedError) as exc_info:
+        with pytest.raises(NotSupportedError) as exc_info:
             upgrade_ops = UpgradeOps([])
             compare_starrocks_table(
                 autogen_context, upgrade_ops, conn_table.schema, conn_table.name, conn_table, meta_table
             )
-        assert "StarRocks does not support 'ALTER TABLE KEY'" in str(exc_info.value)
+        assert "not supported to change the key type" in str(exc_info.value)
 
     def test_real_table_unsupported_partition_change(self):
         """Test unsupported PARTITION_BY change using real Table objects."""
@@ -548,12 +548,12 @@ class TestKeyChanges:
         )
         meta_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(meta_table.kwargs)}
         
-        with pytest.raises(NotImplementedError) as exc_info:
+        with pytest.raises(NotSupportedError) as exc_info:
             upgrade_ops = UpgradeOps([])
             compare_starrocks_table(
                 autogen_context, upgrade_ops, conn_table.schema, conn_table.name, conn_table, meta_table
             )
-        assert "StarRocks does not support 'ALTER TABLE KEY'" in str(exc_info.value)
+        assert "not supported to change the key type" in str(exc_info.value)
 
     def test_key_default_to_none(self):
         """Test KEY from default value ('DUPLICATE KEY') to None."""
@@ -636,12 +636,12 @@ class TestKeyChanges:
         )
         meta_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(meta_table.kwargs)}
 
-        with pytest.raises(NotImplementedError) as exc_info:
+        with pytest.raises(NotSupportedError) as exc_info:
             upgrade_ops = UpgradeOps([])
             compare_starrocks_table(
                 autogen_context, upgrade_ops, conn_table.schema, conn_table.name, conn_table, meta_table
             )
-        assert "StarRocks does not support 'ALTER TABLE KEY'" in str(exc_info.value)
+        assert "not supported to change the key type" in str(exc_info.value)
 
     @pytest.mark.parametrize("conn_key, conn_key_columns, meta_key, meta_key_columns", [
         ("UNIQUE_KEY", "id", "UNIQUE_key", "id"),

@@ -27,7 +27,11 @@ So, it needs a integration test environment.
 
 class TestIntegrationViews:
     STARROCKS_URI = conftest_sr.get_starrocks_url()
-    engine: Engine = create_engine(STARROCKS_URI)
+    engine: Engine
+
+    @classmethod
+    def setup_class(cls):
+        cls.engine = conftest_sr.create_test_engine()
 
     @classmethod
     def teardown_class(cls):
@@ -54,22 +58,31 @@ class TestIntegrationViews:
         with engine.connect() as conn:
             conn.execute(text(f"DROP VIEW IF EXISTS {view_name}"))
             try:
+                # 1. Initial state to add a view
                 target_metadata = MetaData()
                 view = View(view_name, "SELECT 1 AS val", comment="Integration test view")
                 target_metadata.info['views'] = {(None, view_name): view}
                 mc: MigrationContext = MigrationContext.configure(connection=conn)
                 migration_script: api.MigrationScript = api.produce_migrations(mc, target_metadata)
+
+                # 2. Verify the script and upgrade
                 assert len(migration_script.upgrade_ops.ops) == 1
                 create_op: CreateViewOp = migration_script.upgrade_ops.ops[0]
                 assert isinstance(create_op, CreateViewOp)
                 assert create_op.view_name == view_name
+
+                # 3. Apply the migration
                 op = Operations(mc)
                 for op_item in migration_script.upgrade_ops.ops:
                     op.invoke(op_item)
+
+                # 4. Verify the view exists in the database
                 inspector = inspect(conn)
                 views: list[str] = inspector.get_view_names()
                 logger.info(f"inspected created views : {views}")
                 assert view_name in views
+
+                # 5. Downgrade and verify the view is dropped
                 for op_item in migration_script.downgrade_ops.ops:
                     op.invoke(op_item)
                 inspector = inspect(conn)
@@ -92,6 +105,7 @@ class TestIntegrationViews:
             """
             conn.execute(text(initial_ddl))
             try:
+                # 1. Initial state to alter a view
                 target_metadata = MetaData()
                 altered_view = View(
                     view_name,
@@ -106,17 +120,32 @@ class TestIntegrationViews:
                 target_metadata.info['views'] = {(None, view_name): altered_view}
                 mc: MigrationContext = MigrationContext.configure(connection=conn)
                 migration_script = api.produce_migrations(mc, target_metadata)
+
+                # 2. Verify the script and upgrade
                 assert len(migration_script.upgrade_ops.ops) == 1
                 op_item = migration_script.upgrade_ops.ops[0]
                 assert isinstance(op_item, AlterViewOp)
                 assert op_item.view_name == view_name
+
+                # 3. Apply the migration
                 op = Operations(mc)
                 for op_to_run in migration_script.upgrade_ops.ops:
                     op.invoke(op_to_run)
+
+                # 4. Verify the view exists in the database
                 inspector = inspect(conn)
                 view_info = inspector.get_view(view_name)
                 assert view_info is not None
                 logger.info(f"view_info.definition: {view_info.definition}")
                 assert normalize_sql("SELECT 2 AS new_c1, 3 AS new_c2") == normalize_sql(view_info.definition)
+
+                # 5. Downgrade and verify the view is altered
+                for op_item in migration_script.downgrade_ops.ops:
+                    op.invoke(op_item)
+                inspector = inspect(conn)
+                view_info = inspector.get_view(view_name)
+                assert view_info is not None
+                logger.info(f"view_info.definition: {view_info.definition}")
+                assert normalize_sql("SELECT 1 AS c1") == normalize_sql(view_info.definition)
             finally:
                 conn.execute(text(f"DROP VIEW IF EXISTS {view_name}"))

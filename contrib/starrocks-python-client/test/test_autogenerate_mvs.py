@@ -27,7 +27,7 @@ class TestAutogenerateMV:
         self.mock_inspector.get_materialized_view_names.return_value = []
         m2 = MetaData()
         mv = MaterializedView('my_test_mv', 'SELECT 1')
-        m2.info['materialized_views'] = {(mv, None): mv}
+        m2.info['materialized_views'] = {(mv.schema, mv.name): mv}
         self.mock_autogen_context.metadata = m2
         autogen_for_materialized_views(self.mock_autogen_context, upgrade_ops, [None])
         eq_(len(upgrade_ops.ops), 1)
@@ -53,7 +53,7 @@ class TestAutogenerateMV:
         self.mock_inspector.get_materialized_view_definition.return_value = 'SELECT 1'
         m2 = MetaData()
         mv2 = MaterializedView('my_test_mv', 'SELECT 2')
-        m2.info['materialized_views'] = {(mv2, None): mv2}
+        m2.info['materialized_views'] = {(mv2.schema, mv2.name): mv2}
         self.mock_autogen_context.metadata = m2
         autogen_for_materialized_views(self.mock_autogen_context, upgrade_ops, [None])
         eq_(len(upgrade_ops.ops), 1)

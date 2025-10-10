@@ -1,7 +1,7 @@
 import os
 from typing import Optional
 import pytest
-from sqlalchemy import URL, create_engine
+from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
 
 from starrocks.alembic.compare import logger
