@@ -110,3 +110,29 @@ class ViewSecurityType:
         INVOKER,
         DEFINER,
     }
+
+
+class MVRefreshMoment:
+    """Supported StarRocks materialized view refresh moments.
+    """
+    IMMEDIATE = "IMMEDIATE"
+    DEFERRED = "DEFERRED"
+
+    ALLOWED_ITEMS = {
+        IMMEDIATE,
+        DEFERRED,
+    }
+
+
+class MVRefreshType:
+    """Supported StarRocks materialized view refresh schemes.
+    """
+    ASYNC = "ASYNC"
+    MANUAL = "MANUAL"
+    INCREMENTAL = "INCREMENTAL"
+
+    ALLOWED_ITEMS = {
+        ASYNC,
+        MANUAL,
+        INCREMENTAL,
+    }

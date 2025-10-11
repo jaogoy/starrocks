@@ -80,10 +80,7 @@ def _quote_schema(schema: str) -> str:
 @renderers.dispatch_for(AlterViewOp)
 def _alter_view(autogen_context: AutogenContext, op: AlterViewOp) -> str:
     """Render an AlterViewOp for autogenerate."""
-    args = [
-        f"{op.view_name!r}",
-    ]
-    args.append(f"\n{op_param_indent}{op.definition!r}\n")
+    args = [f"{op.view_name!r}", f"\n{op_param_indent}{op.definition!r}\n"]
     if op.schema:
         args.append(f"schema={_quote_schema(op.schema)}")
     if op.comment:

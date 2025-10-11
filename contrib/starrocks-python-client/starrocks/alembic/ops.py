@@ -80,13 +80,17 @@ class CreateViewOp(ops.MigrateOperation):
         definition: str,
         schema: str | None = None,
         security: str | None = None,
-        comment: str | None = None
+        comment: str | None = None,
+        or_replace: bool = False,
+        if_not_exists: bool = False,
     ) -> None:
         self.view_name = view_name
         self.definition = definition
         self.schema = schema
         self.security = security
         self.comment = comment
+        self.or_replace = or_replace
+        self.if_not_exists = if_not_exists
 
     @classmethod
     def create_view(
@@ -96,9 +100,19 @@ class CreateViewOp(ops.MigrateOperation):
         definition: str,
         schema: str | None = None,
         security: str | None = None,
-        comment: str | None = None
+        comment: str | None = None,
+        or_replace: bool = False,
+        if_not_exists: bool = False,
     ):
-        op = cls(view_name, definition, schema=schema, security=security, comment=comment)
+        op = cls(
+            view_name,
+            definition,
+            schema=schema,
+            security=security,
+            comment=comment,
+            or_replace=or_replace,
+            if_not_exists=if_not_exists,
+        )
         return operations.invoke(op)
 
     def reverse(self) -> ops.MigrateOperation:
@@ -118,19 +132,21 @@ class DropViewOp(ops.MigrateOperation):
         self,
         view_name: str,
         schema: Optional[str] = None,
+        if_exists: bool = False,
         _reverse_view_definition: Optional[str] = None,
         _reverse_view_comment: Optional[str] = None,
         _reverse_view_security: Optional[str] = None,
     ):
         self.view_name = view_name
         self.schema = schema
+        self.if_exists = if_exists
         self._reverse_view_definition = _reverse_view_definition
         self._reverse_view_comment = _reverse_view_comment
         self._reverse_view_security = _reverse_view_security
 
     @classmethod
-    def drop_view(cls, operations: Operations, view_name: str, schema: Optional[str] = None):
-        op = cls(view_name, schema=schema)
+    def drop_view(cls, operations: Operations, view_name: str, schema: Optional[str] = None, if_exists: bool = False):
+        op = cls(view_name, schema=schema, if_exists=if_exists)
         return operations.invoke(op)
 
     def reverse(self) -> ops.MigrateOperation:
@@ -181,15 +197,19 @@ class AlterMaterializedViewOp(ops.MigrateOperation):
 
 @Operations.register_operation("create_materialized_view")
 class CreateMaterializedViewOp(ops.MigrateOperation):
-    def __init__(self, view_name: str, definition: str, properties: dict | None = None, schema: str | None = None) -> None:
+    def __init__(self, view_name: str, definition: str, properties: dict | None = None,
+                 schema: str | None = None,
+                 if_not_exists: bool = False) -> None:
         self.view_name = view_name
         self.definition = definition
         self.properties = properties
         self.schema = schema
+        self.if_not_exists = if_not_exists
 
     @classmethod
-    def create_materialized_view(cls, operations, view_name: str, definition: str, properties: dict | None = None, schema: str | None = None):
-        op = cls(view_name, definition, properties=properties, schema=schema)
+    def create_materialized_view(cls, operations, view_name: str, definition: str, properties: dict | None = None, schema: str | None = None, if_not_exists: bool = False):
+        op = cls(view_name, definition, properties=properties,
+                 schema=schema, if_not_exists=if_not_exists)
         return operations.invoke(op)
 
     def reverse(self) -> ops.MigrateOperation:
@@ -198,13 +218,14 @@ class CreateMaterializedViewOp(ops.MigrateOperation):
 
 @Operations.register_operation("drop_materialized_view")
 class DropMaterializedViewOp(ops.MigrateOperation):
-    def __init__(self, view_name: str, schema: str | None = None) -> None:
+    def __init__(self, view_name: str, schema: str | None = None, if_exists: bool = False) -> None:
         self.view_name = view_name
         self.schema = schema
+        self.if_exists = if_exists
 
     @classmethod
-    def drop_materialized_view(cls, operations, view_name: str, schema: str | None = None):
-        op = cls(view_name, schema=schema)
+    def drop_materialized_view(cls, operations, view_name: str, schema: str | None = None, if_exists: bool = False):
+        op = cls(view_name, schema=schema, if_exists=if_exists)
         return operations.invoke(op)
 
     def reverse(self) -> ops.MigrateOperation:

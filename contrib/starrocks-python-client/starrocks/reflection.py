@@ -17,7 +17,9 @@ from __future__ import annotations
 import json
 import logging
 import re
-from typing import Any, Optional, Union
+from typing import Any, Optional, Union, Dict
+from dataclasses import dataclass, field
+from pathlib import Path
 
 from sqlalchemy.dialects.mysql.base import _DecodingRow
 from sqlalchemy.dialects.mysql.reflection import _re_compile
@@ -25,13 +27,15 @@ from sqlalchemy import log, types as sqltypes, util
 from sqlalchemy.engine.reflection import Inspector
 
 from . import utils
-from .drivers.parsers import parse_data_type
-from .engine.interfaces import MySQLKeyType, ReflectedTableKeyInfo
+from .drivers.parsers import parse_data_type, parse_mv_refresh_clause
+from .engine.interfaces import MySQLKeyType, ReflectedMVOptions, ReflectedTableKeyInfo
 from .utils import SQLParseError
 from .params import ColumnAggInfoKeyWithPrefix, SRKwargsPrefix, TableInfoKeyWithPrefix, TableInfoKey
-from .engine.interfaces import ReflectedViewState, ReflectedPartitionInfo, ReflectedDistributionInfo, ReflectedState
+from .engine.interfaces import ReflectedViewState, ReflectedPartitionInfo, ReflectedDistributionInfo, ReflectedState, ReflectedMVState
 from .types import PartitionType
 from .consts import TableConfigKey
+from .sql.schema import MaterializedView, View
+
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +68,40 @@ class StarRocksInspector(Inspector):
         """
         return self.dialect.get_views(self.bind, schema=schema)
 
+    def get_materialized_view(self, view_name: str, schema: Optional[str] = None, **kwargs: Any) -> Optional[ReflectedMVState]:
+        """
+        Retrieves information about a specific materialized view.
+
+        :param view_name: The name of the materialized view to inspect.
+        :param schema: The schema of the materialized view; defaults to the default schema name if None.
+        :param kwargs: Additional arguments passed to the dialect's get_materialized_view method.
+        :return: A ReflectedMVState object, or None if the materialized view does not exist.
+        """
+        return self.dialect.get_materialized_view(self.bind, view_name, schema=schema, **kwargs)
+
+    def get_materialized_view_definition(self, view_name: str, schema: Optional[str] = None, **kwargs: Any) -> Optional[str]:
+        """
+        Retrieves the definition of a specific materialized view.
+
+        :param view_name: The name of the materialized view to inspect.
+        :param schema: The schema of the materialized view; defaults to the default schema name if None.
+        :param kwargs: Additional arguments passed to the dialect's get_materialized_view_definition method.
+        :return: The materialized view definition as a string, or None if the view does not exist.
+        """
+        mv_state = self.get_materialized_view(view_name, schema=schema, **kwargs)
+        return mv_state.definition if mv_state else None
+
+    def get_materialized_view_options(self, view_name: str, schema: Optional[str] = None, **kwargs: Any) -> Optional[ReflectedMVState]:
+        """
+        Retrieves the physical properties of a specific materialized view.
+
+        :param view_name: The name of the materialized view to inspect.
+        :param schema: The schema of the materialized view; defaults to the default schema name if None.
+        :param kwargs: Additional arguments.
+        :return: A ReflectedMVState object, or None if the view does not exist.
+        """
+        return self.dialect.get_materialized_view_options(self.bind, view_name, schema=schema, **kwargs)
+
 
 @log.class_logger
 class StarRocksTableDefinitionParser(object):
@@ -89,6 +127,12 @@ class StarRocksTableDefinitionParser(object):
     _TABLE_KEY_PATTERN = re.compile(r'\s*(\w+\s+KEY)\s*\((.*)\)\s*', re.IGNORECASE)
     _BUCKETS_PATTERN = re.compile(r'\sBUCKETS\s+(\d+)', re.IGNORECASE)
     _BUCKETS_REPLACE_PATTERN = re.compile(r'\s+BUCKETS\s+\d+', re.IGNORECASE)
+    _PARTITION_BY_PATTERN = re.compile(r"PARTITION BY\s*(.+?)(?=\s*(?:DISTRIBUTED BY|ORDER BY|REFRESH|PROPERTIES|AS|\Z))", re.IGNORECASE | re.DOTALL)
+
+    # Patterns to parse CREATE MATERIALIZED VIEW statement
+    _MV_REFRESH_PATTERN = re.compile(r"\s*REFRESH\s+(.+?)(?=\s*(?:PARTITION BY|DISTRIBUTED BY|ORDER BY|PROPERTIES|AS|\Z))", re.IGNORECASE | re.DOTALL)
+    _MV_PROPERTIES_PATTERN = re.compile(r"\s*PROPERTIES\s*\((.+?)\)(?=\s*(?:PARTITION BY|DISTRIBUTED BY|ORDER BY|REFRESH|AS|\Z))", re.IGNORECASE | re.DOTALL)
+    _MV_AS_DEFINITION_PATTERN = re.compile(r"\s*AS\s*((?:WITH|SELECT)\s*.+)", re.IGNORECASE | re.DOTALL)
 
     def __init__(self, dialect, preparer):
         self.dialect = dialect
@@ -132,7 +176,7 @@ class StarRocksTableDefinitionParser(object):
                 "name": None,
             }],
         )
-        logger.debug(f"reflected table state for table: {table.TABLE_NAME}, info: {reflected_table_info}")
+        logger.debug(f"reflected table info for table: {table.TABLE_NAME}, info: {reflected_table_info}")
         return reflected_table_info
 
     def _parse_column(self, column: _DecodingRow, **kwargs: Any) -> dict:
@@ -397,3 +441,81 @@ class StarRocksTableDefinitionParser(object):
                 logger.info(f"properties are not valid JSON: {properties}")
 
         return opts
+
+    def parse_mv(
+        self,
+        create_mv_ddl: str,
+        mv_name: str,
+        schema: Optional[str] = None
+    ) -> ReflectedMVState:
+        """
+        Parses the DDL from SHOW CREATE MATERIALIZED VIEW.
+        This is the main entry point for MV reflection.
+        """
+        # Extract AS SELECT definition first
+        mv_definition = None
+        definition_match = self._MV_AS_DEFINITION_PATTERN.search(create_mv_ddl)
+        if definition_match:
+            mv_definition = definition_match.group(1).strip()
+            clauses_str = create_mv_ddl[:definition_match.start()]
+        else:
+            raise SQLParseError(f"Could not find 'AS SELECT' in CREATE MATERIALIZED VIEW statement for {mv_name}", create_mv_ddl)
+
+        state = ReflectedMVState(name=mv_name, definition=mv_definition, schema=schema)
+
+        partition_match = self._PARTITION_BY_PATTERN.search(clauses_str)
+        if partition_match:
+            state.mv_options.partition_by = self.parse_partition_clause(partition_match.group(1).strip())
+
+        # Use Lark parser for the refresh clause
+        try:
+            refresh_text_match = self._MV_REFRESH_PATTERN.search(clauses_str)
+            if refresh_text_match:
+                refresh_clause_str = refresh_text_match.group(0).strip()
+                logger.debug(f"refresh_clause_str: {refresh_clause_str}")
+                parsed_refresh = parse_mv_refresh_clause(refresh_clause_str)
+                state.mv_options.refresh_moment = parsed_refresh.get("refresh_moment")
+                state.mv_options.refresh_type = parsed_refresh.get("refresh_scheme")
+        except Exception as e:
+            logger.warning(f"Failed to parse refresh clause for MV {mv_name}, falling back to regex: {e}")
+            # Fallback to simple regex if lark parsing fails
+            self._parse_mv_refresh_with_regex(clauses_str, state)
+        
+        properties_match = self._MV_PROPERTIES_PATTERN.search(clauses_str)
+        if properties_match:
+            # Use string instead of dictionary now.
+            # state.mv_options.properties = self._parse_properties(properties_match.group(1))
+            state.mv_options.properties = properties_match.group(1).strip()
+
+        return state
+
+    def _parse_mv_refresh_with_regex(self, ddl_part: str, state: ReflectedMVState):
+        """Fallback refresh clause parser using regex."""
+        refresh_match = re.search(r"REFRESH\s+(.+?)(?=\s*(?:PROPERTIES|AS))", ddl_part, re.IGNORECASE | re.DOTALL)
+        if refresh_match:
+            mv_options: ReflectedMVOptions = state.mv_options
+            refresh_text = refresh_match.group(1).strip().upper()
+            if refresh_text.startswith("IMMEDIATE"):
+                mv_options.refresh_moment = "IMMEDIATE"
+                mv_options.refresh_type = refresh_text[len("IMMEDIATE"):].strip()
+            elif refresh_text.startswith("DEFERRED"):
+                mv_options.refresh_moment = "DEFERRED"
+                mv_options.refresh_type = refresh_text[len("DEFERRED"):].strip()
+            else:
+                mv_options.refresh_type = refresh_text
+
+    def _parse_properties(self, props_str: str) -> Dict[str, str]:
+        """
+        Parses the content of a PROPERTIES clause into a dictionary.
+        This implementation uses regex to correctly handle commas and escaped quotes within property values.
+        """
+        # Regex to find all key-value pairs, respecting quotes.
+        # It captures the key in group 1 and the value in group 2.
+        # The value part `((?:\\"|[^"])*)` handles escaped quotes `\"` inside the value string.
+        pattern = re.compile(r'"([^"]+)"\s*=\s*"((?:\\"|[^"])*)"')
+        matches = pattern.findall(props_str)
+        if matches:
+            properties = {key: value.replace('\\"', '"') for key, value in matches}
+        else:
+            properties = {}
+        return properties

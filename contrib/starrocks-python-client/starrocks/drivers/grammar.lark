@@ -1,5 +1,6 @@
-?start: data_type
+?start: data_type | refresh_clause
 
+// -- data type
 ?data_type: simple_type | array_type | map_type | struct_type
 
 array_type: "array"i "<" data_type ">"
@@ -9,6 +10,17 @@ struct_field: CNAME data_type
 
 simple_type: CNAME type_args? CNAME?
 type_args: "(" NUMBER ("," NUMBER)? ")"
+
+// --- Materialized View Refresh Clause ---
+refresh_clause: "REFRESH"i (refresh_moment | refresh_scheme | (refresh_moment refresh_scheme))
+
+// Add `!`, not to be inlined optimized
+!refresh_moment: "IMMEDIATE"i | "DEFERRED"i
+
+!refresh_scheme: async_scheme | "MANUAL"i | "INCREMENTAL"i
+
+async_scheme: "ASYNC"i ASYNC_DETAILS?
+ASYNC_DETAILS: /(?s).+/ // Match any character including newlines
 
 %import common.CNAME
 %import common.NUMBER

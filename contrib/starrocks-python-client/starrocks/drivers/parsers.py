@@ -59,6 +59,7 @@ class DataTypeTransformer(Transformer):
             return self.type_map["largeint"]
 
         type_class = self.type_map.get(type_name_lower)
+        # logger.debug(f"type_class: {type_class}")
         if type_class is None:
             # logger.error(f"Unsupported data type: {type_name}")
             raise TypeError(f"Unsupported data type: {type_name}")
@@ -91,6 +92,7 @@ class DataTypeTransformer(Transformer):
 
     @v_args(inline=True)
     def data_type(self, item: Any) -> Any:
+        # logger.debug(f"data_type: {item}")
         return item
 
 
@@ -130,3 +132,70 @@ def parse_data_type(type_str: str) -> Any:
         A SQLAlchemy type object.
     """
     return get_data_type_parser().parse(type_str)
+
+
+# --- Materialized View Refresh Clause Parser ---
+class _MVRefreshTransformer(Transformer):
+    @v_args(inline=True)
+    def refresh_clause(self, refresh_moment=None, refresh_scheme=None):
+        # logger.debug(f"refresh_moment: {refresh_moment}, refresh_scheme: {refresh_scheme}")
+        result = {"refresh_moment": refresh_moment, "refresh_scheme": refresh_scheme}
+        if not refresh_scheme and refresh_moment \
+                and refresh_moment.upper().strip() not in ("IMMEDIATE", "DEFERRED"):
+            result["refresh_scheme"] = refresh_moment
+            result["refresh_moment"] = None
+        return result
+
+    @v_args(inline=True)
+    def refresh_moment(self, moment=None):
+        # logger.debug(f"refresh_moment: {moment}")
+        return str(moment).upper().strip() if moment else None
+
+    @v_args(inline=True)
+    def refresh_scheme(self, scheme=None):
+        # logger.debug(f"refresh_scheme: {scheme}")
+        return str(scheme).strip() if scheme else None
+
+    @v_args(inline=True)
+    def async_scheme(self, details=None):
+        if details:
+            return f"ASYNC {details}"
+        return "ASYNC"
+    
+    def REFRESH(self, t: Token):
+        return "REFRESH"
+    
+    def IMMEDIATE(self, t: Token):
+        return "IMMEDIATE"
+
+    def DEFERRED(self, t: Token):
+        return "DEFERRED"
+
+    def ASYNC(self, t: Token):
+        return "ASYNC"
+
+    def MANUAL(self, t: Token):
+        return "MANUAL"
+
+    def INCREMENTAL(self, t: Token):
+        return "INCREMENTAL"
+
+    def ASYNC_DETAILS(self, details):
+        return str(details).strip()
+
+
+_mv_refresh_parser = None
+
+
+def _get_mv_refresh_parser() -> Lark:
+    """Lazily loads and returns the Lark parser for MV refresh clauses."""
+    global _mv_refresh_parser
+    if _mv_refresh_parser is None:
+        grammar_text = _get_grammar_text()
+        _mv_refresh_parser = Lark(grammar_text, parser="lalr", start="refresh_clause", transformer=_MVRefreshTransformer())
+    return _mv_refresh_parser
+
+
+def parse_mv_refresh_clause(refresh_clause_str: str) -> dict:
+    """Parses a full 'REFRESH ...' string and returns a dictionary with moment and scheme."""
+    return _get_mv_refresh_parser().parse(refresh_clause_str)

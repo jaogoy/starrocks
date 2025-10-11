@@ -64,46 +64,59 @@ sqlalchemy.url = starrocks://root:@localhost:9030/mydatabase
 
 **In `env.py`:**
 
-Ensure the StarRocks dialect is imported so Alembic's autogenerate can find the custom comparison logic.
+Ensure the StarRocks dialect and Alembic integration is imported and configure `render_item` so autogenerate recognizes StarRocks column types.
 
 ```python
-# Add this import at the top of your env.py
-import starrocks.alembic
-# ... rest of env.py
+# Add these imports at the top of your env.py
+from starrocks.alembic import render  # for type rendering
+from starrocks.alembic.starrocks import StarRocksImpl  # ensure impl registered
+
+# In both run_migrations_offline() and run_migrations_online()
+context.configure(
+    # ... other parameters ...
+    render_item=render.render_column_type,
+)
 ```
 
 ### 2. Defining Schema Objects
 
 You define your schema in your Python models file (e.g., `models.py`) using SQLAlchemy's declarative style.
 
-#### Defining Tables with StarRocks Properties
+#### Defining Tables with StarRocks Attributes and Types
 
-You can specify StarRocks-specific properties using the `__table_args__` dictionary.
+Use uppercase types from `starrocks` and specify StarRocks attributes via `__table_args__`.
 
 ```python
 from sqlalchemy.orm import declarative_base
-from sqlalchemy import Column, Integer, String
+from sqlalchemy import Column
+from starrocks import INTEGER, VARCHAR
 
 Base = declarative_base()
 
 class MyTable(Base):
     __tablename__ = 'my_table'
-    id = Column(Integer, primary_key=True)
-    name = Column(String(50))
+    id = Column(INTEGER, primary_key=True)
+    name = Column(VARCHAR(50))
 
     __table_args__ = {
-        "starrocks_PRIMARY_KEY": "id",
-        "starrocks_engine": "OLAP",
-        "starrocks_comment": "table comment",
-        "starrocks_distributed_by": "HASH(id) BUCKETS 10",
-        "starrocks_partition_by": "RANGE (id) (PARTITION p1 VALUES LESS THAN ('100'))",
-        "starrocks_properties": (
-            ("storage_medium", "SSD"),
-            ("storage_cooldown_time", "2025-06-04 00:00:00"),
-            ("replication_num", "1")
-        )
+        'starrocks_PRIMARY_KEY': 'id',
+        'starrocks_ENGINE': 'OLAP',
+        'starrocks_COMMENT': 'table comment',
+        'starrocks_DISTRIBUTED_BY': 'HASH(id) BUCKETS 10',
+        'starrocks_PARTITION_BY': """RANGE (id) (
+                PARTITION p1 VALUES LESS THAN ('100')
+            )""",
+        'starrocks_PROPERTIES': {
+            'storage_medium': 'SSD',
+            'storage_cooldown_time': '2025-06-04 00:00:00',
+            'replication_num': '1'
+        }
     }
 ```
+
+Note: All columns that appear in a StarRocks key (`starrocks_PRIMARY_KEY`, `starrocks_UNIQUE_KEY`, `starrocks_DUPLICATE_KEY`, or `starrocks_AGGREGATE_KEY`) must also be marked with `primary_key=True` in their `Column(...)` declarations.
+
+Note: Usage mirrors SQLAlchemy’s patterns (e.g., MySQL), but always import and use uppercase types from `starrocks`.
 
 #### Defining Views and Materialized Views
 

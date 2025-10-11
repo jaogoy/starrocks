@@ -13,15 +13,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from lark import LarkError
+import logging
+from lark import LarkError, UnexpectedCharacters
 import pytest
-from starrocks.drivers.parsers import parse_data_type
+from starrocks.drivers.parsers import parse_data_type, parse_mv_refresh_clause
 from starrocks import datatype as datatype
 from starrocks.reflection import StarRocksTableDefinitionParser
 from starrocks.engine.interfaces import ReflectedTableKeyInfo
 
 
-# logger = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)
 
 
 class TestDataTypeParser:
@@ -160,6 +161,47 @@ class TestDataTypeParser:
     def test_invalid_syntax(self, type_str):
         with pytest.raises(LarkError):
             parse_data_type(type_str)
+
+
+class TestMVRefreshParser:
+    @pytest.mark.parametrize(
+        "clause, expected",
+        [
+            # Correct cases
+            ("REFRESH IMMEDIATE", {"refresh_moment": "IMMEDIATE", "refresh_scheme": None}),
+            ("REFRESH DEFERRED", {"refresh_moment": "DEFERRED", "refresh_scheme": None}),
+            ("REFRESH ASYNC", {"refresh_moment": None, "refresh_scheme": "ASYNC"}),
+            ("REFRESH MANUAL", {"refresh_moment": None, "refresh_scheme": "MANUAL"}),
+            ("REFRESH INCREMENTAL", {"refresh_moment": None, "refresh_scheme": "INCREMENTAL"}),
+            ("REFRESH DEFERRED ASYNC", {"refresh_moment": "DEFERRED", "refresh_scheme": "ASYNC"}),
+            ("REFRESH IMMEDIATE MANUAL", {"refresh_moment": "IMMEDIATE", "refresh_scheme": "MANUAL"}),
+            ("REFRESH ASYNC EVERY (INTERVAL 1 DAY)", {"refresh_moment": None, "refresh_scheme": "ASYNC EVERY (INTERVAL 1 DAY)"}),
+            ("REFRESH ASYNC START ('2025-01-01 12:00:00') EVERY (INTERVAL 1 HOUR)", {"refresh_moment": None, "refresh_scheme": "ASYNC START ('2025-01-01 12:00:00') EVERY (INTERVAL 1 HOUR)"}),
+            ("refresh deferred async", {"refresh_moment": "DEFERRED", "refresh_scheme": "ASYNC"}), # Case-insensitivity
+        ]
+    )
+    def test_correct_clauses(self, clause, expected):
+        """Tests that various correct refresh clauses are parsed as expected."""
+        result = parse_mv_refresh_clause(clause)
+        assert result == expected
+
+    @pytest.mark.parametrize(
+        "clause",
+        [
+            # Incorrect cases
+            "REFRESH",
+            "REFRESH FOO",
+            # "REFRESH ASYNC EVERY",
+            # "REFRESH ASYNC EVERY (INTERVAL 1 MONTHS)", # Invalid time unit
+            "REFRESH IMMEDIATE DEFERRED",
+            # "REFRESH ASYNC MANUAL",
+        ]
+    )
+    def test_incorrect_clauses(self, clause):
+        """Tests that various incorrect refresh clauses raise a LarkError."""
+        from lark.exceptions import LarkError
+        with pytest.raises(LarkError):
+            parse_mv_refresh_clause(clause)
 
 
 class TestKeyClauseParser:

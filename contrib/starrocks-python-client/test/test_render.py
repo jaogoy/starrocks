@@ -195,20 +195,20 @@ class TestTableRendering:
 BASIC_RENDER_TEST_CASES = [
     # (type_instance, expected_render)
     (INTEGER(), "INTEGER()"),
-    (VARCHAR(255), "VARCHAR(255)"),
-    (DECIMAL(10, 2), "DECIMAL(10, 2)"),
+    (VARCHAR(255), "VARCHAR(length=255)"),
+    (DECIMAL(10, 2), "DECIMAL(precision=10, scale=2)"),
     (BOOLEAN(), "BOOLEAN()"),
     (TINYINT(), "TINYINT()"),
-    (TINYINT(1), "TINYINT(1)"),
+    (TINYINT(1), "TINYINT(display_width=1)"),
     (SMALLINT(), "SMALLINT()"),
     (BIGINT(), "BIGINT()"),
     (LARGEINT(), "LARGEINT()"),
     (FLOAT(), "FLOAT()"),
-    (DOUBLE(), "DOUBLE()"),
-    (CHAR(10), "CHAR(10)"),
+    (DOUBLE(), "DOUBLE(asdecimal=True)"),
+    (CHAR(10), "CHAR(length=10)"),
     (STRING(), "STRING()"),
-    (BINARY(10), "BINARY(10)"),
-    (VARBINARY(255), "VARBINARY(255)"),
+    (BINARY(10), "BINARY(length=10)"),
+    (VARBINARY(255), "VARBINARY(length=255)"),
     (DATE(), "DATE()"),
     (DATETIME(), "DATETIME()"),
     (HLL(), "HLL()"),
@@ -220,27 +220,27 @@ BASIC_RENDER_TEST_CASES = [
 COMPLEX_RENDER_TEST_CASES = [
     # ARRAY types
     (ARRAY(INTEGER), "ARRAY(INTEGER())"),
-    (ARRAY(VARCHAR(50)), "ARRAY(VARCHAR(50))"),
+    (ARRAY(VARCHAR(50)), "ARRAY(VARCHAR(length=50))"),
     (ARRAY(ARRAY(STRING)), "ARRAY(ARRAY(STRING()))"),
-    (ARRAY(DECIMAL(10, 2)), "ARRAY(DECIMAL(10, 2))"),
+    (ARRAY(DECIMAL(10, 2)), "ARRAY(DECIMAL(precision=10, scale=2))"),
     
     # MAP types
     (MAP(STRING, INTEGER), "MAP(STRING(), INTEGER())"),
-    (MAP(VARCHAR(50), DOUBLE), "MAP(VARCHAR(50), DOUBLE())"),
+    (MAP(VARCHAR(50), DOUBLE), "MAP(VARCHAR(length=50), DOUBLE(asdecimal=True))"),
     (MAP(STRING, MAP(INTEGER, STRING)), "MAP(STRING(), MAP(INTEGER(), STRING()))"),
-    (MAP(STRING, DECIMAL(8, 2)), "MAP(STRING(), DECIMAL(8, 2))"),
+    (MAP(STRING, DECIMAL(8, 2)), "MAP(STRING(), DECIMAL(precision=8, scale=2))"),
     
     # STRUCT types
     (STRUCT(name=STRING, age=INTEGER), "STRUCT(name=STRING(), age=INTEGER())"),
     (STRUCT(id=INTEGER, name=VARCHAR(100), active=BOOLEAN), 
-     "STRUCT(id=INTEGER(), name=VARCHAR(100), active=BOOLEAN())"),
+     "STRUCT(id=INTEGER(), name=VARCHAR(length=100), active=BOOLEAN())"),
     (STRUCT(user=STRUCT(id=INTEGER, name=STRING), metadata=MAP(STRING, STRING)), 
      "STRUCT(user=STRUCT(id=INTEGER(), name=STRING()), metadata=MAP(STRING(), STRING()))"),
 ]
 
 EDGE_CASE_RENDER_TEST_CASES = [
-    (VARCHAR(65533), "VARCHAR(65533)"),
-    (DECIMAL(38, 18), "DECIMAL(38, 18)"),
+    (VARCHAR(65533), "VARCHAR(length=65533)"),
+    (DECIMAL(38, 18), "DECIMAL(precision=38, scale=18)"),
     (STRUCT(id=INTEGER), "STRUCT(id=INTEGER())"),
     (ARRAY(ARRAY(ARRAY(INTEGER))), "ARRAY(ARRAY(ARRAY(INTEGER())))"),
 ]
@@ -258,8 +258,11 @@ class TestDataTypeRendering:
     def _create_mock_autogen_context(self):
         """Create a mock AutogenContext for testing"""
         ctx = Mock()
+        ctx.as_sql = False  # Required by AutogenContext constructor
+        ctx.opts = {}  # Required by AutogenContext constructor
+        ctx.script = None  # Required by AutogenContext constructor
         ctx.imports = set()
-        return AutogenContext(ctx, {}, None, None, None)
+        return AutogenContext(ctx, {}, None, True)
 
     @pytest.mark.parametrize("type_instance, expected_render", BASIC_RENDER_TEST_CASES)
     def test_render_basic_types(self, type_instance, expected_render):

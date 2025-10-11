@@ -177,3 +177,53 @@ class TestStarRocksSpecificScenarios:
         expected = "select t1.id, t1.name, t2.category from table1 t1 join table2 t2 on t1.id = t2.table1_id where t1.status = 'active'"
         result = TableAttributeNormalizer.normalize_sql(sql)
         assert result == expected
+
+
+class TestRealCases():
+    """Test real cases."""
+
+    def test_real_case_01(self):
+        """Test real case 0."""
+        sql = "users.id"
+        expected = "id"
+        result = TableAttributeNormalizer.normalize_sql(sql, remove_qualifiers=True)
+        assert result == expected
+
+    def test_real_case_02(self):
+        """Test real case 0."""
+        sql = "`users`.`id`"
+        expected = "id"
+        result = TableAttributeNormalizer.normalize_sql(sql, remove_qualifiers=True)
+        assert result == expected
+
+    def test_real_case_1(self):
+        """Test real case 1."""
+        sql = "select users.id, users.name from test.users where users.active = true"
+        expected = "select id, name from users where active = true"
+        result = TableAttributeNormalizer.normalize_sql(sql, remove_qualifiers=True)
+        assert result == expected
+
+    def test_real_case_2_with_backticks(self):
+        """Test real case 2 with backticks."""
+        sql = "SELECT `users`.`id`, `users`.`name` FROM `test`.`users` WHERE `users`.`active` = TRUE"
+        expected = "select id, name from users where active = true"
+        result = TableAttributeNormalizer.normalize_sql(sql, remove_qualifiers=True)
+        assert result == expected
+
+    def test_real_case_3_with_liens(self):
+        """Test real case 3."""
+        sql = """
+        SELECT `users`.`id`, `users`.`name`
+        FROM `test`.`users`
+        WHERE `users`.`active` = TRUE
+        """
+        expected = "select id, name from users where active = true"
+        result = TableAttributeNormalizer.normalize_sql(sql, remove_qualifiers=True)
+        assert result == expected
+    
+    def test_real_case_4_with_special_char_in_backticks(self):
+        """Test real case 4 with qualifiers."""
+        sql = "select `schema name`.`table@name@x`.`column x`"
+        expected = "select column x"
+        result = TableAttributeNormalizer.normalize_sql(sql, remove_qualifiers=True)
+        assert result == expected

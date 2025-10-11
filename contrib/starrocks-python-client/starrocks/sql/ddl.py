@@ -28,8 +28,9 @@ class CreateView(DDLElement):
 class DropView(DDLElement):
     """Represents a DROP VIEW DDL statement."""
     __visit_name__ = "drop_view"
-    def __init__(self, element: View) -> None:
+    def __init__(self, element: View, if_exists: bool = False) -> None:
         self.element = element
+        self.if_exists = if_exists
 
 
 class AlterMaterializedView(DDLElement):
@@ -42,15 +43,17 @@ class AlterMaterializedView(DDLElement):
 class CreateMaterializedView(DDLElement):
     """Represents a CREATE MATERIALIZED VIEW DDL statement."""
     __visit_name__ = "create_materialized_view"
-    def __init__(self, element: MaterializedView) -> None:
+    def __init__(self, element: MaterializedView, if_not_exists: bool = False) -> None:
         self.element = element
+        self.if_not_exists = if_not_exists
 
 
 class DropMaterializedView(DDLElement):
     """Represents a DROP MATERIALIZED VIEW DDL statement."""
     __visit_name__ = "drop_materialized_view"
-    def __init__(self, element: MaterializedView) -> None:
+    def __init__(self, element: MaterializedView, if_exists: bool = False) -> None:
         self.element = element
+        self.if_exists = if_exists
 
 
 # DDL classes ordered according to StarRocks grammar:

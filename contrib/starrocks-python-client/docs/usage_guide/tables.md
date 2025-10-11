@@ -2,30 +2,27 @@
 
 This guide provides a comprehensive overview of how to define StarRocks tables using SQLAlchemy, which allows you to manage your database schema in Python code and integrate with tools like Alembic for migrations.
 
-## Defining Table Attributes
+## General Syntax
 
-When defining a StarRocks table using SQLAlchemy, you can specify both table-level and column-level attributes using keyword arguments prefixed with `starrocks_`.
-
-### Table-Level Attributes (`starrocks_*` Prefixes)
-
-StarRocks-specific physical attributes for a table are configured by passing special keyword arguments, prefixed with `starrocks_`, either directly to the `Table` constructor or within the `__table_args__` dictionary (in [ORM style](#defining-tables-with-the-orm-declarative-style)).
-
-#### General Syntax
+The following example shows creating a table with both table-level attributes and column definitions using StarRocks data types (uppercase) imported from `starrocks`.
 
 ```python
-from sqlalchemy import Table, MetaData, Column, Integer, String, Datetime
+from sqlalchemy import Table, MetaData, Column
+from starrocks import *  # use StarRocks types like INTEGER, VARCHAR, DATETIME, ARRAY, MAP, STRUCT
 
 metadata = MetaData()
 
 my_table = Table(
     'my_table',
     metadata,
-    Column('id', Integer),
-    Column('dt', Datetime),
-    Column('data', String(255)),
-    comment="my first sqlalchemy table",
 
-    # StarRocks-specific table-level attributes follow [optional]
+    # Columns (use StarRocks types)
+    Column('id', INTEGER, primary_key=True, nullable=False),
+    Column('dt', DATETIME, primary_key=True),
+    Column('data', VARCHAR(255), comment="payload"),
+
+    # Table-level attributes (optional)
+    comment="my first sqlalchemy table",
     starrocks_ENGINE="OLAP",
     starrocks_PRIMARY_KEY="id, dt",
     starrocks_PARTITION_BY="date_trunc('day', dt)",
@@ -35,7 +32,17 @@ my_table = Table(
 )
 ```
 
-StarRocks-specific physical attributes for a table are configured by passing special keyword arguments, prefixed with `starrocks_`, either directly to the `Table` constructor or within the `__table_args__` dictionary for ORM style.
+Note: Usage mirrors standard SQLAlchemy patterns (e.g., MySQL dialect), but you should use types from `starrocks` and keep them uppercase.
+
+Important: If you specify a StarRocks table key via `starrocks_PRIMARY_KEY`, `starrocks_UNIQUE_KEY`, `starrocks_DUPLICATE_KEY`, or `starrocks_AGGREGATE_KEY`, all columns listed in that key **MUST** also be declared with `primary_key=True` on their `Column(...)` definitions. This ensures SQLAlchemy metadata and Alembic autogenerate behave correctly.
+
+## Defining Table Attributes
+
+When defining a StarRocks table using SQLAlchemy, you can specify both table-level and column-level attributes using keyword arguments prefixed with `starrocks_`.
+
+### Table-Level Attributes (`starrocks_*` Prefixes)
+
+StarRocks-specific physical attributes for a table are configured by passing special keyword arguments, prefixed with `starrocks_`, either directly to the `Table` constructor or within the `__table_args__` dictionary (in [ORM style](#defining-tables-with-the-orm-declarative-style)). See the [General Syntax](#general-syntax) section above for a complete example that combines columns and table-level attributes.
 
 #### Available Table-Level Options
 
@@ -132,8 +139,41 @@ A dictionary of additional table attributes.
 
 #### Column Data Types
 
-You should use StarRocks's data types to declare a `Column`.
-All the data types are: `TINYINT`, `SMALLINT`, `INT`, `BIGINT`, `LARGEINT`, `FLOAT`, `DOUBLE`, `DECIMAL`, `BOOLEAN`, `CHAR`, `VARCHAR`, `STRING`, `BINARY`, `VARBINARY`, `DATE`, `DATETIME`, `ARRAY`, `JSON`, `MAP`, `STRUCT`, `BITMAP`, `HLL`, in `starrocks.datatype`.
+Use StarRocks data types (uppercase) from `starrocks` to declare columns. The common scalar types include `TINYINT`, `SMALLINT`, `INT`, `BIGINT`, `LARGEINT`, `FLOAT`, `DOUBLE`, `DECIMAL`, `BOOLEAN`, `CHAR`, `VARCHAR`, `STRING`, `BINARY`, `VARBINARY`, `DATE`, `DATETIME`, `JSON`, `BITMAP`, `HLL`.
+
+```python
+from starrocks import INTEGER, VARCHAR, DECIMAL, DATETIME
+
+Column('name', VARCHAR(50))
+Column('price', DECIMAL(10, 2))
+Column('created_at', DATETIME)
+```
+
+Complex types are composed from these base types:
+
+- ARRAY: `ARRAY(<item_type>)`
+- MAP: `MAP(<key_type>, <value_type>)`
+- STRUCT: `STRUCT(field1=<type>, field2=<type>, ...)` or `STRUCT(("field1", <type>), ("field2", <type>), ...)`
+
+Examples (including nesting):
+
+```python
+from starrocks import STRING, INTEGER, VARCHAR, DECIMAL, ARRAY, MAP, STRUCT
+
+Column('tags', ARRAY(STRING))
+Column('attributes', MAP(STRING, INTEGER))
+Column('profile', STRUCT(name=VARCHAR(50), age=INTEGER))
+Column(
+    'doc',
+    STRUCT(
+        id=INTEGER,
+        tags=ARRAY(STRING),
+        metadata=MAP(STRING, STRUCT(value=STRING, count=INTEGER))
+    )
+)
+```
+
+Note: Syntax and usage are analogous to SQLAlchemy's style (e.g., MySQL types), but always import and use the StarRocks types in uppercase from `starrocks`.
 
 #### Column-Level Attributes (`starrocks_*` Prefixes)
 
@@ -159,20 +199,20 @@ Examples:
 # Add a key column to an AGGREGATE KEY table
 op.add_column(
     'aggregate_table',
-    Column('site_id2', Integer, nullable=False, starrocks_is_agg_key=True),
+    Column('site_id2', INTEGER, nullable=False, starrocks_is_agg_key=True),
 )
 
 # Add a value column with aggregation
 op.add_column(
     'aggregate_table',
-    Column('page_views2', Integer, nullable=False, starrocks_agg_type='SUM'),
+    Column('page_views2', INTEGER, nullable=False, starrocks_agg_type='SUM'),
 )
 
 # Modify a column’s definition (type/nullable/comment). Note: changing agg type is not supported
 op.alter_column(
     'aggregate_table',
     'page_views',
-    existing_type=Integer,
+    existing_type=INTEGER,
     nullable=False,
     # If needed for clarity, you may repeat the role marker (key or agg_type)
     # starrocks_agg_type='SUM',  # allowed for context but agg type change is not supported
@@ -184,8 +224,8 @@ op.alter_column(
 Here is a complete example of an `AGGREGATE KEY` table that demonstrates both table-level and column-level attributes.
 
 ```python
-from sqlalchemy import Table, MetaData, Column, Integer, Date
-from starrocks.types import BITMAP, HLL
+from sqlalchemy import Table, MetaData, Column
+from starrocks import INTEGER, DATE, BITMAP, HLL
 
 metadata = MetaData()
 
@@ -193,12 +233,12 @@ aggregate_table = Table(
     'aggregate_table',
     metadata,
     # Key columns (explicitly marked for clarity)
-    Column('event_date', Date, starrocks_is_agg_key=True),
-    Column('site_id', Integer, starrocks_is_agg_key=True),
+    Column('event_date', DATE, primary_key=True, starrocks_is_agg_key=True),
+    Column('site_id', INTEGER, primary_key=True, starrocks_is_agg_key=True),
 
     # Value columns with aggregate types
-    Column('page_views', Integer, starrocks_agg_type='SUM'),
-    Column('last_visit_time', Date, starrocks_agg_type='REPLACE'),
+    Column('page_views', INTEGER, starrocks_agg_type='SUM'),
+    Column('last_visit_time', DATE, starrocks_agg_type='REPLACE'),
     Column('user_ids', BITMAP, starrocks_agg_type='BITMAP_UNION'),
     Column('uv_estimate', HLL, starrocks_agg_type='HLL_UNION'),
 
@@ -217,9 +257,9 @@ When using SQLAlchemy's Declarative style, you define table-level attributes wit
 ### Example: ORM Aggregate Key Table
 
 ```python
-from sqlalchemy import Column, Integer, String, Date
+from sqlalchemy import Column
 from sqlalchemy.orm import declarative_base
-from starrocks.types import BITMAP, HLL
+from starrocks import INTEGER, STRING, DATE, BITMAP, HLL
 
 Base = declarative_base()
 
@@ -227,12 +267,12 @@ class PageViewAggregates(Base):
     __tablename__ = 'page_view_aggregates'
 
     # -- Key Columns --
-    page_id = Column(Integer, primary_key=True, starrocks_is_agg_key=True)
-    visit_date = Column(Date, starrocks_is_agg_key=True)
+    page_id = Column(INTEGER, primary_key=True, starrocks_is_agg_key=True)
+    visit_date = Column(DATE, starrocks_is_agg_key=True)
 
     # -- Value Columns --
-    total_views = Column(Integer, starrocks_agg_type='SUM')
-    last_user = Column(String, starrocks_agg_type='REPLACE')
+    total_views = Column(INTEGER, starrocks_agg_type='SUM')
+    last_user = Column(STRING, starrocks_agg_type='REPLACE')
     distinct_users = Column(BITMAP, starrocks_agg_type='BITMAP_UNION')
     uv_estimate = Column(HLL, starrocks_agg_type='HLL_UNION')
 

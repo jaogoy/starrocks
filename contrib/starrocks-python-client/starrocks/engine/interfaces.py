@@ -100,12 +100,24 @@ class ReflectedViewState:
 
 
 @dataclasses.dataclass(**dict(kw_only=True) if 'KW_ONLY' in dataclasses.__all__ else {})
+class ReflectedMVOptions:
+    """Stores physical properties of a reflected materialized view."""
+    partition_by: Optional[ReflectedPartitionInfo] = None
+    distributed_by: Optional[ReflectedDistributionInfo] = None
+    order_by: Optional[str] = None
+    refresh_moment: Optional[str] = None
+    refresh_type: Optional[str] = None
+    properties: Optional[str] = None
+
+
+@dataclasses.dataclass(**dict(kw_only=True) if 'KW_ONLY' in dataclasses.__all__ else {})
 class ReflectedMVState:
-    """Stores reflection information about a materialized view."""
+    """Stores reflection information about a materialized view, primarily from information_schema."""
     name: str
     definition: str
-    comment: str | None = None
-    security: str | None = None
+    schema: Optional[str] = None
+    comment: Optional[str] = None
+    mv_options: ReflectedMVOptions = dataclasses.field(default_factory=ReflectedMVOptions)
 
 
 def add_cached_clause(cls):

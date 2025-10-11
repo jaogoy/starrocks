@@ -36,14 +36,14 @@ def create_view(operations: Operations, op: CreateViewOp):
         comment=op.comment,
         security=op.security,
     )
-    operations.execute(CreateView(view))
+    operations.execute(CreateView(view, or_replace=op.or_replace, if_not_exists=op.if_not_exists))
 
 
 @Operations.implementation_for(DropViewOp)
 def drop_view(operations: Operations, op: DropViewOp) -> None:
     """Implementation for the 'drop_view' operation."""
     logger.debug("implementation drop_view: %s", op.view_name)
-    operations.execute(DropView(View(op.view_name, None, schema=op.schema)))
+    operations.execute(DropView(View(op.view_name, None, schema=op.schema), if_exists=op.if_exists))
 
 
 @Operations.implementation_for(CreateMaterializedViewOp)
@@ -51,7 +51,8 @@ def create_materialized_view(operations: Operations, op: CreateMaterializedViewO
     """Implementation for the 'create_materialized_view' operation."""
     operations.execute(
         CreateMaterializedView(
-            MaterializedView(op.view_name, op.definition, properties=op.properties, schema=op.schema)
+            MaterializedView(op.view_name, op.definition, properties=op.properties, schema=op.schema),
+            if_not_exists=op.if_not_exists
         )
     )
 
@@ -61,7 +62,8 @@ def drop_materialized_view(operations: Operations, op: DropMaterializedViewOp) -
     """Implementation for the 'drop_materialized_view' operation."""
     operations.execute(
         DropMaterializedView(
-            MaterializedView(op.view_name, None, schema=op.schema)
+            MaterializedView(op.view_name, None, schema=op.schema),
+            if_exists=op.if_exists
         )
     )
 

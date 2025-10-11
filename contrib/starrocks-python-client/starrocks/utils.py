@@ -125,7 +125,7 @@ class TableAttributeNormalizer:
         # Removes qualifiers like `schema`. from `schema`.`table`.`column`
         # It handles multiple qualifiers.
         if remove_qualifiers:
-            sql = re.sub(r"(`?\w+`?\.)+", "", sql)
+            sql = re.sub(r"(?:`[^`]+`|\w+)\.", "", sql)
         
         # Removes backticks
         sql = TableAttributeNormalizer.strip_identifier_backticks(sql)
