@@ -181,6 +181,37 @@ class TestReflectionMaterializedViewsIntegration:
             finally:
                 connection.execute(text(f"DROP MATERIALIZED VIEW IF EXISTS {mv_name}"))
 
+    def test_reflect_materialized_view_with_comment(self, sr_root_engine: Engine):
+        """Test reflection of a materialized view with comment."""
+        mv_name = "test_reflect_mv_with_comment"
+        sr_engine = sr_root_engine
+
+        with sr_root_engine.connect() as connection:
+            connection.execute(text(f"DROP MATERIALIZED VIEW IF EXISTS {mv_name}"))
+            
+            # Create a materialized view with properties
+            create_mv_sql = f"""
+            CREATE MATERIALIZED VIEW {mv_name}
+            COMMENT 'This is a test comment for the materialized view.'
+            REFRESH MANUAL
+            AS SELECT id, name FROM users
+            """
+            connection.execute(text(create_mv_sql))
+
+            try:
+                inspector = inspect(connection)
+                _wait_for_mv_creation(inspector, mv_name)
+                inspector.clear_cache()
+                
+                mv_state = inspector.get_materialized_view(mv_name, schema=sr_engine.url.database)
+                
+                assert mv_state is not None
+                assert mv_state.comment == 'This is a test comment for the materialized view.'
+                logger.info(f"Reflected MV comment: '{mv_state.comment}'")
+
+            finally:
+                connection.execute(text(f"DROP MATERIALIZED VIEW IF EXISTS {mv_name}"))
+
     def test_reflect_materialized_view_with_aggregation(self, sr_root_engine: Engine):
         """Test reflection of a materialized view with aggregation functions."""
         mv_name = "test_reflect_mv_with_aggregation"
@@ -414,44 +445,37 @@ class TestReflectionMaterializedViewsIntegration:
         logger.info("Correctly returned None for non-existent MV")
 
     def test_reflect_materialized_view_case_sensitivity(self, sr_root_engine: Engine):
-        """Test materialized view reflection with different case sensitivity scenarios."""
-        mv_name_lower = "test_reflect_mv_case"
-        mv_name_upper = "TEST_REFLECT_MV_CASE"
+        """Test reflection of materialized view properties normalizes case."""
+        mv_name = "test_reflect_mv_case_normalization"
         sr_engine = sr_root_engine
 
         with sr_engine.connect() as connection:
-            # Clean up
-            connection.execute(text(f"DROP MATERIALIZED VIEW IF EXISTS {mv_name_lower}"))
-            connection.execute(text(f"DROP MATERIALIZED VIEW IF EXISTS {mv_name_upper}"))
+            connection.execute(text(f"DROP MATERIALIZED VIEW IF EXISTS {mv_name}"))
             
-            # Create MV with lowercase name
+            # Create MV with lowercase keywords in its definition
             create_mv_sql = f"""
-            CREATE MATERIALIZED VIEW {mv_name_lower} 
-            REFRESH MANUAL
-            AS
-            SELECT id, name FROM users WHERE id = 1
+            create materialized view {mv_name}
+            refresh manual
+            as
+            select id, name from users where id = 1
             """
             connection.execute(text(create_mv_sql))
 
             try:
                 inspector = inspect(connection)
-                _wait_for_mv_creation(inspector, mv_name_lower)
+                _wait_for_mv_creation(inspector, mv_name)
                 inspector.clear_cache()
                 
-                # Test reflection with exact case
-                mv_definition = inspector.get_materialized_view_definition(mv_name_lower, schema=sr_engine.url.database)
-                assert mv_definition is not None
+                mv_opts = inspector.get_materialized_view_options(mv_name, schema=sr_engine.url.database)
+                assert mv_opts is not None
                 
-                # Test reflection with different case (may or may not work depending on DB settings)
-                inspector.clear_cache()
-                mv_definition_upper = inspector.get_materialized_view_definition(mv_name_upper, schema=sr_engine.url.database)
-                assert mv_definition_upper is not None
+                # Assert that the reflected refresh_type is normalized to uppercase
+                assert mv_opts.refresh_type == "MANUAL"
                 
-                logger.info("Reflected MV case sensitivity test: %s", mv_definition)
+                logger.info(f"Reflected refresh_type '{mv_opts.refresh_type}' is correctly normalized.")
 
             finally:
-                connection.execute(text(f"DROP MATERIALIZED VIEW IF EXISTS {mv_name_lower}"))
-                connection.execute(text(f"DROP MATERIALIZED VIEW IF EXISTS {mv_name_upper}"))
+                connection.execute(text(f"DROP MATERIALIZED VIEW IF EXISTS {mv_name}"))
 
     def test_reflect_materialized_view_complex_join(self, sr_root_engine: Engine):
         """Test reflection of a materialized view with complex joins."""

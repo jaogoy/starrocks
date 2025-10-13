@@ -25,13 +25,17 @@ from sqlalchemy.dialects.mysql.base import _DecodingRow
 from sqlalchemy.dialects.mysql.reflection import _re_compile
 from sqlalchemy import log, types as sqltypes, util
 from sqlalchemy.engine.reflection import Inspector
+from .utils import SQLParseError
+
+from starrocks.params import TableInfoKeyWithPrefix
 
 from . import utils
 from .drivers.parsers import parse_data_type, parse_mv_refresh_clause
-from .engine.interfaces import MySQLKeyType, ReflectedMVOptions, ReflectedTableKeyInfo
-from .utils import SQLParseError
-from .params import ColumnAggInfoKeyWithPrefix, SRKwargsPrefix, TableInfoKeyWithPrefix, TableInfoKey
-from .engine.interfaces import ReflectedViewState, ReflectedPartitionInfo, ReflectedDistributionInfo, ReflectedState, ReflectedMVState
+from .engine.interfaces import (
+    MySQLKeyType, ReflectedMVOptions, ReflectedTableKeyInfo,
+    ReflectedPartitionInfo, ReflectedDistributionInfo, 
+    ReflectedState, ReflectedViewState, ReflectedMVState
+)
 from .types import PartitionType
 from .consts import TableConfigKey
 from .sql.schema import MaterializedView, View
@@ -442,10 +446,81 @@ class StarRocksTableDefinitionParser(object):
 
         return opts
 
+    def parse_view(self, view_row: _DecodingRow, table_row: Optional[_DecodingRow]) -> ReflectedViewState:
+        """
+        Parses raw reflection data into a structured ReflectedViewState object.
+        
+        `comment`: The comment is in information_schema.tables, but it's better to fetch it from
+        information_schema.views, if it's supported in the future.
+
+        `security`: It may be not 100% extractable from information_schema.views now.
+
+        Args:
+            view_row: A row from `information_schema.views`.
+            table_row: An optional row from `information_schema.tables` for the same view
+        Returns:
+            A ReflectedViewState object.
+        """
+        return ReflectedViewState(
+            name=view_row.TABLE_NAME,
+            definition=view_row.VIEW_DEFINITION,
+            comment=table_row.TABLE_COMMENT if table_row else None,
+            security=view_row.SECURITY_TYPE.upper(),
+        )
+
     def parse_mv(
         self,
-        create_mv_ddl: str,
+        mv_row: _DecodingRow,
+        table_row: Optional[_DecodingRow],
+        config_row: Optional[_DecodingRow],
+    ) -> ReflectedMVState:
+        """
+        Parses all raw reflection data for a Materialized View into a ReflectedMVState.
+        This is the main entry point for MV reflection parsing.
+
+        Args:
+            mv_row: A row from `information_schema.materialized_views`.
+            table_row: An optional row from `information_schema.tables` for the same mv
+            config_row: An optional row from `information_schema.tables_config` for the same mv
+        Returns:
+            A ReflectedMVState object.
+        """
+        ddl = mv_row.MATERIALIZED_VIEW_DEFINITION.strip()
+        logger.debug(f"mv create ddl for {mv_row.TABLE_SCHEMA}.{mv_row.TABLE_NAME}: {ddl}")
+        
+        # 1. Parse the DDL to get properties that are only available there.
+        # We create a temporary state object from the DDL parsing.
+        try:
+            parsed_state = self._parse_mv_ddl(mv_row.TABLE_NAME, ddl, mv_row.TABLE_SCHEMA)
+        except Exception as e:
+            self.logger.warning(f"Failed to parse DDL for MV '{mv_row.TABLE_SCHEMA}.{mv_row.TABLE_NAME}', reflection may be incomplete: {e}")
+            parsed_state = ReflectedMVState(name=mv_row.TABLE_NAME, schema=mv_row.TABLE_SCHEMA, definition=ddl)
+
+        # 2. Create the final state using the parsed definition and other reliable sources.
+        final_state = ReflectedMVState(
+            name=mv_row.TABLE_NAME,
+            schema=mv_row.TABLE_SCHEMA,
+            definition=parsed_state.definition,
+            comment=table_row.TABLE_COMMENT if table_row else None,
+            mv_options=parsed_state.mv_options # Start with options parsed from DDL
+        )
+        
+        # 3. Augment/overwrite with more reliable info from information_schema.tables_config
+        if config_row:
+            final_state.mv_options.order_by = config_row.SORT_KEY
+            final_state.mv_options.distributed_by = ReflectedDistributionInfo(
+                type=config_row.DISTRIBUTE_TYPE,
+                columns=config_row.DISTRIBUTE_KEY,
+                buckets=config_row.DISTRIBUTE_BUCKET,
+                distribution_method=None
+            )
+            
+        return final_state
+
+    def _parse_mv_ddl(
+        self,
         mv_name: str,
+        create_mv_ddl: str,
         schema: Optional[str] = None
     ) -> ReflectedMVState:
         """

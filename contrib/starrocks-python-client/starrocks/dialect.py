@@ -1137,6 +1137,15 @@ class StarRocksDialect(MySQLDialect_pymysql):
     def _setup_parser(
         self, connection: Connection, table_name: str, schema: Optional[str] = None, **kwargs: Any
     ) -> ReflectedState:
+        """
+        Get info from database, and parse it to a ReflectedState object by using the StarRocks parser.
+        """
+        return self._setup_table_parser(connection, table_name, schema, **kwargs)
+
+    @reflection.cache
+    def _setup_table_parser(
+        self, connection: Connection, table_name: str, schema: Optional[str] = None, **kwargs: Any
+    ) -> ReflectedState:
         charset: Optional[str] = self._connection_charset
         parser: _reflection.StarRocksTableDefinitionParser = self._tabledef_parser
 
@@ -1170,7 +1179,7 @@ class StarRocksDialect(MySQLDialect_pymysql):
                 f"Multiple tables found with name {table_name} in schema {schema}"
             )
         table_config_row = table_config_rows[0]
-        logger.debug(f"reflected table config for table: {table_name}, table_config: {dict(table_config_row)}")
+        # logger.debug(f"reflected table config for table: {table_name}, table_config: {dict(table_config_row)}")
 
         column_rows: list[_DecodingRow] = self._read_from_information_schema(
             connection=connection,
@@ -1193,7 +1202,7 @@ class StarRocksDialect(MySQLDialect_pymysql):
         partition_clause = self._get_partition_clause_from_create_table(connection, table_name, schema)
         # Add the partition info into table_config row for convenience
         # But the row object is immutable, so we convert it to a dictionary to modify it.
-        table_config_dict = dict(table_config_rows[0])
+        table_config_dict = dict(table_config_row)
         if partition_clause:
             table_config_dict['PARTITION_CLAUSE'] = partition_clause
 
@@ -1420,58 +1429,45 @@ class StarRocksDialect(MySQLDialect_pymysql):
             return results
 
     @reflection.cache
-    def _get_view_info(
+    def _setup_view_parser(
         self, connection: Connection, view_name: str, schema: Optional[str] = None, **kwargs: Any
     ) -> Optional[ReflectedViewState]:
-        """Gets all information about a view.
-
-        TODO: Comment is currently fetched from information_schema.tables,
-            But it's better to fetch it from information_schema.views.
+        """
+        Fetches raw data for a view and passes it to the parser.
         """
         if schema is None:
             schema = self.default_schema_name
+        
         try:
             view_rows = self._read_from_information_schema(
-                connection,
-                "views",
-                table_schema=schema,
-                table_name=view_name,
+                connection, "views", table_schema=schema, table_name=view_name
             )
             if not view_rows:
                 return None
-            view_details = view_rows[0]
+            view_row = view_rows[0]
 
-            # The comment is in information_schema.tables
-            table_rows = self._read_from_information_schema(
-                connection,
-                "tables",
-                table_schema=schema,
-                table_name=view_name,
-            )
-            table_comment = table_rows[0].TABLE_COMMENT if table_rows else ""
-            if not table_rows:
-                logger.warning(
-                    "View '%s' found in information_schema.views but not in "
-                    "information_schema.tables. Comment will be empty.",
-                    view_name,
+            table_row = None
+            try:
+                table_rows = self._read_from_information_schema(
+                    connection, "tables", table_schema=schema, table_name=view_name
                 )
+                if table_rows:
+                    table_row = table_rows[0]
+            except Exception as e:
+                self.logger.info(f"Could not retrieve comment for View '{schema}.{view_name}': {e}")
+            
+            parser = self._tabledef_parser
+            return parser.parse_view(view_row, table_row)
 
-            rv = ReflectedViewState(
-                name=view_details.TABLE_NAME,
-                definition=view_details.VIEW_DEFINITION,
-                comment=table_comment,
-                security=view_details.SECURITY_TYPE.upper(),
-            )
-            logger.debug(f"_get_view_info fetched: {rv!r}")
-            return rv
-        except Exception:
+        except Exception as e:
+            self.logger.warning(f"Failed to get view info for '{schema}.{view_name}': {e}")
             return None
 
     def get_view(
         self, connection: Connection, view_name: str, schema: Optional[str] = None, **kwargs: Any
     ) -> Optional[ReflectedViewState]:
         """Return all information about a view."""
-        view_info = self._get_view_info(connection, view_name, schema, **kwargs)
+        view_info = self._setup_view_parser(connection, view_name, schema=schema, **kwargs)
         if not view_info:
             return None
         logger.debug(
@@ -1517,79 +1513,64 @@ class StarRocksDialect(MySQLDialect_pymysql):
         except Exception:
             return []
 
-    def get_materialized_view(
-        self, connection: Connection, view_name: str, schema: Optional[str] = None, **kwargs: Any
-    ) -> Optional[ReflectedMVState]:
-        """Return all information about a materialized view."""
-        mv_info = self._get_materialized_view_info(connection, view_name, schema, **kwargs)
-        if not mv_info:
-            return None
-        # TODO: apply defaults if needed, similar to ReflectionViewDefaults
-        return mv_info
-
     @reflection.cache
-    def _get_materialized_view_info(
+    def _setup_mv_parser(
         self, connection: Connection, view_name: str, schema: Optional[str] = None, **kwargs: Any
     ) -> Optional[ReflectedMVState]:
         """
-        Gets all information about a materialized view by combining information_schema
-        with parsing the DDL definition for details not available in structured views.
+        Fetches all raw data for a Materialized View and passes it to the parser.
         """
         if schema is None:
             schema = self.default_schema_name
-        
+
         try:
-            # 1. Primary source for DDL: information_schema.materialized_views
+            # 1. Get MV row (contains DDL) from information_schema.materialized_views
             mv_rows = self._read_from_information_schema(
                 connection, "materialized_views", table_schema=schema, table_name=view_name
             )
             if not mv_rows:
                 return None
-            mv_details = mv_rows[0]
-            ddl = mv_details.MATERIALIZED_VIEW_DEFINITION.strip()
-            logger.debug(f"mv ceate ddl for {schema}.{view_name}: {ddl}")
+            mv_row = mv_rows[0]
 
-            # 2. Parse the full DDL to get partition, refresh, properties, and definition
-            parser = self._tabledef_parser
-            try:
-                state = parser.parse_mv(ddl, view_name, schema)
-            except Exception as e:
-                self.logger.warning(f"Failed to parse DDL for MV '{schema}.{view_name}', reflection may be incomplete: {e}")
-                # Create a minimal state if parsing fails
-                state = ReflectedMVState(name=view_name, schema=schema, definition=ddl)
-
-            # 3. Augment with info from information_schema.tables (for comment)
+            # 2. Get table row (for comment) from information_schema.tables
+            table_row = None
             try:
                 table_rows = self._read_from_information_schema(
                     connection, "tables", table_schema=schema, table_name=view_name
                 )
                 if table_rows:
-                    state.comment = table_rows[0].TABLE_COMMENT
+                    table_row = table_rows[0]
             except Exception as e:
                 self.logger.info(f"Could not retrieve comment for MV '{schema}.{view_name}': {e}")
             
-            # 4. Augment with info from information_schema.tables_config (for distribution, order_by)
+            # 3. Get config row (for distribution, order_by) from information_schema.tables_config
+            config_row = None
             try:
                 config_rows = self._read_from_information_schema(
                     connection, "tables_config", table_schema=schema, table_name=view_name
                 )
                 if config_rows:
-                    config = config_rows[0]
-                    state.mv_options.order_by = config.SORT_KEY
-                    state.mv_options.distributed_by = ReflectedDistributionInfo(
-                        type=config.DISTRIBUTE_TYPE,
-                        columns=config.DISTRIBUTE_KEY,
-                        buckets=config.DISTRIBUTE_BUCKET,
-                        distribution_method=None
-                    )
+                    config_row = config_rows[0]
             except Exception as e:
                 self.logger.info(f"Could not retrieve config for MV '{schema}.{view_name}': {e}")
             
-            return state
+            # 4. Pass all raw data to the parser
+            parser = self._tabledef_parser
+            return parser.parse_mv(mv_row, table_row, config_row)
 
         except Exception as e:
             self.logger.warning(f"Failed to get materialized view info for '{schema}.{view_name}': {e}")
             return None
+
+    def get_materialized_view(
+        self, connection: Connection, view_name: str, schema: Optional[str] = None, **kwargs: Any
+    ) -> Optional[ReflectedMVState]:
+        """Return all information about a materialized view."""
+        mv_info = self._setup_mv_parser(connection, view_name, schema=schema, **kwargs)
+        if not mv_info:
+            return None
+        # TODO: apply defaults if needed, similar to ReflectionViewDefaults
+        return mv_info
 
     def get_materialized_view_options(
         self, connection: Connection, view_name: str, schema: Optional[str] = None, **kwargs: Any

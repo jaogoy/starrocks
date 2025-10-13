@@ -7,23 +7,28 @@ from starrocks.types import MVRefreshMoment, MVRefreshType
 
 class View(SchemaItem):
     """Represents a View object in Python."""
-    def __init__(self, name: str, definition: str, metadata: Optional[MetaData] = None, schema: Optional[str] = None,
-                 comment: Optional[str] = None, columns: Optional[List[str]] = None,
-                 security: Optional[str] = None, **kwargs: Any) -> None:
+    def __init__(self, name: str,
+                 definition: str,
+                 metadata: MetaData,
+                 schema: Optional[str] = None,
+                 comment: Optional[str] = None,
+                 columns: Optional[List[str]] = None,
+                 security: Optional[str] = None,
+                 **kwargs: Any) -> None:
         self.name = quoted_name(name, kwargs.get('quote'))
         self.definition = definition
         self.schema = schema
         self.comment = comment
         self.columns = columns
         self.security = security
+        self.__visit_name__ = "view"
 
-        if metadata is not None:
-            self.dispatch.before_parent_attach(self, metadata)
-            if self.schema is None:
-                self.schema = metadata.schema
-            key = (self.schema, self.name)
-            metadata.info.setdefault("views", {})[key] = self
-            self.dispatch.after_parent_attach(self, metadata)
+        self.dispatch.before_parent_attach(self, metadata)
+        if self.schema is None:
+            self.schema = metadata.schema
+        key = (self.schema, self.name)
+        metadata.info.setdefault("views", {})[key] = self
+        self.dispatch.after_parent_attach(self, metadata)
 
 
 class MaterializedView(SchemaItem):
@@ -32,7 +37,7 @@ class MaterializedView(SchemaItem):
     """
     def __init__(self, name: str,
                  definition: str,
-                 metadata: Optional[MetaData] = None,
+                 metadata: MetaData,
                  schema: Optional[str] = None,
                  comment: Optional[str] = None,
                  partition_by: Optional[str] = None,
@@ -51,8 +56,8 @@ class MaterializedView(SchemaItem):
         self.distributed_by = distributed_by
         self.order_by = order_by
 
-        self.refresh_moment = refresh_moment
-        if refresh_moment is not None and refresh_moment.upper() not in MVRefreshMoment.ALLOWED_ITEMS:
+        self.refresh_moment = refresh_moment.upper() if refresh_moment else None
+        if self.refresh_moment is not None and self.refresh_moment not in MVRefreshMoment.ALLOWED_ITEMS:
             raise ValueError(f"refresh_moment must be one of {MVRefreshMoment.ALLOWED_ITEMS}")
 
         self.refresh_type = refresh_type
@@ -60,11 +65,11 @@ class MaterializedView(SchemaItem):
         self.properties = properties or {}
         self.__visit_name__ = "materialized_view"
 
-        if metadata is not None:
-            self.dispatch.before_parent_attach(self, metadata)
-            if self.schema is None:
-                self.schema = metadata.schema
-            key = (self.schema, self.name)
-            metadata.info.setdefault("materialized_views", {})[key] = self
-            self.dispatch.after_parent_attach(self, metadata)
+        self.dispatch.before_parent_attach(self, metadata)
+        if self.schema is None:
+            self.schema = metadata.schema
+        key = (self.schema, self.name)
+        metadata.info.setdefault("materialized_views", {})[key] = self
+        self.dispatch.after_parent_attach(self, metadata)
+
 
