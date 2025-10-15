@@ -61,7 +61,10 @@ class TestIntegrationViews:
                 # 1. Initial state to add a view
                 target_metadata = MetaData()
                 view = View(view_name, "SELECT 1 AS val", target_metadata, comment="Integration test view")
-                mc: MigrationContext = MigrationContext.configure(connection=conn)
+                mc: MigrationContext = MigrationContext.configure(
+                    connection=conn,
+                    opts={'target_metadata': target_metadata}
+                )
                 migration_script: api.MigrationScript = api.produce_migrations(mc, target_metadata)
 
                 # 2. Verify the script and upgrade
@@ -117,7 +120,10 @@ class TestIntegrationViews:
                         {'name': 'new_c2', 'comment': 'new col 2'},
                     ]
                 )
-                mc: MigrationContext = MigrationContext.configure(connection=conn)
+                mc: MigrationContext = MigrationContext.configure(
+                    connection=conn,
+                    opts={'target_metadata': target_metadata}
+                )
                 migration_script = api.produce_migrations(mc, target_metadata)
 
                 # 2. Verify the script and upgrade

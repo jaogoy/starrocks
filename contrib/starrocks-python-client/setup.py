@@ -31,7 +31,7 @@ with open('README.md') as readme:
 setup(
     name="starrocks",
     version=version,
-    description="Python SQLAlchemy Dialect for StarRocks",
+    description="Python SQLAlchemy Dialect and Alembic integration for StarRocks",
     long_description=long_description,
     long_description_content_type="text/markdown",
     license="Apache 2.0",
@@ -63,8 +63,11 @@ setup(
     setup_requires=["pytest-runner"],
     tests_require=["pytest", "mock"],
     test_suite="test.test_suite",
-    packages=find_packages(include=["starrocks"]),
-    package_data={"": ["LICENSE", "README.md"]},
+    packages=find_packages(include=["starrocks*"]),
+    package_data={
+        "": ["LICENSE", "README.md"],
+        "starrocks": ["drivers/*.lark"],
+    },
     include_package_data=True,
     zip_safe=False,
     entry_points={

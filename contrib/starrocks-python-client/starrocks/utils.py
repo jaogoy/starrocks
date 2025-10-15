@@ -1,5 +1,5 @@
 import re
-from typing import Any, Dict, Optional, Union, Mapping, Iterator, List
+from typing import Any, Dict, Optional, Tuple, Union, Mapping, Iterator, List
 
 from sqlalchemy.exc import StatementError
 
@@ -47,7 +47,7 @@ class CaseInsensitiveDict(dict):
     def __contains__(self, key: str) -> bool:
         return key.lower() in self._lower_keys
 
-    def update(self, other: Union['CaseInsensitiveDict', Mapping[str, Any], Iterator[tuple[str, Any]]]) -> None:
+    def update(self, other: Union['CaseInsensitiveDict', Mapping[str, Any], Iterator[Tuple[str, Any]]]) -> None:
         if hasattr(other, 'items'):
             for key, value in other.items():
                 self[key] = value
@@ -75,7 +75,7 @@ class TableAttributeNormalizer:
         in_quote = False
         quote_char = None
         escaped = False
-        out: list[str] = []
+        out: List[str] = []
 
         for ch in sql_text:
             if in_quote:

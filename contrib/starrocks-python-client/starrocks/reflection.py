@@ -17,7 +17,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from typing import Any, Optional, Union, Dict
+from typing import Any, Dict, List, Optional, Tuple, Union
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -68,7 +68,7 @@ class StarRocksInspector(Inspector):
         """
         return self.dialect.get_view(self.bind, view_name, schema=schema, **kwargs)
 
-    def get_views(self, schema: str | None = None) -> dict[tuple[str | None, str], ReflectedViewState]:
+    def get_views(self, schema: Union[str, None] = None) -> Dict[Tuple[Union[str, None], str], ReflectedViewState]:
         """
         Retrieves a dictionary of all views in a given schema.
 
@@ -152,9 +152,9 @@ class StarRocksTableDefinitionParser(object):
     def parse(
         self,
         table: _DecodingRow,
-        table_config: dict[str, Any],
-        columns: list[_DecodingRow],
-        column_2_agg_type: dict[str, str],
+        table_config: Dict[str, Any],
+        columns: List[_DecodingRow],
+        column_2_agg_type: Dict[str, str],
         charset: str,
     ) -> ReflectedState:
         """
@@ -244,7 +244,7 @@ class StarRocksTableDefinitionParser(object):
             )
             return sqltypes.NullType
 
-    def _get_mysql_key_type(self, table_config: dict[str, Any]) -> str:
+    def _get_mysql_key_type(self, table_config: Dict[str, Any]) -> str:
         """
         Get key type from information_schema.tables_config table.
         And return the MySQL's key type, as MySQLKeyType
@@ -263,7 +263,7 @@ class StarRocksTableDefinitionParser(object):
         # return str(table_model_to_key_type_map.get(table_config.get(TableConfigKey.TABLE_MODEL), "").value)
         return str(MySQLKeyType.PRIMARY.value)
 
-    def _get_key_columns(self, columns: list[_DecodingRow]) -> list[str]:
+    def _get_key_columns(self, columns: List[_DecodingRow]) -> List[str]:
         """
         Get list of key columns (COLUMN_KEY) from information_schema.columns table.
         It returns list of column names that are part of key.
@@ -343,7 +343,7 @@ class StarRocksTableDefinitionParser(object):
         )
 
     @staticmethod
-    def parse_distribution_clause(distribution: str) -> ReflectedDistributionInfo | None:
+    def parse_distribution_clause(distribution: str) -> Union[ReflectedDistributionInfo, None]:
         """Parse DISTRIBUTED BY string to extract distribution method and buckets.
         Args:
             distribution: String like "HASH(id) BUCKETS 8" or "HASH(id)"
@@ -371,7 +371,7 @@ class StarRocksTableDefinitionParser(object):
     
     @staticmethod
     def parse_distribution(distribution: Optional[Union[ReflectedDistributionInfo, str]]
-                           ) -> ReflectedDistributionInfo | None:
+                           ) -> Union[ReflectedDistributionInfo, None]:
         if not distribution or isinstance(distribution, ReflectedDistributionInfo):
             return distribution
         return StarRocksTableDefinitionParser.parse_distribution_clause(distribution)
@@ -388,7 +388,7 @@ class StarRocksTableDefinitionParser(object):
             buckets=table_config.get(TableConfigKey.DISTRIBUTE_BUCKET),
         )
 
-    def _parse_table_options(self, table: _DecodingRow, table_config: dict[str, Any], columns: list[_DecodingRow]) -> dict:
+    def _parse_table_options(self, table: _DecodingRow, table_config: Dict[str, Any], columns: List[_DecodingRow]) -> Dict:
         """
         Parse table options from `information_schema` views,
         and generate the table options with `starrocks_` prefix, which will be used to reflect a Table().

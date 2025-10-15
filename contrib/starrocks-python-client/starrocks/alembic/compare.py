@@ -27,7 +27,7 @@ from starrocks.params import (
 )
 
 from starrocks.reflection import StarRocksTableDefinitionParser
-from starrocks.engine.interfaces import ReflectedTableKeyInfo, ReflectedViewState, ReflectedPartitionInfo, ReflectedDistributionInfo
+from starrocks.engine.interfaces import ReflectedTableKeyInfo, ReflectedViewState, ReflectedPartitionInfo, ReflectedDistributionInfo, ReflectedMVState
 from starrocks.sql.schema import MaterializedView, View
 
 from starrocks.alembic.ops import (
@@ -679,7 +679,7 @@ def _is_equal_key_with_defaults(
 
 
 def _is_equal_partition_method(
-    conn_partition: Optional[ReflectedPartitionInfo | str],
+    conn_partition: Optional[Union[ReflectedPartitionInfo, str]],
     default_partition: Optional[str]
 ) -> bool:
     """
@@ -862,8 +862,8 @@ def _compare_table_properties(
     - The generated operation will set only the properties that have changed.
       Because some of the properties are not supported to be changed.
     """
-    conn_properties: dict[str, str] = conn_table_attributes.get(TableInfoKey.PROPERTIES, {})
-    meta_properties: dict[str, str] = meta_table_attributes.get(TableInfoKey.PROPERTIES, {})
+    conn_properties: Dict[str, str] = conn_table_attributes.get(TableInfoKey.PROPERTIES, {})
+    meta_properties: Dict[str, str] = meta_table_attributes.get(TableInfoKey.PROPERTIES, {})
     logger.debug(f"PROPERTIES. conn_properties: {conn_properties}, meta_properties: {meta_properties}")
 
     normalized_conn = CaseInsensitiveDict(conn_properties)
@@ -1105,8 +1105,8 @@ def compare_starrocks_column_agg_type(
     meta_opts = CaseInsensitiveDict(
         {k: v for k, v in metadata_col.dialect_options[DialectName].items() if v is not None}
     )
-    conn_agg_type: str | None = conn_opts.get(ColumnAggInfoKey.AGG_TYPE)
-    meta_agg_type: str | None = meta_opts.get(ColumnAggInfoKey.AGG_TYPE)
+    conn_agg_type: Union[str, None] = conn_opts.get(ColumnAggInfoKey.AGG_TYPE)
+    meta_agg_type: Union[str, None] = meta_opts.get(ColumnAggInfoKey.AGG_TYPE)
     # logger.debug(f"AGG_TYPE. conn_agg_type: {conn_agg_type}, meta_agg_type: {meta_agg_type}")
 
     if meta_agg_type != conn_agg_type:

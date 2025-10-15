@@ -15,7 +15,7 @@
 import re
 from textwrap import dedent
 import logging
-from typing import Any, Dict, Final, Optional, List, Set
+from typing import Any, Dict, Final, Optional, List, Set, Tuple, Union
 
 from alembic.ddl.base import format_table_name, format_column_name, format_server_default, alter_table
 from sqlalchemy import Column, Connection, Table, exc, schema as sa_schema, util, log, text, Row
@@ -302,7 +302,7 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
         logger.debug(f"create table text for table: {table.name}, schema: {table.schema}, text: {text}")
 
         return text
-    
+
     def _get_simple_full_table_name(self, table_name: str, schema: Optional[str] = None) -> str:
         """Directly get the full table name without adding any quotes."""
         return f"{schema}.{table_name}" if schema else table_name
@@ -418,7 +418,7 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
             A string containing all the compiled table-level DDL clauses.
         """
 
-        table_opts: list[str] = []
+        table_opts: List[str] = []
 
         # Extract StarRocks-specific table options from dialect_options without the prefix `starrocks_`.
         # opts: dict[str, Any] = self._extract_table_options(table)
@@ -474,12 +474,12 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
 
         return "\n".join(table_opts)
     
-    def _extract_table_options(self, table: sa_schema.Table) -> dict[str, Any]:
+    def _extract_table_options(self, table: sa_schema.Table) -> Dict[str, Any]:
         """Extract table options, with the prefix `starrocks_` removed.
         It seems useless. Because we retrieve the options from dialect_options 
         by removing all the defaults with value 'None'.
         """
-        opts: dict[str, Any] = dict(
+        opts: Dict[str, Any] = dict(
             (k[len(SRKwargsPrefix):].upper(), v) for k, v in table.dialect_kwargs.items()
                 if k.startswith(SRKwargsPrefix)
         )
@@ -490,7 +490,7 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
 
         return opts
 
-    def _get_create_table_key_desc(self, primary_keys: List[str], opts: dict[str, Any]) -> Optional[str]:
+    def _get_create_table_key_desc(self, primary_keys: List[str], opts: Dict[str, Any]) -> Optional[str]:
         """Visit create table key description.
         Args:
             primary_keys: The list of primary key column names. We need to check it with a talbe's KEY attribute.
@@ -560,7 +560,7 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
         _, idx_type = 0, 1
 
         # Get name and type first
-        colspec: list[str] = [
+        colspec: List[str] = [
             self.preparer.format_column(column),
             self.dialect.type_compiler.process(
                 column.type, type_expression=column
@@ -637,7 +637,7 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
         Returns:
             The DDL string for the alter column definition, without name.
         """
-        colspec: list[str] = []
+        colspec: List[str] = []
 
         # type if set
         if type_:
@@ -679,7 +679,7 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
         return " ".join(colspec)
 
 
-    def _get_column_agg_info(self, column: sa_schema.Column) -> str | None:
+    def _get_column_agg_info(self, column: sa_schema.Column) -> Union[str, None]:
         """Get aggregate information for a column.
         Args:
             column: The `sqlalchemy.schema.Column` object to process.
@@ -696,7 +696,7 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
         # Table placeholder without dialect options; in that case we treat the table type
         # as unknown and avoid raising on presence of KEY/agg markers so users can specify
         # them explicitly in ADD/MODIFY statements.
-        is_agg_table: bool | None = None
+        is_agg_table: Union[bool, None] = None
         try:
             is_agg_table = table.info.get(TableInfoKeyWithPrefix.AGGREGATE_KEY)
             # logger.debug(f"Cached is_agg_table for column: {column.name} is '{is_agg_table}'")
@@ -722,7 +722,7 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
                 is_agg_table = None
 
         # check agg key/type in the column
-        opt_dict: dict[str, Any] = {k.upper(): v for k, v in column.dialect_options[DialectName].items() if v is not None}
+        opt_dict: Dict[str, Any] = {k.upper(): v for k, v in column.dialect_options[DialectName].items() if v is not None}
         has_is_agg_key = ColumnAggInfoKey.IS_AGG_KEY in opt_dict
         has_agg_type = ColumnAggInfoKey.AGG_TYPE in opt_dict
 
@@ -788,7 +788,7 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
 
     def _get_view_column_clauses(self, view: View) -> str:
         """Helper method to format the column clauses for a CREATE VIEW statement."""
-        column_clauses: list[str] = []
+        column_clauses: List[str] = []
         for c in view.columns:
             if isinstance(c, dict):
                 col_name: str = self.preparer.quote(c['name'])
@@ -884,7 +884,7 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
 
         # Properties
         if mv.properties:
-            prop_clauses: list[str] = [f'"{k}" = "{v}"' for k, v in mv.properties.items()]
+            prop_clauses: List[str] = [f'"{k}" = "{v}"' for k, v in mv.properties.items()]
             clauses.append(f"PROPERTIES ({', '.join(prop_clauses)})")
 
         # Join clauses and add to main text
@@ -1041,7 +1041,7 @@ class StarRocksDialect(MySQLDialect_pymysql):
         if self.run_mode is None:
             self.run_mode = self._get_run_mode(connection)
 
-    def _get_server_version_info(self, connection: Connection) -> tuple[int, ...]:
+    def _get_server_version_info(self, connection: Connection) -> Tuple[int, ...]:
         # get database server version info explicitly over the wire
         # to avoid proxy servers like MaxScale getting in the
         # way with their own values, see #4205
@@ -1055,7 +1055,7 @@ class StarRocksDialect(MySQLDialect_pymysql):
 
         return self._parse_server_version(val)
 
-    def _parse_server_version(self, val: str) -> tuple[int, ...]:
+    def _parse_server_version(self, val: str) -> Tuple[int, ...]:
         server_version_info: tuple[int, ...] = tuple()
         m = re.match(r"(\d+)\.?(\d+)?(?:\.(\d+))?(?:\.\d+)?(?:[-\s])?(?P<commit>.*)?", val)
         if m is not None:
@@ -1105,13 +1105,13 @@ class StarRocksDialect(MySQLDialect_pymysql):
 
     def _read_from_information_schema(
         self, connection: Connection, inf_sch_table: str, charset: Optional[str] = None, **kwargs: Any
-    ) -> list[_DecodingRow]:
+    ) -> List[_DecodingRow]:
         def escape_single_quote(s: str) -> str:
             return s.replace("'", "\\'")
-        
+
         st: str = dedent(f"""
-            SELECT * 
-            FROM information_schema.{inf_sch_table} 
+            SELECT *
+            FROM information_schema.{inf_sch_table}
             WHERE {" AND ".join([f"{k} = '{escape_single_quote(v)}'"
                                  for k, v in kwargs.items()
                                  if k and v])}
@@ -1133,7 +1133,7 @@ class StarRocksDialect(MySQLDialect_pymysql):
             row, charset) for row in rp.mappings().fetchall()]
         # logger.debug(f"fetched row from information_schema.{inf_sch_table}, row number: {len(rows)}")
         return rows
-    
+
     @reflection.cache
     def _setup_parser(
         self, connection: Connection, table_name: str, schema: Optional[str] = None, **kwargs: Any
@@ -1153,7 +1153,7 @@ class StarRocksDialect(MySQLDialect_pymysql):
         if not schema:
             schema = connection.dialect.default_schema_name
 
-        table_rows: list[_DecodingRow] = self._read_from_information_schema(
+        table_rows: List[_DecodingRow] = self._read_from_information_schema(
             connection=connection,
             inf_sch_table="tables",
             charset=charset,
@@ -1168,7 +1168,7 @@ class StarRocksDialect(MySQLDialect_pymysql):
             )
         logger.debug(f"reflected table row for table: {table_name}, info: {dict(table_rows[0])}")
 
-        table_config_rows: list[_DecodingRow] = self._read_from_information_schema(
+        table_config_rows: List[_DecodingRow] = self._read_from_information_schema(
             connection=connection,
             inf_sch_table="tables_config",
             charset=charset,
@@ -1182,7 +1182,7 @@ class StarRocksDialect(MySQLDialect_pymysql):
         table_config_row = table_config_rows[0]
         # logger.debug(f"reflected table config for table: {table_name}, table_config: {dict(table_config_row)}")
 
-        column_rows: list[_DecodingRow] = self._read_from_information_schema(
+        column_rows: List[_DecodingRow] = self._read_from_information_schema(
             connection=connection,
             inf_sch_table="columns",
             charset=charset,
@@ -1191,10 +1191,10 @@ class StarRocksDialect(MySQLDialect_pymysql):
         )
 
         # Get aggregate info from `SHOW FULL COLUMNS`
-        full_column_rows: list[Row] = self._get_show_full_columns(
+        full_column_rows: List[Row] = self._get_show_full_columns(
             connection, table_name=table_name, schema=schema
         )
-        column_2_agg_type: dict[str, str] = {
+        column_2_agg_type: Dict[str, str] = {
             row.Field: row.Extra.upper()
             for row in full_column_rows
             if row.Extra
@@ -1252,7 +1252,7 @@ class StarRocksDialect(MySQLDialect_pymysql):
 
     def _get_show_full_columns(
         self, connection: Connection, table_name: str, schema: Optional[str] = None, **kwargs: Any
-    ) -> list[Row]:
+    ) -> List[Row]:
         """Run SHOW FULL COLUMNS to get detailed column information.
         Currently, it's only used to get aggregate type of columns.
         Other column info are still mainly extracted from information_schema.columns.
@@ -1322,18 +1322,18 @@ class StarRocksDialect(MySQLDialect_pymysql):
     @reflection.cache
     def get_indexes(
         self, connection: Connection, table_name: str, schema: Optional[str] = None, **kwargs: Any
-    ) -> list[dict[str, Any]]:
+    ) -> List[Dict[str, Any]]:
 
         parsed_state: Any = self._parsed_state_or_create(
             connection, table_name, schema, **kwargs
         )
 
-        indexes: list[dict[str, Any]] = []
+        indexes: List[Dict[str, Any]] = []
 
         # TODO: same logic as MySQL?
         for spec in parsed_state.keys:
             
-            dialect_options: dict[str, Any] = {}
+            dialect_options: Dict[str, Any] = {}
             unique = False
             flavor: Optional[str] = spec["type"]
             if flavor == "PRIMARY":
@@ -1357,11 +1357,11 @@ class StarRocksDialect(MySQLDialect_pymysql):
                     "parser"
                 ]
 
-            index_d: dict[str, Any] = {}
+            index_d: Dict[str, Any] = {}
 
             index_d["name"] = spec["name"]
             index_d["column_names"] = [s[0] for s in spec["columns"]]
-            mysql_length: dict[str, Any] = {
+            mysql_length: Dict[str, Any] = {
                 s[0]: s[1] for s in spec["columns"] if s[1] is not None
             }
             if mysql_length:
@@ -1403,7 +1403,7 @@ class StarRocksDialect(MySQLDialect_pymysql):
 
     def get_views(
         self, connection: Connection, schema: Optional[str] = None, **kwargs: Any
-    ) -> Dict[tuple[str | None, str], "ReflectedViewState"]:
+    ) -> Dict[Tuple[Union[str, None], str], "ReflectedViewState"]:
         """Batch reflection: return all views mapping to ReflectedViewState by (schema, name).
 
         Prototype: not used by autogenerate yet, provided for potential optimization.
@@ -1505,7 +1505,7 @@ class StarRocksDialect(MySQLDialect_pymysql):
         if schema is None:
             schema = self.default_schema_name
         try:
-            rows: list[_DecodingRow] = self._read_from_information_schema(
+            rows: List[_DecodingRow] = self._read_from_information_schema(
                 connection,
                 "materialized_views",
                 table_schema=schema,

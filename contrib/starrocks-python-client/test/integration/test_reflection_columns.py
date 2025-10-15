@@ -1,5 +1,6 @@
 import logging
 import pytest
+from typing import Union
 from sqlalchemy import text, Table, MetaData, Column, Integer, String, inspect, Engine
 from sqlalchemy.engine import Engine, Inspector
 from sqlalchemy.engine.interfaces import ReflectedColumn
@@ -92,7 +93,7 @@ class TestReflectionColumnsAggIntegration:
 @pytest.mark.integration
 class TestReflectionColumnAutoIncrementIntegration:
     sr_engine: Engine
-    test_schema: str | None
+    test_schema: Union[str, None]
 
     @classmethod
     def setup_class(cls) -> None:

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Union
 from unittest.mock import Mock
 
 import pytest
@@ -25,7 +25,7 @@ class TestCompareColumnAggTypeIntegration:
     """Compare agg_type column."""
 
     engine: Engine
-    schema: str | None
+    schema: Union[str, None]
 
     @classmethod
     def setup_class(cls) -> None:
@@ -143,7 +143,7 @@ class TestCompareColumnAutoIncrementIntegration:
     """Compare autoincrement column."""
 
     engine: Engine
-    schema: str | None
+    schema: Union[str, None]
 
     @classmethod
     def setup_class(cls) -> None:

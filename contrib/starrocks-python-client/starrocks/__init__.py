@@ -14,10 +14,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-__version__ = "1.2.3"
+__version__ = "1.3.0"
 
-# import it to import some internal packages implicitly
-from . import alembic
+# import it to import some internal alembic packages implicitly
+# but, it's not needed if users only want to use SQLAlchemy rather than Alembic
+# from . import alembic
 
 from .datatype import (
     BOOLEAN, TINYINT, SMALLINT, INTEGER, BIGINT, LARGEINT,

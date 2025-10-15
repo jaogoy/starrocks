@@ -1,6 +1,6 @@
 from __future__ import annotations
 import logging
-from typing import Optional, Union
+from typing import Dict, List, Optional, Union
 
 from alembic.operations import ops, Operations
 
@@ -78,9 +78,9 @@ class CreateViewOp(ops.MigrateOperation):
         self,
         view_name: str,
         definition: str,
-        schema: str | None = None,
-        security: str | None = None,
-        comment: str | None = None,
+        schema: Union[str, None] = None,
+        security: Union[str, None] = None,
+        comment: Union[str, None] = None,
         or_replace: bool = False,
         if_not_exists: bool = False,
     ) -> None:
@@ -98,9 +98,9 @@ class CreateViewOp(ops.MigrateOperation):
         operations: Operations,
         view_name: str,
         definition: str,
-        schema: str | None = None,
-        security: str | None = None,
-        comment: str | None = None,
+        schema: Union[str, None] = None,
+        security: Union[str, None] = None,
+        comment: Union[str, None] = None,
         or_replace: bool = False,
         if_not_exists: bool = False,
     ):
@@ -164,9 +164,9 @@ class DropViewOp(ops.MigrateOperation):
 
 @Operations.register_operation("alter_materialized_view")
 class AlterMaterializedViewOp(ops.MigrateOperation):
-    def __init__(self, view_name: str, definition: str, properties: dict | None = None, schema: str | None = None,
-                 reverse_definition: str | None = None,
-                 reverse_properties: dict | None = None
+    def __init__(self, view_name: str, definition: str, properties: Union[dict, None] = None, schema: Union[str, None] = None,
+                 reverse_definition: Union[str, None] = None,
+                 reverse_properties: Union[dict, None] = None
                  ) -> None:
         self.view_name = view_name
         self.definition = definition
@@ -176,9 +176,9 @@ class AlterMaterializedViewOp(ops.MigrateOperation):
         self.reverse_properties = reverse_properties
 
     @classmethod
-    def alter_materialized_view(cls, operations, view_name: str, definition: str, properties: dict | None = None, schema: str | None = None,
-                                reverse_definition: str | None = None,
-                                reverse_properties: dict | None = None):
+    def alter_materialized_view(cls, operations, view_name: str, definition: str, properties: Union[dict, None] = None, schema: Union[str, None] = None,
+                                reverse_definition: Union[str, None] = None,
+                                reverse_properties: Union[dict, None] = None):
         op = cls(view_name, definition, properties=properties, schema=schema,
                  reverse_definition=reverse_definition,
                  reverse_properties=reverse_properties)
@@ -197,8 +197,8 @@ class AlterMaterializedViewOp(ops.MigrateOperation):
 
 @Operations.register_operation("create_materialized_view")
 class CreateMaterializedViewOp(ops.MigrateOperation):
-    def __init__(self, view_name: str, definition: str, properties: dict | None = None,
-                 schema: str | None = None,
+    def __init__(self, view_name: str, definition: str, properties: Union[dict, None] = None,
+                 schema: Union[str, None] = None,
                  if_not_exists: bool = False) -> None:
         self.view_name = view_name
         self.definition = definition
@@ -207,7 +207,7 @@ class CreateMaterializedViewOp(ops.MigrateOperation):
         self.if_not_exists = if_not_exists
 
     @classmethod
-    def create_materialized_view(cls, operations, view_name: str, definition: str, properties: dict | None = None, schema: str | None = None, if_not_exists: bool = False):
+    def create_materialized_view(cls, operations, view_name: str, definition: str, properties: Union[dict, None] = None, schema: Union[str, None] = None, if_not_exists: bool = False):
         op = cls(view_name, definition, properties=properties,
                  schema=schema, if_not_exists=if_not_exists)
         return operations.invoke(op)
@@ -218,13 +218,13 @@ class CreateMaterializedViewOp(ops.MigrateOperation):
 
 @Operations.register_operation("drop_materialized_view")
 class DropMaterializedViewOp(ops.MigrateOperation):
-    def __init__(self, view_name: str, schema: str | None = None, if_exists: bool = False) -> None:
+    def __init__(self, view_name: str, schema: Union[str, None] = None, if_exists: bool = False) -> None:
         self.view_name = view_name
         self.schema = schema
         self.if_exists = if_exists
 
     @classmethod
-    def drop_materialized_view(cls, operations, view_name: str, schema: str | None = None, if_exists: bool = False):
+    def drop_materialized_view(cls, operations, view_name: str, schema: Union[str, None] = None, if_exists: bool = False):
         op = cls(view_name, schema=schema, if_exists=if_exists)
         return operations.invoke(op)
 
@@ -462,7 +462,7 @@ class AlterTableOrderOp(ops.AlterTableOp):
     def __init__(
         self,
         table_name: str,
-        order_by: Union[str, list[str]],
+        order_by: Union[str, List[str]],
         schema: Optional[str] = None,
         reverse_order_by: Optional[str] = None,
     ):
@@ -502,9 +502,9 @@ class AlterTablePropertiesOp(ops.AlterTableOp):
     def __init__(
         self,
         table_name: str,
-        properties: dict[str, str],
+        properties: Dict[str, str],
         schema: Optional[str] = None,
-        reverse_properties: Optional[dict[str, str]] = None,
+        reverse_properties: Optional[Dict[str, str]] = None,
     ):
         super().__init__(table_name, schema=schema)
         self.properties = properties
@@ -517,7 +517,7 @@ class AlterTablePropertiesOp(ops.AlterTableOp):
         table_name: str,
         properties: dict,
         schema: Optional[str] = None,
-        reverse_properties: Optional[dict[str, str]] = None,
+        reverse_properties: Optional[Dict[str, str]] = None,
     ):
         """Invoke an ALTER TABLE SET (...) operation for StarRocks properties."""
         op = cls(table_name, properties, schema=schema, reverse_properties=reverse_properties)

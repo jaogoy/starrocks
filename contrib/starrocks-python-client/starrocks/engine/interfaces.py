@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import dataclasses
 from enum import Enum
-from typing import Any, NamedTuple, Optional, Tuple, TypedDict, Union
+from typing import Any, Dict, List, NamedTuple, Optional, Tuple, TypedDict, Union
 
 from sqlalchemy.engine.interfaces import ReflectedColumn
 
@@ -16,22 +16,22 @@ It will be much cleaner and easier to use.
 @dataclasses.dataclass(**dict(kw_only=True) if 'KW_ONLY' in dataclasses.__all__ else {})
 class ReflectedStateV1(object):
     """Stores information about table or view."""
-    table_name: str | None = None
-    columns: list[dict] = dataclasses.field(default_factory=list)
-    table_options: dict[str, str] = dataclasses.field(default_factory=dict)
-    keys: list[dict] = dataclasses.field(default_factory=list)
-    fk_constraints: list[dict] = dataclasses.field(default_factory=list)
-    ck_constraints: list[dict] = dataclasses.field(default_factory=list)
+    table_name: Union[str, None] = None
+    columns: List[Dict] = dataclasses.field(default_factory=list)
+    table_options: Dict[str, str] = dataclasses.field(default_factory=dict)
+    keys: List[Dict] = dataclasses.field(default_factory=list)
+    fk_constraints: List[Dict] = dataclasses.field(default_factory=list)
+    ck_constraints: List[Dict] = dataclasses.field(default_factory=list)
 
 
 @dataclasses.dataclass(**dict(kw_only=True) if 'KW_ONLY' in dataclasses.__all__ else {})
 class ReflectedState(object):
     table_name: Optional[str]
-    columns: list[ReflectedColumn]
-    table_options: dict[str, str]  = dataclasses.field(default_factory=dict)
-    keys: list[Union[ReflectedIndexInfo, ReflectedPKInfo, ReflectedUKInfo]]  = dataclasses.field(default_factory=list)
-    fk_constraints: list[ReflectedFKInfo] = dataclasses.field(default_factory=list)
-    ck_constraints: list[ReflectedCKInfo] = dataclasses.field(default_factory=list)
+    columns: List[ReflectedColumn]
+    table_options: Dict[str, str]  = dataclasses.field(default_factory=dict)
+    keys: List[Union[ReflectedIndexInfo, ReflectedPKInfo, ReflectedUKInfo]]  = dataclasses.field(default_factory=list)
+    fk_constraints: List[ReflectedFKInfo] = dataclasses.field(default_factory=list)
+    ck_constraints: List[ReflectedCKInfo] = dataclasses.field(default_factory=list)
 
 
 class MySQLKeyType(Enum):
@@ -48,8 +48,8 @@ class ReflectedIndexInfo(TypedDict):
     name: str
     type: MySQLKeyType
     parser: Optional[Any]  # Object?
-    columns: list[Tuple[str, int, Any]]  # name, length, ...
-    dialect_options: dict[str, Any]
+    columns: List[Tuple[str, int, Any]]  # name, length, ...
+    dialect_options: Dict[str, Any]
 
 
 class ReflectedFKInfo(TypedDict):
@@ -58,8 +58,8 @@ class ReflectedFKInfo(TypedDict):
     """
     name: str
     table: NamedTuple[Optional[str], str]  # schema, name
-    local: list[str]
-    foreign: list[str]
+    local: List[str]
+    foreign: List[str]
 
     onupdate: bool
     ondelete: bool
@@ -70,7 +70,7 @@ class ReflectedPKInfo(TypedDict):
     And, will be used to form ReflectedPrimaryKeyConstraint
     """
     type: MySQLKeyType
-    columns: list[Tuple[str, Any, Any]]
+    columns: List[Tuple[str, Any, Any]]
 
 
 class ReflectedUKInfo(TypedDict):
@@ -79,7 +79,7 @@ class ReflectedUKInfo(TypedDict):
     """
     name: str
     type: MySQLKeyType
-    columns: list[Tuple[str, Any, Any]]
+    columns: List[Tuple[str, Any, Any]]
 
 
 class ReflectedCKInfo(TypedDict):
@@ -95,8 +95,8 @@ class ReflectedViewState:
     """Stores reflection information about a view."""
     name: str
     definition: str
-    comment: str | None = None
-    security: str | None = None
+    comment: Union[str, None] = None
+    security: Union[str, None] = None
 
 
 @dataclasses.dataclass(**dict(kw_only=True) if 'KW_ONLY' in dataclasses.__all__ else {})
@@ -147,7 +147,7 @@ class ReflectedTableKeyInfo:
         columns: The key columns as a list of strings or a single string (e.g., ['id', 'name'] or 'id, name').
     """
     type: str
-    columns: Optional[list[str], str]
+    columns: Optional[Union[List[str], str]]
 
     def __str__(self) -> str:
         self.type = self.type.upper() if self.type else self.type
@@ -194,14 +194,14 @@ class ReflectedPartitionInfo:
 @dataclasses.dataclass(**dict(kw_only=True) if 'KW_ONLY' in dataclasses.__all__ else {})
 class ReflectedDistributionInfo:
     """Stores reflection information about a view."""
-    type: str | None
+    type: Union[str, None]
     """The distribution type string like 'HASH' or 'RANDOM'."""
-    columns: Optional[list[str], str] | None
+    columns: Optional[Union[List[str], str]] | None
     """The distribution columns string like 'id' or 'id, name'."""
-    distribution_method: str | None
+    distribution_method: Union[str, None]
     """The distribution method string like 'HASH(id)' or 'RANDOM' without BUCKETS.
     It will be used first if it's not None."""
-    buckets: int | None
+    buckets: Union[int, None]
     """The buckets count."""
 
     def __str__(self) -> str:

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Optional, Union
+from typing import List, Optional, Union
 
 from starrocks.engine.interfaces import ReflectedTableKeyInfo, ReflectedViewState, ReflectedMVState
 from starrocks.types import SystemRunMode, TableDistribution, TableEngine, TableType, ViewSecurityType
@@ -26,13 +26,13 @@ class ReflectionTableDefaults:
         # 'bloom_filter_columns': None,
         # 'colocate_with': None,
     }
-    _DEFAULT_PROPERTIES_SHARED_NOTHING = {
+    _DEFAULT_PROPERTIES_SHARED_NOTHING = {**{
         'replication_num': '3',
-    } | _DEFAULT_PROPERTIES
+    }, **_DEFAULT_PROPERTIES}
 
-    _DEFAULT_PROPERTIES_SHARED_DATA = {
+    _DEFAULT_PROPERTIES_SHARED_DATA = {**{
         'replication_num': '1',  # Different for shared-data
-    } | _DEFAULT_PROPERTIES
+    }, **_DEFAULT_PROPERTIES}
 
     # Default table options
     # engine -> key -> comment -> partition -> distribution -> order by -> properties
@@ -77,7 +77,7 @@ class ReflectionTableDefaults:
         return TableDistribution.RANDOM
 
     @classmethod
-    def distribution_columns(cls) -> Optional[Union[list[str], str]]:
+    def distribution_columns(cls) -> Optional[Union[List[str], str]]:
         """Get default distribution keys. such as id, name."""
         return None
 
@@ -126,8 +126,8 @@ class ReflectionViewDefaults:
         *,
         name: str,
         definition: str,
-        comment: str | None = None,
-        security: str | None = None,
+        comment: Union[str, None] = None,
+        security: Union[str, None] = None,
     ) -> ReflectedViewState:
         """Apply defaults and normalization to reflected view values.
 
@@ -167,7 +167,7 @@ class ReflectionMVDefaults:
         return ViewSecurityType.DEFINER
 
     @classmethod
-    def apply(cls, *, name: str, definition: str, comment: str | None = None, security: str | None = None) -> ReflectionMaterializedViewInfo:
+    def apply(cls, *, name: str, definition: str, comment: Union[str, None] = None, security: Union[str, None] = None) -> ReflectedMVState:
         """Apply defaults and normalization to reflected materialized view values.
         """
         return ReflectedMVState(
