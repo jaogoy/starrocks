@@ -101,7 +101,7 @@
   - **子任务清单:**
     - ✅ `View` 的 `Create`/`Drop`/`Alter` 操作已定义。
     - ✅ `MV` 的 `Create`/`Drop` 操作已定义。
-    - ❌ **待办: 增强 `AlterMaterializedViewOp`**: 需实现对 `rename`, `set_properties`, `set_refresh_scheme`, `set_status` 等操作的支持。
+    - ❌ **待办: 增强 `AlterMaterializedViewOp`**: 需实现对 `rename`, `set_properties`, `set_refresh_type`, `set_status` 等操作的支持。
     - ✅ `Table` 的 `Alter` 操作（如 `AlterTablePropertiesOp`, `AlterTableDistributionOp` 等）已定义。
     - ✅ 所有操作均已实现 `reverse()` 方法。
 

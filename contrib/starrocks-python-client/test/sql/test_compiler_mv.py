@@ -1,5 +1,6 @@
 import logging
 from sqlalchemy.dialects import registry
+from sqlalchemy.schema import MetaData
 
 from starrocks.sql.ddl import CreateMaterializedView, DropMaterializedView
 from starrocks.sql.schema import MaterializedView
@@ -11,31 +12,44 @@ class TestMaterializedViewCompiler:
     def setup_class(cls):
         cls.logger = logging.getLogger(__name__)
         cls.dialect = registry.load("starrocks")()
+        cls.metadata = MetaData()
 
     def test_create_materialized_view(self):
-        mv = MaterializedView("my_mv", "SELECT * FROM my_table")
+        mv = MaterializedView("my_mv", "SELECT * FROM my_table", metadata=self.metadata)
         sql = str(CreateMaterializedView(mv).compile(dialect=self.dialect))
         expected = "CREATE MATERIALIZED VIEW my_mv AS SELECT * FROM my_table"
         assert normalize_sql(sql) == normalize_sql(expected)
 
     def test_create_materialized_view_with_properties(self):
         properties = {"replication_num": "1"}
-        mv = MaterializedView("my_mv", "SELECT * FROM my_table", properties=properties)
+        mv = MaterializedView("my_mv", "SELECT * FROM my_table", properties=properties, metadata=self.metadata)
         sql = str(CreateMaterializedView(mv).compile(dialect=self.dialect))
         expected = 'PROPERTIES ("replication_num" = "1")'
         assert expected in sql
 
     def test_drop_materialized_view(self):
-        mv = MaterializedView("my_mv", "SELECT * FROM my_table")
+        mv = MaterializedView("my_mv", "SELECT * FROM my_table", metadata=self.metadata)
         sql = str(DropMaterializedView(mv).compile(dialect=self.dialect))
+        expected = "DROP MATERIALIZED VIEW my_mv"
+        assert normalize_sql(sql) == normalize_sql(expected)
+
+    def test_drop_materialized_view_if_exists(self):
+        mv = MaterializedView("my_mv", "SELECT * FROM my_table", metadata=self.metadata)
+        sql = str(DropMaterializedView(mv, if_exists=True).compile(dialect=self.dialect))
         expected = "DROP MATERIALIZED VIEW IF EXISTS my_mv"
         assert normalize_sql(sql) == normalize_sql(expected)
 
     def test_create_materialized_view_with_schema(self):
         """Test CREATE MATERIALIZED VIEW with schema qualification."""
-        mv = MaterializedView("my_mv", "SELECT id, name FROM users", schema="test_db")
+        mv = MaterializedView("my_mv", "SELECT id, name FROM users", metadata=self.metadata, schema="test_db")
         sql = str(CreateMaterializedView(mv).compile(dialect=self.dialect))
         expected = "CREATE MATERIALIZED VIEW test_db.my_mv AS SELECT id, name FROM users"
+        assert normalize_sql(sql) == normalize_sql(expected)
+
+    def test_create_materialized_view_if_not_exists(self):
+        mv = MaterializedView("my_mv", "SELECT * FROM my_table", metadata=self.metadata)
+        sql = str(CreateMaterializedView(mv, if_not_exists=True).compile(dialect=self.dialect))
+        expected = "CREATE MATERIALIZED VIEW IF NOT EXISTS my_mv AS SELECT * FROM my_table"
         assert normalize_sql(sql) == normalize_sql(expected)
 
     def test_create_materialized_view_complex_query(self):
@@ -49,7 +63,7 @@ class TestMaterializedViewCompiler:
         HAVING COUNT(o.id) > 0
         ORDER BY total_amount DESC
         """
-        mv = MaterializedView("user_order_summary", complex_query)
+        mv = MaterializedView("user_order_summary", complex_query, metadata=self.metadata)
         sql = str(CreateMaterializedView(mv).compile(dialect=self.dialect))
         expected = f"CREATE MATERIALIZED VIEW user_order_summary AS {complex_query.strip()}"
         assert normalize_sql(sql) == normalize_sql(expected)
@@ -67,7 +81,7 @@ class TestMaterializedViewCompiler:
         FROM products
         GROUP BY category_id
         """
-        mv = MaterializedView("category_summary", agg_query)
+        mv = MaterializedView("category_summary", agg_query, metadata=self.metadata)
         sql = str(CreateMaterializedView(mv).compile(dialect=self.dialect))
         expected = f"CREATE MATERIALIZED VIEW category_summary AS {agg_query.strip()}"
         assert normalize_sql(sql) == normalize_sql(expected)
@@ -83,7 +97,7 @@ class TestMaterializedViewCompiler:
             SUM(amount) OVER (PARTITION BY user_id ORDER BY order_date) as running_total
         FROM orders
         """
-        mv = MaterializedView("user_order_window", window_query)
+        mv = MaterializedView("user_order_window", window_query, metadata=self.metadata)
         sql = str(CreateMaterializedView(mv).compile(dialect=self.dialect))
         expected = f"CREATE MATERIALIZED VIEW user_order_window AS {window_query.strip()}"
         assert normalize_sql(sql) == normalize_sql(expected)
@@ -95,7 +109,7 @@ class TestMaterializedViewCompiler:
             "storage_medium": "SSD",
             "storage_cooldown_time": "2025-12-31 23:59:59"
         }
-        mv = MaterializedView("my_mv", "SELECT * FROM my_table", properties=properties)
+        mv = MaterializedView("my_mv", "SELECT * FROM my_table", properties=properties, metadata=self.metadata)
         sql = str(CreateMaterializedView(mv).compile(dialect=self.dialect))
         
         # Check that all properties are present
@@ -114,15 +128,15 @@ class TestMaterializedViewCompiler:
         FROM `user-table`
         WHERE `status` = 'active'
         """
-        mv = MaterializedView("special_chars_mv", special_query)
+        mv = MaterializedView("special_chars_mv", special_query, metadata=self.metadata)
         sql = str(CreateMaterializedView(mv).compile(dialect=self.dialect))
         expected = f"CREATE MATERIALIZED VIEW special_chars_mv AS {special_query.strip()}"
         assert normalize_sql(sql) == normalize_sql(expected)
 
     def test_drop_materialized_view_with_schema(self):
         """Test DROP MATERIALIZED VIEW with schema qualification."""
-        mv = MaterializedView("my_mv", "SELECT * FROM my_table", schema="test_db")
-        sql = str(DropMaterializedView(mv).compile(dialect=self.dialect))
+        mv = MaterializedView("my_mv", "SELECT * FROM my_table", metadata=self.metadata, schema="test_db")
+        sql = str(DropMaterializedView(mv, if_exists=True).compile(dialect=self.dialect))
         expected = "DROP MATERIALIZED VIEW IF EXISTS test_db.my_mv"
         assert normalize_sql(sql) == normalize_sql(expected)
 
@@ -139,7 +153,7 @@ class TestMaterializedViewCompiler:
         FROM users u
         LEFT JOIN monthly_stats ms ON u.id = ms.user_id
         """
-        mv = MaterializedView("user_monthly_stats", cte_query)
+        mv = MaterializedView("user_monthly_stats", cte_query, metadata=self.metadata)
         sql = str(CreateMaterializedView(mv).compile(dialect=self.dialect))
         expected = f"CREATE MATERIALIZED VIEW user_monthly_stats AS {cte_query.strip()}"
         assert normalize_sql(sql) == normalize_sql(expected)

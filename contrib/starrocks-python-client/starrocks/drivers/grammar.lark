@@ -12,12 +12,12 @@ simple_type: CNAME type_args? CNAME?
 type_args: "(" NUMBER ("," NUMBER)? ")"
 
 // --- Materialized View Refresh Clause ---
-refresh_clause: "REFRESH"i (refresh_moment | refresh_scheme | (refresh_moment refresh_scheme))
+refresh_clause: "REFRESH"i (refresh_moment | refresh_type | (refresh_moment refresh_type))
 
 // Add `!`, not to be inlined optimized
 !refresh_moment: "IMMEDIATE"i | "DEFERRED"i
 
-!refresh_scheme: async_scheme | "MANUAL"i | "INCREMENTAL"i
+!refresh_type: async_scheme | "MANUAL"i | "INCREMENTAL"i
 
 async_scheme: "ASYNC"i ASYNC_DETAILS?
 ASYNC_DETAILS: /(?s).+/ // Match any character including newlines

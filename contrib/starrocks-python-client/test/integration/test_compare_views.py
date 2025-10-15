@@ -60,8 +60,7 @@ class TestIntegrationViews:
             try:
                 # 1. Initial state to add a view
                 target_metadata = MetaData()
-                view = View(view_name, "SELECT 1 AS val", comment="Integration test view")
-                target_metadata.info['views'] = {(None, view_name): view}
+                view = View(view_name, "SELECT 1 AS val", target_metadata, comment="Integration test view")
                 mc: MigrationContext = MigrationContext.configure(connection=conn)
                 migration_script: api.MigrationScript = api.produce_migrations(mc, target_metadata)
 
@@ -110,6 +109,7 @@ class TestIntegrationViews:
                 altered_view = View(
                     view_name,
                     "SELECT 2 AS new_c1, 3 AS new_c2",
+                    target_metadata,
                     comment="Altered version",
                     security="DEFINER",
                     columns=[
@@ -117,7 +117,6 @@ class TestIntegrationViews:
                         {'name': 'new_c2', 'comment': 'new col 2'},
                     ]
                 )
-                target_metadata.info['views'] = {(None, view_name): altered_view}
                 mc: MigrationContext = MigrationContext.configure(connection=conn)
                 migration_script = api.produce_migrations(mc, target_metadata)
 

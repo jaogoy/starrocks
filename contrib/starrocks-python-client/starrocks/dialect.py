@@ -861,12 +861,12 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
             clauses.append(f"COMMENT {comment_str}")
 
         # Refresh Scheme
-        if mv.refresh_moment or mv.refresh_scheme:
+        if mv.refresh_moment or mv.refresh_type:
             refresh_parts = ["REFRESH"]
             if mv.refresh_moment:
                 refresh_parts.append(mv.refresh_moment.upper())
-            if mv.refresh_scheme:
-                refresh_parts.append(mv.refresh_scheme)
+            if mv.refresh_type:
+                refresh_parts.append(mv.refresh_type)
             clauses.append(" ".join(refresh_parts))
 
         # Partition By
@@ -879,7 +879,8 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
 
         # Order By
         if mv.order_by:
-            clauses.append(f"ORDER BY {mv.order_by}")
+            order_by = TableAttributeNormalizer.remove_outer_parentheses(mv.order_by)
+            clauses.append(f"ORDER BY ({order_by})")
 
         # Properties
         if mv.properties:

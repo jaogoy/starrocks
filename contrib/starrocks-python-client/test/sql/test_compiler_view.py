@@ -1,5 +1,6 @@
 import logging
 from sqlalchemy.dialects import registry
+from sqlalchemy.schema import MetaData
 
 from starrocks.sql.ddl import CreateView, DropView, AlterView
 from starrocks.sql.schema import View
@@ -11,33 +12,34 @@ class TestViewCompiler:
     def setup_class(cls):
         cls.logger = logging.getLogger(__name__)
         cls.dialect = registry.load("starrocks")()
+        cls.metadata = MetaData()
 
     def test_create_view(self):
-        view = View("my_view", "SELECT * FROM my_table")
+        view = View("my_view", "SELECT * FROM my_table", self.metadata)
         sql = str(CreateView(view).compile(dialect=self.dialect))
         expected = "CREATE VIEW my_view AS SELECT * FROM my_table"
         assert normalize_sql(sql) == normalize_sql(expected)
 
     def test_create_view_variations(self):
-        view = View("simple_view", "SELECT c1, c2, c3 FROM test_table")
+        view = View("simple_view", "SELECT c1, c2, c3 FROM test_table", self.metadata)
         sql = str(CreateView(view).compile(dialect=self.dialect))
         assert normalize_sql(sql) == normalize_sql(
             "CREATE VIEW simple_view AS SELECT c1, c2, c3 FROM test_table"
         )
 
-        view = View("simple_view", "SELECT c1, c2, c3 FROM test_table")
+        view = View("simple_view", "SELECT c1, c2, c3 FROM test_table", self.metadata)
         sql = str(CreateView(view, or_replace=True).compile(dialect=self.dialect))
         assert normalize_sql(sql) == normalize_sql(
             "CREATE OR REPLACE VIEW simple_view AS SELECT c1, c2, c3 FROM test_table"
         )
 
-        view = View("simple_view", "SELECT c1 FROM test_table")
+        view = View("simple_view", "SELECT c1 FROM test_table", self.metadata)
         sql = str(CreateView(view, if_not_exists=True).compile(dialect=self.dialect))
         assert normalize_sql(sql) == normalize_sql(
             "CREATE VIEW IF NOT EXISTS simple_view AS SELECT c1 FROM test_table"
         )
 
-        view = View("simple_view", "SELECT c1 FROM test_table", schema="test_db")
+        view = View("simple_view", "SELECT c1 FROM test_table", self.metadata, schema="test_db")
         sql = str(CreateView(view).compile(dialect=self.dialect))
         assert normalize_sql(sql) == normalize_sql(
             "CREATE VIEW test_db.simple_view AS SELECT c1 FROM test_table"
@@ -46,6 +48,7 @@ class TestViewCompiler:
         view = View(
             "commented_view",
             "SELECT c1, c2 FROM test_table",
+            self.metadata,
             comment="This is a view with a comment",
         )
         sql = str(CreateView(view).compile(dialect=self.dialect))
@@ -56,6 +59,7 @@ class TestViewCompiler:
         view = View(
             "view_with_columns",
             "SELECT c1, c2 FROM test_table",
+            self.metadata,
             columns=["col_a", "col_b"],
         )
         sql = str(CreateView(view).compile(dialect=self.dialect))
@@ -66,6 +70,7 @@ class TestViewCompiler:
         view = View(
             "view_with_column_comments",
             "SELECT c1, c2 FROM test_table",
+            self.metadata,
             columns=[
                 {"name": "col_a", "comment": "This is the first column"},
                 {"name": "col_b", "comment": "This is the second column"},
@@ -81,19 +86,24 @@ class TestViewCompiler:
         assert normalize_sql(sql) == normalize_sql(expected)
 
     def test_create_view_with_security(self):
-        view = View("secure_view", "SELECT 1", security="INVOKER")
+        view = View("secure_view", "SELECT 1", self.metadata, security="INVOKER")
         sql = str(CreateView(view).compile(dialect=self.dialect))
         assert normalize_sql(sql) == normalize_sql(
             "CREATE VIEW secure_view SECURITY INVOKER AS SELECT 1"
         )
 
     def test_drop_view(self):
-        view = View("my_view", "SELECT * FROM my_table")
+        view = View("my_view", "SELECT * FROM my_table", self.metadata)
         sql = str(DropView(view).compile(dialect=self.dialect))
+        assert normalize_sql(sql) == normalize_sql("DROP VIEW my_view")
+
+    def test_drop_view_if_exists(self):
+        view = View("my_view", "SELECT * FROM my_table", self.metadata)
+        sql = str(DropView(view, if_exists=True).compile(dialect=self.dialect))
         assert normalize_sql(sql) == normalize_sql("DROP VIEW IF EXISTS my_view")
 
     def test_compile_alter_view(self):
-        sql = str(AlterView(View("my_view", "SELECT 2", comment="New Comment", security="DEFINER")).compile(dialect=self.dialect))
+        sql = str(AlterView(View("my_view", "SELECT 2", self.metadata, comment="New Comment", security="DEFINER")).compile(dialect=self.dialect))
         expected = """
         ALTER VIEW my_view
         AS
@@ -103,7 +113,7 @@ class TestViewCompiler:
 
     def test_compile_alter_view_with_schema(self):
         """Test ALTER VIEW with schema qualification."""
-        sql = str(AlterView(View("my_view", "SELECT id, name FROM users", schema="test_db")).compile(dialect=self.dialect))
+        sql = str(AlterView(View("my_view", "SELECT id, name FROM users", self.metadata, schema="test_db")).compile(dialect=self.dialect))
         expected = """
         ALTER VIEW test_db.my_view
         AS
@@ -122,7 +132,7 @@ class TestViewCompiler:
         HAVING COUNT(o.id) > 0
         ORDER BY order_count DESC
         """
-        sql = str(AlterView(View("user_order_summary", complex_query)).compile(dialect=self.dialect))
+        sql = str(AlterView(View("user_order_summary", complex_query, self.metadata)).compile(dialect=self.dialect))
         expected = f"""
         ALTER VIEW user_order_summary
         AS
@@ -143,7 +153,7 @@ class TestViewCompiler:
         FROM users u
         LEFT JOIN monthly_stats ms ON u.id = ms.user_id
         """
-        sql = str(AlterView(View("user_monthly_stats", query_with_subquery)).compile(dialect=self.dialect))
+        sql = str(AlterView(View("user_monthly_stats", query_with_subquery, self.metadata)).compile(dialect=self.dialect))
         expected = f"""
         ALTER VIEW user_monthly_stats
         AS
@@ -158,7 +168,7 @@ class TestViewCompiler:
         FROM `user-table`
         WHERE `status` = 'active' AND `created-at` > '2023-01-01'
         """
-        sql = str(AlterView(View("special_chars_view", special_query)).compile(dialect=self.dialect))
+        sql = str(AlterView(View("special_chars_view", special_query, self.metadata)).compile(dialect=self.dialect))
         expected = f"""
         ALTER VIEW special_chars_view
         AS
@@ -177,7 +187,7 @@ class TestViewCompiler:
             SUM(amount) OVER (PARTITION BY user_id ORDER BY order_date) as running_total
         FROM orders
         """
-        sql = str(AlterView(View("user_order_window", window_query)).compile(dialect=self.dialect))
+        sql = str(AlterView(View("user_order_window", window_query, self.metadata)).compile(dialect=self.dialect))
         expected = f"""
         ALTER VIEW user_order_window
         AS
@@ -199,7 +209,7 @@ class TestViewCompiler:
         LEFT JOIN products p ON o.product_id = p.id
         RIGHT JOIN categories c ON p.category_id = c.id
         """
-        sql = str(AlterView(View("user_order_details", join_query)).compile(dialect=self.dialect))
+        sql = str(AlterView(View("user_order_details", join_query, self.metadata)).compile(dialect=self.dialect))
         expected = f"""
         ALTER VIEW user_order_details
         AS
@@ -220,7 +230,7 @@ class TestViewCompiler:
         FROM products
         GROUP BY category_id
         """
-        sql = str(AlterView(View("category_summary", agg_query)).compile(dialect=self.dialect))
+        sql = str(AlterView(View("category_summary", agg_query, self.metadata)).compile(dialect=self.dialect))
         expected = f"""
         ALTER VIEW category_summary
         AS

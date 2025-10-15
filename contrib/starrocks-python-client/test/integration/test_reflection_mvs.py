@@ -3,8 +3,10 @@ import time
 from sqlalchemy import text, Table, MetaData, Column, Integer, String, inspect, Inspector
 from sqlalchemy.engine import Engine
 import pytest
+from sqlalchemy.dialects import registry
 
 from starrocks.engine.interfaces import ReflectedMVOptions
+from starrocks.sql.ddl import CreateMaterializedView
 from starrocks.sql.schema import MaterializedView
 from starrocks.utils import TableAttributeNormalizer
 
@@ -95,7 +97,7 @@ def _wait_for_mv_creation(inspector: Inspector, mv_name: str, max_retries: int =
 class TestReflectionMaterializedViewsIntegration:
     """Integration tests for StarRocks materialized view reflection from information_schema."""
 
-    def test_reflect_simple_materialized_view(self, sr_root_engine: Engine):
+    def test_reflect_simple_mv(self, sr_root_engine: Engine):
         """Test reflection of a simple materialized view with basic SELECT statement."""
         mv_name = "test_reflect_simple_mv"
         sr_engine = sr_root_engine
@@ -131,7 +133,7 @@ class TestReflectionMaterializedViewsIntegration:
             finally:
                 connection.execute(text(f"DROP MATERIALIZED VIEW IF EXISTS {mv_name}"))
 
-    def test_reflect_materialized_view_with_properties(self, sr_root_engine: Engine):
+    def test_reflect_mv_with_properties(self, sr_root_engine: Engine):
         """Test reflection of a materialized view with properties."""
         mv_name = "test_reflect_mv_with_properties"
         sr_engine = sr_root_engine
@@ -181,7 +183,7 @@ class TestReflectionMaterializedViewsIntegration:
             finally:
                 connection.execute(text(f"DROP MATERIALIZED VIEW IF EXISTS {mv_name}"))
 
-    def test_reflect_materialized_view_with_comment(self, sr_root_engine: Engine):
+    def test_reflect_mv_with_comment(self, sr_root_engine: Engine):
         """Test reflection of a materialized view with comment."""
         mv_name = "test_reflect_mv_with_comment"
         sr_engine = sr_root_engine
@@ -212,7 +214,7 @@ class TestReflectionMaterializedViewsIntegration:
             finally:
                 connection.execute(text(f"DROP MATERIALIZED VIEW IF EXISTS {mv_name}"))
 
-    def test_reflect_materialized_view_with_aggregation(self, sr_root_engine: Engine):
+    def test_reflect_mv_with_aggregation(self, sr_root_engine: Engine):
         """Test reflection of a materialized view with aggregation functions."""
         mv_name = "test_reflect_mv_with_aggregation"
         sr_engine = sr_root_engine
@@ -258,7 +260,7 @@ class TestReflectionMaterializedViewsIntegration:
             finally:
                 connection.execute(text(f"DROP MATERIALIZED VIEW IF EXISTS {mv_name}"))
 
-    def test_reflect_materialized_view_with_window_functions(self, sr_root_engine: Engine):
+    def test_reflect_mv_with_window_functions(self, sr_root_engine: Engine):
         """Test reflection of a materialized view with window functions."""
         mv_name = "test_reflect_mv_with_window"
         sr_engine = sr_root_engine
@@ -301,7 +303,7 @@ class TestReflectionMaterializedViewsIntegration:
             finally:
                 connection.execute(text(f"DROP MATERIALIZED VIEW IF EXISTS {mv_name}"))
 
-    def test_reflect_materialized_view_with_cte(self, sr_root_engine: Engine):
+    def test_reflect_mv_with_cte(self, sr_root_engine: Engine):
         """Test reflection of a materialized view with Common Table Expressions (CTEs)."""
         mv_name = "test_reflect_mv_with_cte"
         sr_engine = sr_root_engine
@@ -345,7 +347,7 @@ class TestReflectionMaterializedViewsIntegration:
             finally:
                 connection.execute(text(f"DROP MATERIALIZED VIEW IF EXISTS {mv_name}"))
 
-    def test_reflect_materialized_view_with_special_chars(self, sr_root_engine: Engine):
+    def test_reflect_mv_with_special_chars(self, sr_root_engine: Engine):
         """Test reflection of a materialized view with special characters in identifiers."""
         mv_name = "test_reflect_mv_special_chars"
         sr_engine = sr_root_engine
@@ -387,7 +389,7 @@ class TestReflectionMaterializedViewsIntegration:
             finally:
                 connection.execute(text(f"DROP MATERIALIZED VIEW IF EXISTS {mv_name}"))
 
-    def test_reflect_multiple_materialized_views(self, sr_root_engine: Engine):
+    def test_reflect_multiple_mvs(self, sr_root_engine: Engine):
         """Test reflection of multiple materialized views and get_materialized_view_names functionality."""
         mv_names = ["test_reflect_mv_1", "test_reflect_mv_2", "test_reflect_mv_3"]
         sr_engine = sr_root_engine
@@ -433,7 +435,7 @@ class TestReflectionMaterializedViewsIntegration:
                 for mv_name in mv_names:
                     connection.execute(text(f"DROP MATERIALIZED VIEW IF EXISTS {mv_name}"))
 
-    def test_reflect_nonexistent_materialized_view(self, sr_root_engine: Engine):
+    def test_reflect_nonexistent_mv(self, sr_root_engine: Engine):
         """Test reflection of a non-existent materialized view returns None."""
         sr_engine = sr_root_engine
 
@@ -444,7 +446,7 @@ class TestReflectionMaterializedViewsIntegration:
             assert mv_definition is None
         logger.info("Correctly returned None for non-existent MV")
 
-    def test_reflect_materialized_view_case_sensitivity(self, sr_root_engine: Engine):
+    def test_reflect_mv_case_normalization(self, sr_root_engine: Engine):
         """Test reflection of materialized view properties normalizes case."""
         mv_name = "test_reflect_mv_case_normalization"
         sr_engine = sr_root_engine
@@ -477,7 +479,7 @@ class TestReflectionMaterializedViewsIntegration:
             finally:
                 connection.execute(text(f"DROP MATERIALIZED VIEW IF EXISTS {mv_name}"))
 
-    def test_reflect_materialized_view_complex_join(self, sr_root_engine: Engine):
+    def test_reflect_mv_with_complex_join(self, sr_root_engine: Engine):
         """Test reflection of a materialized view with complex joins."""
         mv_name = "test_reflect_mv_complex_join"
         sr_engine = sr_root_engine
@@ -533,7 +535,7 @@ class TestReflectionMaterializedViewsIntegration:
             ("DISTRIBUTED BY HASH(user_id, id)", "HASH(`user_id`, `id`)"),
         ]
     )
-    def test_reflect_mv_distribution(self, sr_root_engine: Engine, dist_clause: str, expected_dist: str):
+    def test_reflect_mv_with_distribution(self, sr_root_engine: Engine, dist_clause: str, expected_dist: str):
         """Test reflection of various MV distribution clauses."""
         mv_name = "test_reflect_mv_dist"
         sr_engine = sr_root_engine
@@ -710,6 +712,70 @@ class TestReflectionMaterializedViewsIntegration:
                 assert "SSD".lower() in properties
                 assert "query_rewrite_consistency" in properties
                 assert "loose" in properties
+
+            finally:
+                connection.execute(text(f"DROP MATERIALIZED VIEW IF EXISTS {mv_name}"))
+
+    def test_reflect_mv_from_schema_object(self, sr_root_engine: Engine):
+        """Tests that a MaterializedView schema object and a reflected MV are equivalent."""
+        mv_name = "test_reflect_from_object"
+        schema = sr_root_engine.url.database
+        
+        # 1. Define the MaterializedView object
+        metadata = MetaData()
+        mv_obj = MaterializedView(
+            mv_name,
+            "SELECT user_id, order_date, count(*) as cnt FROM orders_part_expr GROUP BY user_id, order_date",
+            metadata=metadata,
+            schema=schema,
+            comment="A test MV created from a schema object.",
+            partition_by="date_trunc('month', order_date)",
+            distributed_by="HASH(user_id) BUCKETS 8",
+            order_by="order_date",
+            refresh_moment="DEFERRED",
+            refresh_type="MANUAL",
+            properties={
+                "replication_num": "1",
+                "query_rewrite_consistency": "loose"
+            }
+        )
+
+        with sr_root_engine.connect() as connection:
+            connection.execute(text(f"DROP MATERIALIZED VIEW IF EXISTS {mv_name}"))
+            
+            # 2. Compile and create the MV
+            dialect = registry.load("starrocks")()
+            create_sql = str(CreateMaterializedView(mv_obj).compile(dialect=dialect))
+            connection.execute(text(create_sql))
+
+            try:
+                # 3. Reflect the MV
+                inspector = inspect(connection)
+                _wait_for_mv_creation(inspector, mv_name)
+                
+                reflected_state = inspector.get_materialized_view(mv_name, schema=schema)
+                assert reflected_state is not None
+                
+                # 4. Compare original object with reflected state
+                assert reflected_state.name == mv_obj.name
+                assert reflected_state.comment == mv_obj.comment
+                
+                # Compare options
+                reflected_opts = reflected_state.mv_options
+                assert reflected_opts.refresh_moment == mv_obj.refresh_moment.upper()
+                assert reflected_opts.refresh_type == mv_obj.refresh_type.upper()
+                assert str(reflected_opts.order_by) == '`order_date`'
+                
+                assert "date_trunc('month', `order_date`)" in str(reflected_opts.partition_by)
+                assert str(reflected_opts.distributed_by) == 'HASH(`user_id`) BUCKETS 8'
+
+                reflected_props_str = reflected_opts.properties.lower()
+                for k, v in mv_obj.properties.items():
+                    assert f'"{k.lower()}"="{v.lower()}"' in reflected_props_str
+
+                normalized_original_def = TableAttributeNormalizer.normalize_sql(mv_obj.definition)
+                normalized_reflected_def = TableAttributeNormalizer.normalize_sql(reflected_state.definition)
+                assert normalized_original_def in normalized_reflected_def
 
             finally:
                 connection.execute(text(f"DROP MATERIALIZED VIEW IF EXISTS {mv_name}"))

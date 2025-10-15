@@ -27,7 +27,12 @@ from sqlalchemy import log, types as sqltypes, util
 from sqlalchemy.engine.reflection import Inspector
 from .utils import SQLParseError
 
-from starrocks.params import TableInfoKeyWithPrefix
+from starrocks.params import (
+    ColumnAggInfoKeyWithPrefix,
+    SRKwargsPrefix,
+    TableInfoKey,
+    TableInfoKeyWithPrefix,
+)
 
 from . import utils
 from .drivers.parsers import parse_data_type, parse_mv_refresh_clause
@@ -550,7 +555,7 @@ class StarRocksTableDefinitionParser(object):
                 logger.debug(f"refresh_clause_str: {refresh_clause_str}")
                 parsed_refresh = parse_mv_refresh_clause(refresh_clause_str)
                 state.mv_options.refresh_moment = parsed_refresh.get("refresh_moment")
-                state.mv_options.refresh_type = parsed_refresh.get("refresh_scheme")
+                state.mv_options.refresh_type = parsed_refresh.get("refresh_type")
         except Exception as e:
             logger.warning(f"Failed to parse refresh clause for MV {mv_name}, falling back to regex: {e}")
             # Fallback to simple regex if lark parsing fails

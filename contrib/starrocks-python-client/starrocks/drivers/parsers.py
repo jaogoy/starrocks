@@ -137,12 +137,12 @@ def parse_data_type(type_str: str) -> Any:
 # --- Materialized View Refresh Clause Parser ---
 class _MVRefreshTransformer(Transformer):
     @v_args(inline=True)
-    def refresh_clause(self, refresh_moment=None, refresh_scheme=None):
-        # logger.debug(f"refresh_moment: {refresh_moment}, refresh_scheme: {refresh_scheme}")
-        result = {"refresh_moment": refresh_moment, "refresh_scheme": refresh_scheme}
-        if not refresh_scheme and refresh_moment \
+    def refresh_clause(self, refresh_moment=None, refresh_type=None):
+        # logger.debug(f"refresh_moment: {refresh_moment}, refresh_type: {refresh_type}")
+        result = {"refresh_moment": refresh_moment, "refresh_type": refresh_type}
+        if not refresh_type and refresh_moment \
                 and refresh_moment.upper().strip() not in ("IMMEDIATE", "DEFERRED"):
-            result["refresh_scheme"] = refresh_moment
+            result["refresh_type"] = refresh_moment
             result["refresh_moment"] = None
         return result
 
@@ -152,8 +152,8 @@ class _MVRefreshTransformer(Transformer):
         return str(moment).upper().strip() if moment else None
 
     @v_args(inline=True)
-    def refresh_scheme(self, scheme=None):
-        # logger.debug(f"refresh_scheme: {scheme}")
+    def refresh_type(self, scheme=None):
+        # logger.debug(f"refresh_type: {scheme}")
         return str(scheme).strip() if scheme else None
 
     @v_args(inline=True)

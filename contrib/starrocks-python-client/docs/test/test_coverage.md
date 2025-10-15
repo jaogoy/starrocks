@@ -55,7 +55,7 @@ The following features and scenarios are not yet covered by automated tests:
     - `SET REFRESH ...`
     - `SET PROPERTIES (...)`
     - `SET ACTIVE / INACTIVE`
-  - Reflection of all extended MV properties (`partition`, `distribution`, `order by`, `refresh_scheme`, `status`).
+  - Reflection of all extended MV properties (`partition`, `distribution`, `order by`, `refresh_type`, `status`).
   - `autogenerate` detection for changes in all the properties listed above.
 
 - **Bitmap Index Lifecycle**:
