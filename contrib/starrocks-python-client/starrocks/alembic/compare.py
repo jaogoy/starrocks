@@ -269,6 +269,7 @@ def _compare_views(
             name=view_info.name,
             # definition=view_info.definition,
             definition=TableAttributeNormalizer.normalize_sql(view_info.definition, remove_qualifiers=True),
+            metadata=autogen_context.metadata,
             schema=schema,
             comment=view_info.comment,
             security=view_info.security
@@ -426,10 +427,11 @@ def _compare_materialized_views(
 
     # Find modified MVs
     for schema, mv_name in sorted(conn_mvs.intersection(metadata_mvs.keys())):
-        view_info: Optional[str] = inspector.get_materialized_view_definition(mv_name, schema=schema)
+        view_info: Optional[ReflectedMVState] = inspector.get_materialized_view(mv_name, schema=schema)
         conn_mv = MaterializedView(
             mv_name,
             view_info,
+            autogen_context.metadata,
             schema=schema
         )
         metadata_mv: MaterializedView = metadata_mvs[(schema, mv_name)]
@@ -445,7 +447,7 @@ def _compare_materialized_views(
 
 
 @comparators_dispatch_for_starrocks("materialized_view")
-def compare_mv(
+def compare_materialized_view(
     autogen_context: AutogenContext,
     upgrade_ops: UpgradeOps,
     schema: Optional[str],
@@ -458,12 +460,49 @@ def compare_mv(
     
     Check for changes in materialized view definition.
     """
-    if conn_mv.definition != metadata_mv.definition:
+    # For now, we only support drop and create for modifications.
+    # We can add more granular ALTER operations in the future.
+    
+    # Normalize and compare attributes
+    conn_opts = conn_mv.mv_options
+    definition_changed = TableAttributeNormalizer.normalize_sql(conn_mv.definition) != \
+                         TableAttributeNormalizer.normalize_sql(metadata_mv.definition)
+    
+    partition_changed = TableAttributeNormalizer.normalize_partition_method(conn_opts.partition_by) != \
+                        TableAttributeNormalizer.normalize_partition_method(metadata_mv.partition_by)
+
+    distribution_changed = TableAttributeNormalizer.normalize_distribution_string(conn_opts.distributed_by) != \
+                           TableAttributeNormalizer.normalize_distribution_string(metadata_mv.distributed_by)
+                           
+    order_by_changed = TableAttributeNormalizer.normalize_order_by_string(conn_opts.order_by) != \
+                       TableAttributeNormalizer.normalize_order_by_string(metadata_mv.order_by)
+
+    refresh_moment_changed = conn_opts.refresh_moment != metadata_mv.refresh_moment
+
+    refresh_type_changed = conn_opts.refresh_type != metadata_mv.refresh_type
+
+    comment_changed = (conn_mv.comment or '') != (metadata_mv.comment or '')
+    
+    properties_changed = conn_opts.properties != metadata_mv.properties
+
+    if any([definition_changed, partition_changed, distribution_changed, 
+             order_by_changed, refresh_moment_changed, refresh_type_changed, 
+             comment_changed, properties_changed]):
         upgrade_ops.ops.append(
             (
                 DropMaterializedViewOp(mv_name, schema=schema),
                 CreateMaterializedViewOp(
-                    metadata_mv.name, metadata_mv.definition, schema=schema
+                    metadata_mv.name,
+                    metadata_mv.definition,
+                    schema=schema,
+                    # Pass all attributes to the create op
+                    comment=metadata_mv.comment,
+                    partition_by=metadata_mv.partition_by,
+                    distributed_by=metadata_mv.distributed_by,
+                    order_by=metadata_mv.order_by,
+                    refresh_moment=metadata_mv.refresh_moment,
+                    refresh_type=metadata_mv.refresh_type,
+                    properties=metadata_mv.properties,
                 ),
             )
         )

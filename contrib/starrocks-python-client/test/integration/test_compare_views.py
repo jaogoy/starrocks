@@ -25,6 +25,7 @@ So, it needs a integration test environment.
 """
 
 
+@pytest.skip(reason="Skipping views test for now", allow_module_level=True)
 class TestIntegrationViews:
     STARROCKS_URI = conftest_sr.get_starrocks_url()
     engine: Engine

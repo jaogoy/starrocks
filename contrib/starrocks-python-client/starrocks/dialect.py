@@ -437,10 +437,13 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
 
         # Comment
         if table.comment is not None:
-            opts[TableInfoKey.COMMENT] = table.comment
-        if comment := opts.get(TableInfoKey.COMMENT):
-            comment = self.sql_compiler.render_literal_value(comment, sqltypes.String())
+            comment = self.sql_compiler.render_literal_value(table.comment, sqltypes.String())
             table_opts.append(f"COMMENT {comment}")
+        elif comment_val := opts.get(TableInfoKey.COMMENT):
+            logger.warnig(
+                f"Don't use 'starrocks_comment' dialect-specific argument to set the comment. "
+                f"Please directly use the standard 'comment' argument on the Table object for table '{table.name}'."
+            )
 
         # Partition
         # TODO: there are 3 types of partitioning with different restrictions, we need to support all of them.

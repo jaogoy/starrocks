@@ -27,7 +27,7 @@ class TestAutogenerateViews:
         upgrade_ops = ops.UpgradeOps([])
         self.mock_inspector.get_view_names.return_value = []
         m2 = MetaData()
-        view = View('my_test_view', 'SELECT 1')
+        view = View('my_test_view', 'SELECT 1', m2)
         m2.info['views'] = {(view.schema, view.name): view}
         self.mock_autogen_context.metadata = m2
         autogen_for_views(self.mock_autogen_context, upgrade_ops, [None])
@@ -55,7 +55,7 @@ class TestAutogenerateViews:
             name="my_test_view", definition="SELECT 1"
         )
         m2 = MetaData()
-        view2 = View('my_test_view', 'SELECT 2')
+        view2 = View('my_test_view', 'SELECT 2', m2)
         m2.info['views'] = {(view2.schema, view2.name): view2}
         self.mock_autogen_context.metadata = m2
         autogen_for_views(self.mock_autogen_context, upgrade_ops, [None])
@@ -69,7 +69,7 @@ class TestAutogenerateViews:
         upgrade_ops = ops.UpgradeOps([])
         self.mock_inspector.get_view_names.return_value = []
         m2 = MetaData()
-        view = View('my_secure_view', 'SELECT 1', security='INVOKER')
+        view = View('my_secure_view', 'SELECT 1', m2, security='INVOKER')
         m2.info['views'] = {(view.schema, view.name): view}
         self.mock_autogen_context.metadata = m2
         autogen_for_views(self.mock_autogen_context, upgrade_ops, [None])
@@ -86,7 +86,7 @@ class TestAutogenerateViews:
             name="my_secure_view", definition="SELECT 1"
         )
         m2 = MetaData()
-        view2 = View('my_secure_view', 'SELECT 1', security='INVOKER')
+        view2 = View('my_secure_view', 'SELECT 1', m2, security='INVOKER')
         m2.info['views'] = {(view2.schema, view2.name): view2}
         self.mock_autogen_context.metadata = m2
         autogen_for_views(self.mock_autogen_context, upgrade_ops, [None])
@@ -100,7 +100,7 @@ class TestAutogenerateViews:
             name="my_test_view", definition="SELECT 1 AS `val`"
         )
         m2 = MetaData()
-        view = View('my_test_view', 'SELECT 1 AS val', comment=None, security=None)
+        view = View('my_test_view', 'SELECT 1 AS val', m2, comment=None, security=None)
         m2.info['views'] = {(view.schema, view.name): view}
         self.mock_autogen_context.metadata = m2
         autogen_for_views(self.mock_autogen_context, upgrade_ops, [None])
@@ -113,7 +113,7 @@ class TestAutogenerateViews:
             name="my_test_view", definition="SELECT 1"
         )
         m2 = MetaData()
-        view2 = View('my_test_view', 'SELECT 1', comment='New comment')
+        view2 = View('my_test_view', 'SELECT 1', m2, comment='New comment')
         m2.info['views'] = {(view2.schema, view2.name): view2}
         self.mock_autogen_context.metadata = m2
         autogen_for_views(self.mock_autogen_context, upgrade_ops, [None])
@@ -127,7 +127,7 @@ class TestAutogenerateViews:
             name="my_test_view", definition="SELECT 1", security='INVOKER'
         )
         m2 = MetaData()
-        view2 = View('my_test_view', 'SELECT 1', security='DEFINER')
+        view2 = View('my_test_view', 'SELECT 1', m2, security='DEFINER')
         m2.info['views'] = {(view2.schema, view2.name): view2}
         self.mock_autogen_context.metadata = m2
         autogen_for_views(self.mock_autogen_context, upgrade_ops, [None])
@@ -141,7 +141,7 @@ class TestAutogenerateViews:
             name="my_test_view", definition="SELECT 1", security='INVOKER'
         )
         m2 = MetaData()
-        view2 = View('my_test_view', 'SELECT 1', security=None)
+        view2 = View('my_test_view', 'SELECT 1', m2, security=None)
         m2.info['views'] = {(view2.schema, view2.name): view2}
         self.mock_autogen_context.metadata = m2
         autogen_for_views(self.mock_autogen_context, upgrade_ops, [None])

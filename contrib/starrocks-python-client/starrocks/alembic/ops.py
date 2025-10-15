@@ -213,15 +213,29 @@ class CreateMaterializedViewOp(ops.MigrateOperation):
         return operations.invoke(op)
 
     def reverse(self) -> ops.MigrateOperation:
-        return DropMaterializedViewOp(self.view_name, schema=self.schema)
+        return DropMaterializedViewOp(
+            self.view_name,
+            schema=self.schema,
+            _reverse_definition=self.definition,
+            _reverse_properties=self.properties,
+        )
 
 
 @Operations.register_operation("drop_materialized_view")
 class DropMaterializedViewOp(ops.MigrateOperation):
-    def __init__(self, view_name: str, schema: Union[str, None] = None, if_exists: bool = False) -> None:
+    def __init__(
+        self,
+        view_name: str,
+        schema: Union[str, None] = None,
+        if_exists: bool = False,
+        _reverse_definition: Optional[str] = None,
+        _reverse_properties: Optional[Dict[str, str]] = None,
+    ) -> None:
         self.view_name = view_name
         self.schema = schema
         self.if_exists = if_exists
+        self._reverse_definition = _reverse_definition
+        self._reverse_properties = _reverse_properties
 
     @classmethod
     def drop_materialized_view(cls, operations, view_name: str, schema: Union[str, None] = None, if_exists: bool = False):
@@ -229,7 +243,14 @@ class DropMaterializedViewOp(ops.MigrateOperation):
         return operations.invoke(op)
 
     def reverse(self) -> ops.MigrateOperation:
-        raise NotImplementedError("Cannot reverse a DropMaterializedViewOp without the view's definition and properties.")
+        if self._reverse_definition is None:
+            raise NotImplementedError("Cannot reverse a DropMaterializedViewOp without the view's definition and properties.")
+        return CreateMaterializedViewOp(
+            self.view_name,
+            definition=self._reverse_definition,
+            properties=self._reverse_properties,
+            schema=self.schema,
+        )
 
 
 # Operation classes ordered according to StarRocks grammar:

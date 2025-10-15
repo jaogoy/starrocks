@@ -40,8 +40,17 @@ class TestCompareColumnAggTypeIntegration:
     def teardown_class(cls) -> None:
         """Drop table after all tests."""
         with cls.engine.begin() as conn:
-            res = conn.exec_driver_sql(f"SHOW TABLES IN {cls.schema}")
-            for row in res:
+            # Drop materialized views first
+            mvs = conn.exec_driver_sql(f"SELECT table_name FROM information_schema.materialized_views WHERE table_schema = '{cls.schema}'")
+            for row in mvs:
+                conn.exec_driver_sql(f"DROP MATERIALIZED VIEW IF EXISTS {cls.schema}.{row[0]}")
+            # Drop views
+            views = conn.exec_driver_sql(f"SELECT table_name FROM information_schema.views WHERE table_schema = '{cls.schema}'")
+            for row in views:
+                conn.exec_driver_sql(f"DROP VIEW IF EXISTS {cls.schema}.{row[0]}")
+            # Drop tables
+            tables = conn.exec_driver_sql(f"SELECT table_name FROM information_schema.tables WHERE table_schema = '{cls.schema}' AND table_type = 'BASE TABLE'")
+            for row in tables:
                 conn.exec_driver_sql(f"DROP TABLE IF EXISTS {cls.schema}.{row[0]}")
         cls.engine.dispose()
 
@@ -158,8 +167,17 @@ class TestCompareColumnAutoIncrementIntegration:
     def teardown_class(cls) -> None:
         """Drop table after all tests."""
         with cls.engine.begin() as conn:
-            res = conn.exec_driver_sql(f"SHOW TABLES IN {cls.schema}")
-            for row in res:
+            # Drop materialized views first
+            mvs = conn.exec_driver_sql(f"SELECT table_name FROM information_schema.materialized_views WHERE table_schema = '{cls.schema}'")
+            for row in mvs:
+                conn.exec_driver_sql(f"DROP MATERIALIZED VIEW IF EXISTS {cls.schema}.{row[0]}")
+            # Drop views
+            views = conn.exec_driver_sql(f"SELECT table_name FROM information_schema.views WHERE table_schema = '{cls.schema}'")
+            for row in views:
+                conn.exec_driver_sql(f"DROP VIEW IF EXISTS {cls.schema}.{row[0]}")
+            # Drop tables
+            tables = conn.exec_driver_sql(f"SELECT table_name FROM information_schema.tables WHERE table_schema = '{cls.schema}' AND table_type = 'BASE TABLE'")
+            for row in tables:
                 conn.exec_driver_sql(f"DROP TABLE IF EXISTS {cls.schema}.{row[0]}")
         cls.engine.dispose()
 

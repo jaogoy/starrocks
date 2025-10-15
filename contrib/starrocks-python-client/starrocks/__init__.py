@@ -29,6 +29,8 @@ from .datatype import (
     ARRAY, MAP, STRUCT, JSON
 )
 
+from .sql import schema
+
 
 __all__ = (
     "BOOLEAN", "TINYINT", "SMALLINT", "INTEGER", "BIGINT", "LARGEINT",
@@ -36,5 +38,7 @@ __all__ = (
     "DATETIME", "DATE",
     "CHAR", "VARCHAR", "STRING", "BINARY", "VARBINARY",
     "HLL", "BITMAP", "PERCENTILE", 
-    "ARRAY", "MAP", "STRUCT", "JSON"
+    "ARRAY", "MAP", "STRUCT", "JSON",
+
+    "schema",
 )

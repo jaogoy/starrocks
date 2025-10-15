@@ -52,7 +52,6 @@ def run_migrations_offline() -> None:
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
-        user_module_prefix={'starrocks.datatype.': 'sr.'},
     )
 
     with context.begin_transaction():
@@ -84,7 +83,8 @@ def run_migrations_online() -> None:
             target_metadata=target_metadata,
             version_table_kwargs=version_table_kwargs,
             # user_module_prefix={'starrocks.datatype.': 'sr.'},
-            render_item=my_render_item,
+            # user_module_prefix='sr.',
+            render_item=render.render_column_type,
         )
 
         with context.begin_transaction():

@@ -86,7 +86,7 @@ Defines the table's type (key) and the columns that constitute the key. You must
 
 ##### 3. `COMMENT`
 
-The table comment should be passed as the standard `comment` keyword argument to the `Table` constructor, not as a `starrocks_` prefix.
+The table comment should be passed as the standard `comment` keyword argument to the `Table` constructor, not as a `starrocks_` prefix. Otherwise, it will show some uncertain behaviors.
 
 ##### 4. `starrocks_PARTITION_BY`
 

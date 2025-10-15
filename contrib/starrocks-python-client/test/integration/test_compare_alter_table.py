@@ -33,7 +33,8 @@ from starrocks.types import PartitionType
 from test import test_utils
 from test.conftest_sr import create_test_engine, test_default_schema
 from starrocks.alembic.compare import compare_starrocks_table
-from alembic.operations.ops import UpgradeOps
+from alembic.operations.ops import UpgradeOps, AlterTableOp, ModifyTableOps
+from alembic.autogenerate import comparators
 
 logger = logging.getLogger(__name__)
 
@@ -96,9 +97,210 @@ class TestAlterTableIntegration:
     def _setup_autogen_context(self) -> Mock:
         """Helper to create AutogenContext for testing."""
         from alembic.autogenerate.api import AutogenContext
+        from sqlalchemy import inspect
         autogen_context = Mock(spec=AutogenContext)
         autogen_context.dialect = self.engine.dialect
+        autogen_context.inspector = inspect(self.engine)
         return autogen_context
+
+    def test_table_comment_change_detection(self) -> None:
+        """
+        Test: Table comment change detection from one value to another.
+        """
+        table_name = "test_comment_change"
+        with self.engine.connect() as conn:
+            conn.exec_driver_sql(
+                f"""CREATE TABLE {self._get_full_table_name(table_name)} (id INT) 
+                COMMENT 'old comment'
+                PROPERTIES("replication_num" = "1")"""
+            )
+            conn.commit()
+            try:
+                metadata_db = MetaData()
+                reflected_table = Table(table_name, metadata_db, autoload_with=self.engine, schema=self.test_schema)
+                assert reflected_table.comment == 'old comment'
+
+                metadata_target = MetaData()
+                target_table = Table(
+                    table_name, metadata_target, 
+                    Column('id', Integer), 
+                    comment='new comment', 
+                    schema=self.test_schema,
+                    starrocks_PROPERTIES={"replication_num": "1"}
+                )
+
+                autogen_context = self._setup_autogen_context()
+                modify_table_ops = ModifyTableOps(table_name, [], schema=self.test_schema)
+                
+                # Call the table comparator dispatcher which includes comment comparison
+                comparators.dispatch("table")(
+                    autogen_context,
+                    modify_table_ops,
+                    self.test_schema,
+                    table_name,
+                    reflected_table,
+                    target_table
+                )
+                
+                result = modify_table_ops.ops
+
+                assert len(result) == 1
+                op = result[0]
+                # Alembic uses CreateTableCommentOp for comment changes
+                from alembic.operations.ops import CreateTableCommentOp
+                assert isinstance(op, CreateTableCommentOp)
+                logger.debug(f"op of comment change: {op!r}")
+                assert op.table_name == table_name
+                assert op.comment == 'new comment'
+                assert op.existing_comment == 'old comment'
+            finally:
+                conn.exec_driver_sql(f"DROP TABLE IF EXISTS {self._get_full_table_name(table_name)}")
+                conn.commit()
+
+    def test_table_comment_addition_detection(self) -> None:
+        """
+        Test: Table comment addition (from no comment to having one).
+        """
+        table_name = "test_comment_addition"
+        with self.engine.connect() as conn:
+            conn.exec_driver_sql(f"CREATE TABLE {self._get_full_table_name(table_name)} (id INT) PROPERTIES(\"replication_num\" = \"1\")")
+            conn.commit()
+            try:
+                metadata_db = MetaData()
+                reflected_table = Table(table_name, metadata_db, autoload_with=self.engine, schema=self.test_schema)
+                assert reflected_table.comment is None
+
+                metadata_target = MetaData()
+                target_table = Table(
+                    table_name, metadata_target, 
+                    Column('id', Integer), 
+                    comment='new comment', 
+                    schema=self.test_schema,
+                    starrocks_PROPERTIES={"replication_num": "1"}
+                )
+
+                autogen_context = self._setup_autogen_context()
+                modify_table_ops = ModifyTableOps(table_name, [], schema=self.test_schema)
+                
+                # Call the table comparator dispatcher which includes comment comparison
+                comparators.dispatch("table")(
+                    autogen_context,
+                    modify_table_ops,
+                    self.test_schema,
+                    table_name,
+                    reflected_table,
+                    target_table
+                )
+                
+                result = modify_table_ops.ops
+
+                assert len(result) == 1
+                op = result[0]
+                from alembic.operations.ops import CreateTableCommentOp
+                assert isinstance(op, CreateTableCommentOp)
+                assert op.table_name == table_name
+                assert op.comment == 'new comment'
+                assert op.existing_comment is None
+            finally:
+                conn.exec_driver_sql(f"DROP TABLE IF EXISTS {self._get_full_table_name(table_name)}")
+                conn.commit()
+
+    def test_table_comment_removal_detection(self) -> None:
+        """
+        Test: Table comment removal.
+        """
+        table_name = "test_comment_removal"
+        with self.engine.connect() as conn:
+            conn.exec_driver_sql(
+                f"""CREATE TABLE {self._get_full_table_name(table_name)} (id INT)
+                COMMENT 'old comment'
+                PROPERTIES("replication_num" = "1")"""
+            )
+            conn.commit()
+            try:
+                metadata_db = MetaData()
+                reflected_table = Table(table_name, metadata_db, autoload_with=self.engine, schema=self.test_schema)
+                assert reflected_table.comment == 'old comment'
+
+                metadata_target = MetaData()
+                target_table = Table(
+                    table_name, metadata_target, 
+                    Column('id', Integer), 
+                    comment=None, 
+                    schema=self.test_schema,
+                    starrocks_PROPERTIES={"replication_num": "1"}
+                )
+
+                autogen_context = self._setup_autogen_context()
+                modify_table_ops = ModifyTableOps(table_name, [], schema=self.test_schema)
+                
+                # Call the table comparator dispatcher which includes comment comparison
+                comparators.dispatch("table")(
+                    autogen_context,
+                    modify_table_ops,
+                    self.test_schema,
+                    table_name,
+                    reflected_table,
+                    target_table
+                )
+                
+                result = modify_table_ops.ops
+
+                assert len(result) == 1
+                op = result[0]
+                from alembic.operations.ops import DropTableCommentOp
+                assert isinstance(op, DropTableCommentOp)
+                assert op.table_name == table_name
+                assert op.existing_comment == 'old comment'
+            finally:
+                conn.exec_driver_sql(f"DROP TABLE IF EXISTS {self._get_full_table_name(table_name)}")
+                conn.commit()
+
+    def test_table_comment_no_change_detection(self) -> None:
+        """
+        Test: No change in table comment.
+        """
+        table_name = "test_comment_no_change"
+        with self.engine.connect() as conn:
+            conn.exec_driver_sql(
+                f"""CREATE TABLE {self._get_full_table_name(table_name)} (id INT)
+                COMMENT 'same comment'
+                PROPERTIES("replication_num" = "1")"""
+            )
+            conn.commit()
+            try:
+                metadata_db = MetaData()
+                reflected_table = Table(table_name, metadata_db, autoload_with=self.engine, schema=self.test_schema)
+                assert reflected_table.comment == 'same comment'
+
+                metadata_target = MetaData()
+                target_table = Table(
+                    table_name, metadata_target, 
+                    Column('id', Integer), 
+                    comment='same comment', 
+                    schema=self.test_schema,
+                    starrocks_PROPERTIES={"replication_num": "1"}
+                )
+
+                autogen_context = self._setup_autogen_context()
+                modify_table_ops = ModifyTableOps(table_name, [], schema=self.test_schema)
+                
+                # Call the table comparator dispatcher which includes comment comparison
+                comparators.dispatch("table")(
+                    autogen_context,
+                    modify_table_ops,
+                    self.test_schema,
+                    table_name,
+                    reflected_table,
+                    target_table
+                )
+                
+                result = modify_table_ops.ops
+
+                assert len(result) == 0
+            finally:
+                conn.exec_driver_sql(f"DROP TABLE IF EXISTS {self._get_full_table_name(table_name)}")
+                conn.commit()
 
     def test_distribution_change_detection(self) -> None:
         """

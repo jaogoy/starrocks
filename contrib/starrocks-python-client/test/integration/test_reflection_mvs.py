@@ -191,7 +191,7 @@ class TestReflectionMaterializedViewsIntegration:
         with sr_root_engine.connect() as connection:
             connection.execute(text(f"DROP MATERIALIZED VIEW IF EXISTS {mv_name}"))
             
-            # Create a materialized view with properties
+            # Create a materialized view with comment
             create_mv_sql = f"""
             CREATE MATERIALIZED VIEW {mv_name}
             COMMENT 'This is a test comment for the materialized view.'
@@ -644,6 +644,7 @@ class TestReflectionMaterializedViewsIntegration:
             {refresh_clause}
             AS SELECT id, name FROM users
             """
+            logger.debug(f"Creating MV with refresh clause: {create_mv_sql}")
             connection.execute(text(create_mv_sql))
 
             try:
@@ -771,10 +772,14 @@ class TestReflectionMaterializedViewsIntegration:
 
                 reflected_props_str = reflected_opts.properties.lower()
                 for k, v in mv_obj.properties.items():
-                    assert f'"{k.lower()}"="{v.lower()}"' in reflected_props_str
+                    assert f'"{k.lower()}" = "{v.lower()}"' in reflected_props_str
 
-                normalized_original_def = TableAttributeNormalizer.normalize_sql(mv_obj.definition)
-                normalized_reflected_def = TableAttributeNormalizer.normalize_sql(reflected_state.definition)
+                normalized_original_def = TableAttributeNormalizer.normalize_sql(mv_obj.definition, remove_qualifiers=True)
+                normalized_reflected_def = TableAttributeNormalizer.normalize_sql(reflected_state.definition, remove_qualifiers=True)
+                logger.debug(f"mv_obj.definition: {mv_obj.definition}")
+                logger.debug(f"normalized_original_def: {normalized_original_def}")
+                logger.debug(f"reflected_state.definition: {reflected_state.definition}")
+                logger.debug(f"normalized_reflected_def: {normalized_reflected_def}")
                 assert normalized_original_def in normalized_reflected_def
 
             finally:
