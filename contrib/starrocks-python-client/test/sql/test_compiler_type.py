@@ -4,7 +4,7 @@ from sqlalchemy.dialects import registry
 from sqlalchemy import Column, MetaData, Table
 from sqlalchemy.schema import CreateTable
 
-from test.test_utils import normalize_sql
+from test.unit.test_utils import normalize_sql
 from starrocks.datatype import (
     TINYINT, SMALLINT, INTEGER, BIGINT, LARGEINT, BOOLEAN,
     DECIMAL, DOUBLE, FLOAT,

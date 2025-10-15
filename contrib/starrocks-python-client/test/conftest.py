@@ -13,13 +13,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import pytest
 from sqlalchemy.dialects import registry
 
 registry.register("starrocks+pymysql", "starrocks.dialect", "StarRocksDialect")
 registry.register("starrocks", "starrocks.dialect", "StarRocksDialect")
+pytest.register_assert_rewrite("sqlalchemy.testing.assertions")
+
+# from sqlalchemy.testing.plugin.pytestplugin import *
 
 # Load StarRocks-specific test helpers and fixtures
 pytest_plugins = ("test.conftest_sr",)
-
-# pytest.register_assert_rewrite("sqlalchemy.testing.assertions")
-# from sqlalchemy.testing.plugin.pytestplugin import *

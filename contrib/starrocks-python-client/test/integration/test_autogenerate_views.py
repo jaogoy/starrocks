@@ -12,7 +12,7 @@ from sqlalchemy import Engine, create_engine, text, MetaData, inspect
 from starrocks.alembic.ops import CreateViewOp, AlterViewOp
 from starrocks.sql.schema import View
 from test import conftest_sr
-from test.test_utils import normalize_sql
+from test.unit.test_utils import normalize_sql
 
 logger = logging.getLogger(__name__)
 

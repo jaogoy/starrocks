@@ -40,5 +40,5 @@ def sr_root_engine() -> Engine:
 
 
 # Default for local runs; override via environment
-os.environ.setdefault("STARROCKS_URL", "starrocks://a:lj123456@127.0.0.1:9030/test")
+os.environ.setdefault("STARROCKS_URL", "starrocks://myname:pswd1234@127.0.0.1:9030/test")
 test_default_schema = "test"

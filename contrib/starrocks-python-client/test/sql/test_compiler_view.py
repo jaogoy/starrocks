@@ -4,7 +4,7 @@ from sqlalchemy.schema import MetaData
 
 from starrocks.sql.ddl import CreateView, DropView, AlterView
 from starrocks.sql.schema import View
-from test.test_utils import normalize_sql
+from test.unit.test_utils import normalize_sql
 
 
 class TestViewCompiler:

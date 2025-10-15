@@ -5,7 +5,7 @@ from sqlalchemy import (
     Table, MetaData, Column, Integer, String, Date, DateTime, BigInteger, Double
 )
 
-from test.test_utils import normalize_sql
+from test.unit.test_utils import normalize_sql
 import pytest
 from starrocks.params import ColumnAggInfoKeyWithPrefix, TableInfoKeyWithPrefix
 from starrocks.types import ColumnAggType

@@ -30,7 +30,7 @@ from typing import Optional
 from starrocks.params import AlterTableEnablement, TableInfoKeyWithPrefix
 from starrocks.engine.interfaces import ReflectedPartitionInfo
 from starrocks.types import PartitionType
-from test import test_utils
+from test.unit import test_utils
 from test.conftest_sr import create_test_engine, test_default_schema
 from starrocks.alembic.compare import compare_starrocks_table
 from alembic.operations.ops import UpgradeOps, AlterTableOp, ModifyTableOps

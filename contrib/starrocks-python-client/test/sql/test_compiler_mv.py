@@ -4,7 +4,7 @@ from sqlalchemy.schema import MetaData
 
 from starrocks.sql.ddl import CreateMaterializedView, DropMaterializedView
 from starrocks.sql.schema import MaterializedView
-from test.test_utils import normalize_sql
+from test.unit.test_utils import normalize_sql
 
 
 class TestMaterializedViewCompiler:
