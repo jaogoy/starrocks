@@ -1,10 +1,24 @@
+# Copyright 2021-present StarRocks, Inc. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 from __future__ import annotations
 
 from typing import List, Optional, Union
 
-from starrocks.engine.interfaces import ReflectedTableKeyInfo, ReflectedViewState, ReflectedMVState
-from starrocks.types import SystemRunMode, TableDistribution, TableEngine, TableType, ViewSecurityType
-from starrocks.utils import TableAttributeNormalizer
+from starrocks.common.types import SystemRunMode, TableDistribution, TableEngine, TableType, ViewSecurityType
+from starrocks.common.utils import TableAttributeNormalizer
+from starrocks.engine.interfaces import ReflectedMVState, ReflectedTableKeyInfo, ReflectedViewState
 
 
 class ReflectionTableDefaults:
@@ -54,11 +68,11 @@ class ReflectionTableDefaults:
     @classmethod
     def engine(cls) -> str:
         return TableEngine.OLAP
-    
+
     @classmethod
     def key(cls) -> str:
         return TableType.DUPLICATE_KEY
-    
+
     @classmethod
     def reflected_key_info(cls) -> ReflectedTableKeyInfo:
         return ReflectedTableKeyInfo(type=cls.key(), columns=None)
@@ -85,7 +99,7 @@ class ReflectionTableDefaults:
     def buckets(cls) -> int:
         """Get default buckets count. such as 8."""
         return 0
-    
+
     @classmethod
     def distribution(cls) -> str:
         """Get default distribution by. such as 'HASH(id) BUCKETS 10'."""
@@ -115,7 +129,7 @@ class ReflectionViewDefaults:
     @classmethod
     def comment(cls) -> str:
         return ""
-    
+
     @classmethod
     def security(cls) -> str:
         return ViewSecurityType.EMPTY

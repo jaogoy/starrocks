@@ -1,3 +1,17 @@
+# Copyright 2021-present StarRocks, Inc. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import logging
 import re
 import time
@@ -5,17 +19,34 @@ from typing import List, Optional
 
 import pytest
 from sqlalchemy import Column, Engine, Inspector, inspect
-from starrocks.datatype import (
-    LARGEINT, VARCHAR, STRING, INTEGER, BIGINT, BOOLEAN, TINYINT, SMALLINT,
-    DECIMAL, DOUBLE, FLOAT, DATE, DATETIME, CHAR, ARRAY, MAP, STRUCT, JSON,
-    HLL, BITMAP
-)
 from sqlalchemy.orm import Mapped, declarative_base, mapped_column
 from sqlalchemy.testing.assertions import eq_
 from sqlalchemy.testing.suite import is_true
 
+from starrocks.common.params import TableInfoKeyWithPrefix
+from starrocks.datatype import (
+    ARRAY,
+    BIGINT,
+    BITMAP,
+    BOOLEAN,
+    CHAR,
+    DATE,
+    DATETIME,
+    DECIMAL,
+    DOUBLE,
+    FLOAT,
+    HLL,
+    INTEGER,
+    JSON,
+    LARGEINT,
+    MAP,
+    SMALLINT,
+    STRING,
+    STRUCT,
+    TINYINT,
+    VARCHAR,
+)
 from starrocks.dialect import StarRocksDialect
-from starrocks.params import TableInfoKeyWithPrefix
 from test.system.conftest import AlembicTestEnv
 
 
@@ -73,11 +104,11 @@ class ScriptContentParser():
     def extract_downgrade_content(cls, script: str) -> Optional[str]:
         """Extract the body of the downgrade() function from an Alembic migration script."""
         return cls._extract_upgrade_or_downgrade_content(cls.DOWNGRADE_EXTRACTION_REGEX, script)
-    
+
     @classmethod
     def extract_non_comment_lines(cls, content: str) -> List[str]:
         """Extract the non-comment lines from an Alembic migration script."""
-        non_comment_lines = [line for line in content.split('\n') 
+        non_comment_lines = [line for line in content.split('\n')
                             if line.strip() and not line.strip().startswith('#')]
         non_comment_lines_str = '\n'.join(non_comment_lines)
         logger.debug(f"non comment lines:\n>>>>\n{non_comment_lines_str}\n<<<<")
@@ -166,7 +197,7 @@ def test_create_table_simple(database: str, alembic_env: AlembicTestEnv, sr_engi
 
     # # 3. Check the generated script
     script_content = ScriptContentParser.check_script_content(alembic_env, 1, "create_user_table")
-    
+
     # Normalize script content for robust comparison
     upgrade_content = ScriptContentParser.extract_upgrade_content(script_content)
     normalized_content = re.sub(r'[ \t]+', ' ', upgrade_content).lower()
@@ -294,14 +325,14 @@ def test_alter_table_columns_comprehensive(database: str, alembic_env: AlembicTe
     # 3. Verify and apply the ALTER script
     script_content = ScriptContentParser.check_script_content(alembic_env, 1, "alter_columns")
     # upgrade_contnt = ScriptContentParser.extract_upgrade_content(script_content).lower()
-    
+
     assert "op.add_column('t_alter_columns', sa.Column('col_added', VARCHAR(length=100), nullable=True))" in script_content
     assert "op.drop_column('t_alter_columns', 'col_to_drop')" in script_content
     assert "op.alter_column('t_alter_columns', 'col_to_modify'," in script_content
     assert "type_=BIGINT()" in script_content
     assert "nullable=True" in script_content
     assert "comment='Modified comment'" in script_content
-    
+
     alembic_env.harness.upgrade("head")
 
     # 4. Verify in DB and then downgrade
@@ -511,7 +542,7 @@ def test_add_agg_table_key_and_value_columns(database: str, alembic_env: Alembic
 
 
 def test_add_table_column_only(database: str, alembic_env: AlembicTestEnv, sr_engine: Engine):
-    """Tests adding multiple columns via autogenerate and applying them in one revision, 
+    """Tests adding multiple columns via autogenerate and applying them in one revision,
     into a PRIMARY KEY table (not an AGGREGATE KEY table).
     """
     # 1. Initial state
@@ -744,7 +775,7 @@ def test_alter_table_attributes_distribution(database: str, alembic_env: Alembic
         TableInfoKeyWithPrefix.DISTRIBUTED_BY, "HASH(`id2`) BUCKETS 3")
     # assert options.get("starrocks_ORDER_BY") == "name"
     # assert options.get(TableInfoKeyWithPrefix.COMMENT) == "A new table comment"
-    
+
     # 5. Downgrade
     alembic_env.harness.downgrade("-1")
     # we need to wait the ALTER TABLE take effect
@@ -797,7 +828,7 @@ def test_alter_table_order_by(database: str, alembic_env: AlembicTestEnv, sr_eng
     assert options.get(TableInfoKeyWithPrefix.ORDER_BY) == "`name`"
 
     # 5. Downgrade
-    alembic_env.harness.downgrade("-1") 
+    alembic_env.harness.downgrade("-1")
     options = wait_for_alter_table_attributes(inspector, "t_alter_order", TableInfoKeyWithPrefix.ORDER_BY, "`id`")
     assert options.get(TableInfoKeyWithPrefix.ORDER_BY) == "`id`"
 
@@ -808,7 +839,7 @@ def test_alter_table_properties_and_comment(database: str, alembic_env: AlembicT
     All the properties and comment won't cost a lot of time. (replication_num?)
 
     - Adds a new table comment.
-    
+
     - Adds a new property 'replicated_storage'.
     - Changes an existing property 'storage_medium'.
     """
@@ -845,18 +876,18 @@ def test_alter_table_properties_and_comment(database: str, alembic_env: AlembicT
             },
         }
     alembic_env.harness.generate_autogen_revision(metadata=AlteredBase.metadata, message="Alter props")
-    
+
     # 3. Verify and apply the ALTER script
     script_content = ScriptContentParser.check_script_content(alembic_env, 1, "alter_props")
     assert "op.alter_table" in script_content
     assert "'replicated_storage': 'false'" in script_content
     assert "'default.storage_medium': 'SSD'" in script_content
     assert "comment='A new table comment'" in script_content
-    
+
     logger.debug("Start to do upgrade for schema diff.")
     alembic_env.harness.upgrade("head")
     logger.debug("Upgrade to head.")
-    
+
     # 4. Verify in DB
     inspector = inspect(sr_engine)
     options = inspector.get_table_options("t_alter_props")
@@ -864,7 +895,7 @@ def test_alter_table_properties_and_comment(database: str, alembic_env: AlembicT
     assert props['replicated_storage'] == 'false'
     assert props['storage_medium'] == 'SSD'
     assert options.get(TableInfoKeyWithPrefix.COMMENT) == "A new table comment"
-    
+
     # 5. Downgrade one revision, not to the base
     logger.debug("Start to do downgrade.")
     alembic_env.harness.downgrade("-1")
@@ -905,7 +936,7 @@ def test_drop_table(database: str, alembic_env: AlembicTestEnv, sr_engine: Engin
     logger.debug("Start to compare the table 'user' with the empty metadata.")
     EmptyBase = declarative_base()
     alembic_env.harness.generate_autogen_revision(metadata=EmptyBase.metadata, message="Drop user")
-    
+
     # 3. Verify and apply the DROP script
     versions_dir = alembic_env.root_path / "alembic/versions"
     scripts = list(versions_dir.glob("*drop_user.py"))
@@ -916,13 +947,13 @@ def test_drop_table(database: str, alembic_env: AlembicTestEnv, sr_engine: Engin
     DOWNGRADE_PATTERN = re.compile(DOWNGRADE_STR + r"op.create_table\('user'")
     is_true(UPGRADE_PATTERN.search(script_content), "Upgrade script should contain DROP TABLE operation")
     is_true(DOWNGRADE_PATTERN.search(script_content), "Downgrade script should contain CREATE TABLE operation")
-    
+
     logger.debug("Start to do upgrade: drop the table 'user'.")
     alembic_env.harness.upgrade("head")
     logger.debug("Upgraded to head: drop the table 'user'.")
     inspector.clear_cache()
     is_true(not inspector.has_table("user"))
-    
+
     # 4. Downgrade and verify table is restored
     logger.debug("Start to do downgrade: restore the table 'user'.")
     alembic_env.harness.downgrade("-1")

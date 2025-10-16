@@ -1,9 +1,23 @@
+# Copyright 2021-present StarRocks, Inc. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import re
-from typing import Any, Dict, Optional, Tuple, Union, Mapping, Iterator, List
+from typing import Any, Dict, Iterator, List, Mapping, Optional, Tuple, Union
 
 from sqlalchemy.exc import StatementError
 
-from starrocks.engine.interfaces import ReflectedPartitionInfo, ReflectedDistributionInfo, ReflectedTableKeyInfo
+from starrocks.engine.interfaces import ReflectedDistributionInfo, ReflectedPartitionInfo, ReflectedTableKeyInfo
 
 
 class SQLParseError(StatementError):
@@ -126,7 +140,7 @@ class TableAttributeNormalizer:
         # It handles multiple qualifiers.
         if remove_qualifiers:
             sql = re.sub(r"(?:`[^`]+`|\w+)\.", "", sql)
-        
+
         # Removes backticks
         sql = TableAttributeNormalizer.strip_identifier_backticks(sql)
 
@@ -217,11 +231,11 @@ class TableAttributeNormalizer:
 def find_matching_parenthesis(text: str, start_index: int = 0) -> int:
     """
     Finds the index of the matching closing parenthesis for a given starting parenthesis.
-    
+
     Args:
         text: The string to search within.
         start_index: The index of the opening parenthesis.
-        
+
     Returns:
         The index of the matching closing parenthesis, or -1 if not found.
 

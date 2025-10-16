@@ -1,10 +1,23 @@
-import logging
+# Copyright license_header.txt Copyright 2021-present StarRocks, Inc. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 from functools import wraps
-from typing import Any, Dict, List, Optional, Set, Tuple, Union, Callable
+import logging
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
 
 from alembic.autogenerate import comparators
 from alembic.autogenerate.api import AutogenContext
-
 from alembic.ddl import DefaultImpl
 from alembic.operations.ops import AlterColumnOp, AlterTableOp, UpgradeOps
 from sqlalchemy import Column, quoted_name
@@ -14,30 +27,33 @@ from sqlalchemy.sql import sqltypes
 from sqlalchemy.sql.schema import Table
 
 from starrocks import datatype
-from starrocks.datatype import ARRAY, MAP, STRUCT, BOOLEAN, TINYINT, VARCHAR, STRING
-from starrocks.defaults import ReflectionTableDefaults
-from starrocks.params import (
+from starrocks.alembic.ops import (
+    AlterViewOp,
+    CreateMaterializedViewOp,
+    CreateViewOp,
+    DropMaterializedViewOp,
+    DropViewOp,
+)
+from starrocks.common.defaults import ReflectionTableDefaults
+from starrocks.common.params import (
     AlterTableEnablement,
-    DialectName,
-    SRKwargsPrefix,
     ColumnAggInfoKey,
     ColumnAggInfoKeyWithPrefix,
+    DialectName,
+    SRKwargsPrefix,
     TableInfoKey,
     TablePropertyForFuturePartitions,
 )
-
-from starrocks.reflection import StarRocksTableDefinitionParser
-from starrocks.engine.interfaces import ReflectedTableKeyInfo, ReflectedViewState, ReflectedPartitionInfo, ReflectedDistributionInfo, ReflectedMVState
-from starrocks.sql.schema import MaterializedView, View
-
-from starrocks.alembic.ops import (
-    AlterViewOp,
-    CreateViewOp,
-    DropViewOp,
-    CreateMaterializedViewOp,
-    DropMaterializedViewOp,
+from starrocks.common.utils import CaseInsensitiveDict, TableAttributeNormalizer
+from starrocks.datatype import ARRAY, BOOLEAN, MAP, STRING, STRUCT, TINYINT, VARCHAR
+from starrocks.engine.interfaces import (
+    ReflectedMVState,
+    ReflectedPartitionInfo,
+    ReflectedTableKeyInfo,
+    ReflectedViewState,
 )
-from starrocks.utils import CaseInsensitiveDict, TableAttributeNormalizer
+from starrocks.reflection import StarRocksTableDefinitionParser
+from starrocks.sql.schema import MaterializedView, View
 
 
 logger = logging.getLogger(__name__)
@@ -61,36 +77,36 @@ def compare_simple_type(impl: DefaultImpl, inspector_column: Column[Any], metada
     """
     inspector_type = inspector_column.type
     metadata_type = metadata_column.type
-    
+
     # logger.debug(f"compare_simple_type: inspector_type: {inspector_type}, metadata_type: {metadata_type}")
     # Scenario 1.a: model defined BOOLEAN, database stored TINYINT(1)
-    if (isinstance(metadata_type, BOOLEAN) and 
+    if (isinstance(metadata_type, BOOLEAN) and
         isinstance(inspector_type, TINYINT) and
         getattr(inspector_type, 'display_width', None) == 1):
-        logger.debug(f"compare_simple_type with BOOLEAN vs TINYINT(1), treat them as the same.")
+        logger.debug("compare_simple_type with BOOLEAN vs TINYINT(1), treat them as the same.")
         return False
-        
+
     # Scenario 1.b: model defined TINYINT(1), database may display as Boolean (theoretically not possible, but for safety)
-    if (isinstance(metadata_type, TINYINT) and 
+    if (isinstance(metadata_type, TINYINT) and
         getattr(metadata_type, 'display_width', None) == 1 and
         isinstance(inspector_type, BOOLEAN)):
-        logger.debug(f"compare_simple_type with TINYINT(1) vs BOOLEAN, treat them as the same.")
+        logger.debug("compare_simple_type with TINYINT(1) vs BOOLEAN, treat them as the same.")
         return False
-    
+
     # Scenario 2.a: model defined STRING, database stored VARCHAR(65533)
     if (isinstance(metadata_type, STRING) and
         isinstance(inspector_type, VARCHAR) and
         getattr(inspector_type, 'length', None) == 65533):
-        logger.debug(f"compare_simple_type with STRING vs VARCHAR(65533), treat them as the same.")
+        logger.debug("compare_simple_type with STRING vs VARCHAR(65533), treat them as the same.")
         return False
-    
+
     # Scenario 2.b: model defined VARCHAR(65533), database stored STRING (theoretically not possible, but for safety)
     if (isinstance(metadata_type, VARCHAR) and
         getattr(metadata_type, 'length', None) == 65533 and
         isinstance(inspector_type, STRING)):
-        logger.debug(f"compare_simple_type with VARCHAR(65533) vs STRING, treat them as the same.")
+        logger.debug("compare_simple_type with VARCHAR(65533) vs STRING, treat them as the same.")
         return False
-        
+
     # Other cases use default comparison logic from the parent class
     from starrocks.alembic.starrocks import StarRocksImpl
     return super(StarRocksImpl, impl).compare_type(inspector_column, metadata_column)
@@ -158,12 +174,12 @@ def compare_complex_type(impl: DefaultImpl, inspector_type: sqltypes.TypeEngine,
 def comparators_dispatch_for_starrocks(dispatch_type: str):
     """
     StarRocks-specific dispatch decorator.
-    
+
     Automatically handles dialect checking, only executes the decorated function under StarRocks dialect.
-    
+
     Args:
         dispatch_type: Alembic dispatch type ("table", "column", "view", etc.)
-    
+
     Usage:
         @starrocks_dispatch_for("table")
         def compare_starrocks_table(autogen_context, conn_table, metadata_table):
@@ -174,7 +190,7 @@ def comparators_dispatch_for_starrocks(dispatch_type: str):
         @wraps(func)
         def wrapper(*args, **kwargs):
             autogen_context = args[0]  # First arg is always autogen_context
-            
+
             # Only execute for StarRocks dialect
             if autogen_context.dialect.name != DialectName:
                 # Return default value based on return type annotation
@@ -185,13 +201,13 @@ def comparators_dispatch_for_starrocks(dispatch_type: str):
                     elif 'List' in str(return_type):
                         return []
                 return None
-            
+
             # StarRocks dialect, execute actual logic
             return func(*args, **kwargs)
-        
+
         # Register to Alembic dispatch system
         return comparators.dispatch_for(dispatch_type)(wrapper)
-    
+
     return decorator
 
 
@@ -204,7 +220,7 @@ def autogen_for_views(
 ) -> None:
     """
     Main autogenerate entrypoint for views.
-    
+
     Scan views in database and compare with metadata.
     """
     inspector: Inspector = autogen_context.inspector
@@ -305,7 +321,7 @@ def compare_view(
 ) -> None:
     """
     Compare a single view and generate operations if needed.
-    
+
     Check for changes in view definition, comment and security attributes.
     """
     # currently, conn_view or metadata_view is not None.
@@ -315,7 +331,7 @@ def compare_view(
                        f"meta_view: {'not None' if metadata_view else 'None'}")
         return
     logger.debug(f"compare_view: conn_view: {conn_view!r}, metadata_view: {metadata_view!r}")
-    
+
     conn_def_norm: Optional[str] = TableAttributeNormalizer.normalize_sql(conn_view.definition)
     metadata_def_norm: Optional[str] = TableAttributeNormalizer.normalize_sql(metadata_view.definition)
     definition_changed = conn_def_norm != metadata_def_norm
@@ -384,7 +400,7 @@ def autogen_for_materialized_views(
 ) -> None:
     """
     Main autogenerate entrypoint for materialized views.
-    
+
     Scan materialized views in database and compare with metadata.
     """
     inspector: Inspector = autogen_context.inspector
@@ -457,23 +473,23 @@ def compare_materialized_view(
 ) -> None:
     """
     Compare a single materialized view and generate operations if needed.
-    
+
     Check for changes in materialized view definition.
     """
     # For now, we only support drop and create for modifications.
     # We can add more granular ALTER operations in the future.
-    
+
     # Normalize and compare attributes
     conn_opts = conn_mv.mv_options
     definition_changed = TableAttributeNormalizer.normalize_sql(conn_mv.definition) != \
                          TableAttributeNormalizer.normalize_sql(metadata_mv.definition)
-    
+
     partition_changed = TableAttributeNormalizer.normalize_partition_method(conn_opts.partition_by) != \
                         TableAttributeNormalizer.normalize_partition_method(metadata_mv.partition_by)
 
     distribution_changed = TableAttributeNormalizer.normalize_distribution_string(conn_opts.distributed_by) != \
                            TableAttributeNormalizer.normalize_distribution_string(metadata_mv.distributed_by)
-                           
+
     order_by_changed = TableAttributeNormalizer.normalize_order_by_string(conn_opts.order_by) != \
                        TableAttributeNormalizer.normalize_order_by_string(metadata_mv.order_by)
 
@@ -482,11 +498,11 @@ def compare_materialized_view(
     refresh_type_changed = conn_opts.refresh_type != metadata_mv.refresh_type
 
     comment_changed = (conn_mv.comment or '') != (metadata_mv.comment or '')
-    
+
     properties_changed = conn_opts.properties != metadata_mv.properties
 
-    if any([definition_changed, partition_changed, distribution_changed, 
-             order_by_changed, refresh_moment_changed, refresh_type_changed, 
+    if any([definition_changed, partition_changed, distribution_changed,
+             order_by_changed, refresh_moment_changed, refresh_type_changed,
              comment_changed, properties_changed]):
         upgrade_ops.ops.append(
             (
@@ -552,9 +568,9 @@ def compare_starrocks_table(
     # Get the system run_mode for proper default value comparison
     run_mode = autogen_context.dialect.run_mode
     logger.info(f"compare starrocks table. table: {table_name}, schema:{schema}, run_mode: {run_mode}")
-    
+
     conn_table_attributes = CaseInsensitiveDict({k: v for k, v in conn_table.dialect_options[DialectName].items() if v is not None})
-    meta_table_attributes = CaseInsensitiveDict({k: v for k, v in metadata_table.dialect_options[DialectName].items() if v is not None})    
+    meta_table_attributes = CaseInsensitiveDict({k: v for k, v in metadata_table.dialect_options[DialectName].items() if v is not None})
 
     logger.debug(
         "StarRocks-specific attributes comparison for table '%s': "
@@ -621,7 +637,7 @@ def _compare_table_key(
     conn_table_attributes: Dict[str, Any], meta_table_attributes: Dict[str, Any]
 ) -> None:
     """Compare key changes and add AlterTableKeyOp if needed.
-    
+
     Note: StarRocks does not support ALTER TABLE KEY, so this will raise an error
     if a change is detected.
     But, if only the key columns are changed, we can generate an WARNING, but not .
@@ -743,7 +759,7 @@ def _is_equal_partition_method(
     # If the partition info is a string, it's the partition_by expression, not a ReflectedPartitionInfo object
     if isinstance(conn_partition, ReflectedPartitionInfo):
         conn_partition = conn_partition.partition_method
-        
+
     # Only compare the partition_method.
     return conn_partition == default_partition
 
@@ -774,9 +790,9 @@ def _compare_table_partition(
     if _compare_single_table_attribute(
         table_name,
         schema,
-        TableInfoKey.PARTITION_BY, 
-        normalized_conn, 
-        normalized_meta, 
+        TableInfoKey.PARTITION_BY,
+        normalized_conn,
+        normalized_meta,
         default_value=ReflectionTableDefaults.partition_by(),
         support_change=AlterTableEnablement.PARTITION_BY,
         equal_to_default_cmp_func=_is_equal_partition_method
@@ -1132,11 +1148,11 @@ def compare_starrocks_column_agg_type(
 ) -> None:
     """
     Compare StarRocks-specific column options.
-    
+
     Check for changes in StarRocks-specific attributes like aggregate type.
     """
     if conn_col is None or metadata_col is None:
-        raise ArgumentError(f"Both conn column and meta column should not be None.")
+        raise ArgumentError("Both conn column and meta column should not be None.")
 
     conn_opts = CaseInsensitiveDict(
         {k: v for k, v in conn_col.dialect_options[DialectName].items() if v is not None}
@@ -1182,7 +1198,7 @@ def compare_starrocks_column_autoincrement(
     StarRocks does not support changing the autoincrement of a column.
     """
     if conn_col is None or metadata_col is None:
-        raise ArgumentError(f"Both conn column and meta column should not be None.")
+        raise ArgumentError("Both conn column and meta column should not be None.")
 
     # Because we can't inpsect the autoincrement, we can't do the check the difference.
     if conn_col.autoincrement != metadata_col.autoincrement and \

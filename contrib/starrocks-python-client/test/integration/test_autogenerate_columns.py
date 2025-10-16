@@ -1,11 +1,25 @@
+# Copyright 2021-present StarRocks, Inc. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 from __future__ import annotations
 
 import logging
 from typing import Any, Union
 from unittest.mock import Mock
 
-import pytest
 from alembic.autogenerate.api import AutogenContext
+import pytest
 from sqlalchemy import (
     BIGINT,
     Column,
@@ -14,8 +28,9 @@ from sqlalchemy import (
 )
 from sqlalchemy.engine import Engine
 
-from starrocks.alembic.compare import compare_starrocks_column_autoincrement, compare_starrocks_table
+from starrocks.alembic.compare import compare_starrocks_column_autoincrement
 from test.conftest_sr import create_test_engine, test_default_schema
+
 
 logger = logging.getLogger(__name__)
 
@@ -84,9 +99,9 @@ class TestCompareColumnAggTypeIntegration:
         try:
             conn_db = MetaData()
             conn_table = Table(tname, conn_db, autoload_with=self.engine, schema=self.schema)
-            
+
             meta_db = MetaData()
-            from starrocks.types import ColumnAggType
+            from starrocks.common.types import ColumnAggType
             meta_table = Table(
                 tname, meta_db,
                 Column("id", BIGINT),
@@ -124,9 +139,9 @@ class TestCompareColumnAggTypeIntegration:
         try:
             conn_db = MetaData()
             conn_table = Table(tname, conn_db, autoload_with=self.engine, schema=self.schema)
-            
+
             meta_db = MetaData()
-            from starrocks.types import ColumnAggType
+            from starrocks.common.types import ColumnAggType
             meta_table = Table(
                 tname, meta_db,
                 Column("id", BIGINT),
@@ -136,8 +151,9 @@ class TestCompareColumnAggTypeIntegration:
             )
 
             autogen_context = self._setup_autogen_context()
-            from starrocks.alembic.compare import compare_starrocks_column_agg_type
             from sqlalchemy.exc import NotSupportedError
+
+            from starrocks.alembic.compare import compare_starrocks_column_agg_type
             with pytest.raises(NotSupportedError, match="does not support changing the aggregation type"):
                 compare_starrocks_column_agg_type(autogen_context, None, self.schema, tname, "v",
                     conn_table.columns["v"], meta_table.columns["v"])
@@ -210,7 +226,7 @@ class TestCompareColumnAutoIncrementIntegration:
             # Create reflected table from database
             conn_db = MetaData()
             conn_table = Table(tname, conn_db, autoload_with=self.engine, schema=self.schema)
-            
+
             # Create target table with matching autoincrement
             meta_db = MetaData()
             meta_table = Table(
@@ -227,7 +243,7 @@ class TestCompareColumnAutoIncrementIntegration:
             # result = compare_starrocks_table(autogen_context, conn_table, meta_table)
             result = compare_starrocks_column_autoincrement(autogen_context, None, self.schema, tname, "id",
                 conn_table.columns["id"], meta_table.columns["id"])
-            
+
             # Should detect no changes
             assert not result
         finally:
@@ -254,7 +270,7 @@ class TestCompareColumnAutoIncrementIntegration:
             # Create reflected table from database
             conn_db = MetaData()
             conn_table = Table(tname, conn_db, autoload_with=self.engine, schema=self.schema)
-            
+
             # Create target table with different autoincrement (True)
             meta_db = MetaData()
             meta_table = Table(
@@ -272,7 +288,7 @@ class TestCompareColumnAutoIncrementIntegration:
             # result = compare_starrocks_table(autogen_context, conn_table, meta_table)
             result = compare_starrocks_column_autoincrement(autogen_context, None, self.schema, tname, "id",
                 conn_table.columns["id"], meta_table.columns["id"])
-            
+
             # Should detect no changes but log warning
             assert not result
             assert any(

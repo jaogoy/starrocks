@@ -1,14 +1,27 @@
+# Copyright 2021-present StarRocks, Inc. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import logging
+
+import pytest
+from sqlalchemy import BigInteger, Column, Date, DateTime, Double, Integer, MetaData, String, Table
 from sqlalchemy.dialects import registry
 from sqlalchemy.schema import CreateTable
-from sqlalchemy import (
-    Table, MetaData, Column, Integer, String, Date, DateTime, BigInteger, Double
-)
 
+from starrocks.common.params import ColumnAggInfoKeyWithPrefix
+from starrocks.common.types import ColumnAggType
 from test.unit.test_utils import normalize_sql
-import pytest
-from starrocks.params import ColumnAggInfoKeyWithPrefix, TableInfoKeyWithPrefix
-from starrocks.types import ColumnAggType
 
 
 class TestCreateTableCompiler:
@@ -156,7 +169,6 @@ class TestCreateTableCompiler:
 
     def test_aggregate_key_ordering(self):
         self.logger.info("Testing AGGREGATE KEY column ordering validation")
-        from sqlalchemy import exc
 
         # Test case 1: Value column before key column
         # Don't check it now. leave it to SR.

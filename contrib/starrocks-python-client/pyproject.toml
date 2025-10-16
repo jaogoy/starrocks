@@ -3,36 +3,25 @@ requires = ["setuptools>=61.0.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.ruff]
-line-length = 120
-select = ["E", "F", "W"]   # PEP8 基本规则 (E,W)，F 是 pyflakes
-ignore = ["E501"]          # 忽略行过长 (如果想逐步改，可先忽略)
-fix = false                 # 允许自动修复
 target-version = "py38"
+line-length = 120
+select = ["E", "F", "W", "I"]   # Basic PEP8 rules (E,W), F is for pyflakes
+ignore = ["E501"]          # Ignore line too long (can be ignored for now if you want to fix it incrementally)
+fix = true                 # Allow auto-fixing
+show-fixes = true
+exclude = [".git", "__pycache__", "build", "dist", "venv"]
 
-[tool.flake8]
-enabled = false
-max-line-length = 120
-extend-ignore = ["E203", "W503"]  # 常见：和 black 配合时要忽略
-exclude = [".git", "__pycache__", "build", "dist"]
-import-order-style = "google"
-application-import-names = ["starrocks"]  # ?
-
-[tool.autopep8]
-max_line_length = 120
-aggressive = 0
+[tool.ruff.isort]
+known-first-party = ["starrocks"]
+combine-as-imports = true
+force-sort-within-sections = true
+lines-after-imports = 2
 
 [tool.black]
+target-version = ["py38", "py39", "py310"]
 line-length = 120
-target-version = ["py38"]
 skip-string-normalization = false
-
-[tool.isort]
-profile = "black"
-line_length = 120
-multi_line_output = 3
-include_trailing_comma = true
-force_grid_wrap = 0
-use_parentheses = true
+include = '\.pyi?$'
 
 
 [tool.pytest.ini_options]

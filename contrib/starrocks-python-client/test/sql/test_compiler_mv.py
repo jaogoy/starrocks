@@ -1,4 +1,19 @@
+# Copyright 2021-present StarRocks, Inc. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import logging
+
 from sqlalchemy.dialects import registry
 from sqlalchemy.schema import MetaData
 
@@ -71,7 +86,7 @@ class TestMaterializedViewCompiler:
     def test_create_materialized_view_with_aggregation(self):
         """Test CREATE MATERIALIZED VIEW with aggregation functions."""
         agg_query = """
-        SELECT 
+        SELECT
             category_id,
             COUNT(*) as product_count,
             AVG(price) as avg_price,
@@ -89,7 +104,7 @@ class TestMaterializedViewCompiler:
     def test_create_materialized_view_with_window_functions(self):
         """Test CREATE MATERIALIZED VIEW with window functions."""
         window_query = """
-        SELECT 
+        SELECT
             user_id,
             order_date,
             amount,
@@ -111,7 +126,7 @@ class TestMaterializedViewCompiler:
         }
         mv = MaterializedView("my_mv", "SELECT * FROM my_table", properties=properties, metadata=self.metadata)
         sql = str(CreateMaterializedView(mv).compile(dialect=self.dialect))
-        
+
         # Check that all properties are present
         assert '"replication_num" = "3"' in sql
         assert '"storage_medium" = "SSD"' in sql
@@ -121,7 +136,7 @@ class TestMaterializedViewCompiler:
     def test_create_materialized_view_with_special_chars(self):
         """Test CREATE MATERIALIZED VIEW with special characters in identifiers."""
         special_query = """
-        SELECT 
+        SELECT
             `user-id` as user_id,
             `user name` as user_name,
             `email@domain.com` as email

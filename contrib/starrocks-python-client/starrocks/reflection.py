@@ -14,36 +14,39 @@
 # limitations under the License.
 
 from __future__ import annotations
+
 import json
 import logging
 import re
 from typing import Any, Dict, List, Optional, Tuple, Union
-from dataclasses import dataclass, field
-from pathlib import Path
 
+from sqlalchemy import log, types as sqltypes, util
 from sqlalchemy.dialects.mysql.base import _DecodingRow
 from sqlalchemy.dialects.mysql.reflection import _re_compile
-from sqlalchemy import log, types as sqltypes, util
 from sqlalchemy.engine.reflection import Inspector
-from .utils import SQLParseError
 
-from starrocks.params import (
+from starrocks.common.consts import TableConfigKey
+from starrocks.common.params import (
     ColumnAggInfoKeyWithPrefix,
     SRKwargsPrefix,
     TableInfoKey,
     TableInfoKeyWithPrefix,
 )
+from starrocks.common.types import PartitionType
+from starrocks.common.utils import SQLParseError
 
-from . import utils
+from .common import utils
 from .drivers.parsers import parse_data_type, parse_mv_refresh_clause
 from .engine.interfaces import (
-    MySQLKeyType, ReflectedMVOptions, ReflectedTableKeyInfo,
-    ReflectedPartitionInfo, ReflectedDistributionInfo, 
-    ReflectedState, ReflectedViewState, ReflectedMVState
+    MySQLKeyType,
+    ReflectedDistributionInfo,
+    ReflectedMVOptions,
+    ReflectedMVState,
+    ReflectedPartitionInfo,
+    ReflectedState,
+    ReflectedTableKeyInfo,
+    ReflectedViewState,
 )
-from .types import PartitionType
-from .consts import TableConfigKey
-from .sql.schema import MaterializedView, View
 
 
 logger = logging.getLogger(__name__)
@@ -171,7 +174,7 @@ class StarRocksTableDefinitionParser(object):
         reflected_table_info = ReflectedState(
             table_name=table.TABLE_NAME,
             columns=[
-                self._parse_column(column=column, 
+                self._parse_column(column=column,
                     **{ColumnAggInfoKeyWithPrefix.AGG_TYPE: column_2_agg_type.get(column.COLUMN_NAME)})
                 for column in columns
             ],
@@ -238,7 +241,7 @@ class StarRocksTableDefinitionParser(object):
                 type_ = match.group("type")
             else:
                 type_ = column.COLUMN_TYPE
-            
+
             util.warn(
                 "Did not recognize type '%s' of column '%s'" % (type_, column.COLUMN_NAME)
             )
@@ -361,14 +364,14 @@ class StarRocksTableDefinitionParser(object):
         else:
             buckets = None
             distribution_method = distribution
-        
+
         return ReflectedDistributionInfo(
             type=None,
             columns=None,
             distribution_method=distribution_method,
             buckets=buckets,
         )
-    
+
     @staticmethod
     def parse_distribution(distribution: Optional[Union[ReflectedDistributionInfo, str]]
                            ) -> Union[ReflectedDistributionInfo, None]:
@@ -492,7 +495,7 @@ class StarRocksTableDefinitionParser(object):
         """
         ddl = mv_row.MATERIALIZED_VIEW_DEFINITION.strip()
         logger.debug(f"mv create ddl for {mv_row.TABLE_SCHEMA}.{mv_row.TABLE_NAME}: {ddl}")
-        
+
         # 1. Parse the DDL to get properties that are only available there.
         # We create a temporary state object from the DDL parsing.
         try:
@@ -509,7 +512,7 @@ class StarRocksTableDefinitionParser(object):
             comment=table_row.TABLE_COMMENT if table_row else None,
             mv_options=parsed_state.mv_options # Start with options parsed from DDL
         )
-        
+
         # 3. Augment/overwrite with more reliable info from information_schema.tables_config
         if config_row:
             final_state.mv_options.order_by = config_row.SORT_KEY
@@ -519,7 +522,7 @@ class StarRocksTableDefinitionParser(object):
                 buckets=config_row.DISTRIBUTE_BUCKET,
                 distribution_method=None
             )
-            
+
         return final_state
 
     def _parse_mv_ddl(
@@ -560,7 +563,7 @@ class StarRocksTableDefinitionParser(object):
             logger.warning(f"Failed to parse refresh clause for MV {mv_name}, falling back to regex: {e}")
             # Fallback to simple regex if lark parsing fails
             self._parse_mv_refresh_with_regex(clauses_str, state)
-        
+
         properties_match = self._MV_PROPERTIES_PATTERN.search(clauses_str)
         if properties_match:
             # Use string instead of dictionary now.

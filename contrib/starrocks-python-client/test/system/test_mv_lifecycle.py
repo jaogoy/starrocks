@@ -1,13 +1,29 @@
+# Copyright 2021-present StarRocks, Inc. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import logging
 import re
+
 import pytest
-from sqlalchemy import inspect, Column, Integer, Table
+from sqlalchemy import Column, Integer, Table, inspect
 from sqlalchemy.orm import declarative_base
-from sqlalchemy.testing.assertions import eq_, is_true
+from sqlalchemy.testing.assertions import is_true
 
 from starrocks.sql.schema import MaterializedView
 from test.system.conftest import AlembicTestEnv
-from test.system.test_table_lifecycle import ScriptContentParser, EMPTY_UPGRADE_STR, EMPTY_DOWNGRADE_STR
+from test.system.test_table_lifecycle import EMPTY_DOWNGRADE_STR, EMPTY_UPGRADE_STR, ScriptContentParser
+
 
 logger = logging.getLogger(__name__)
 
@@ -19,8 +35,8 @@ class TestMVLifecycle:
         # 1. Define metadata with a table and a materialized view
         Base = declarative_base()
         Table(
-            'user', 
-            Base.metadata, 
+            'user',
+            Base.metadata,
             Column('id', Integer, primary_key=True),
             starrocks_PROPERTIES={'replication_num': '1'}
         )
@@ -61,8 +77,8 @@ class TestMVLifecycle:
         # 1. Initial state
         Base = declarative_base()
         Table(
-            'user', 
-            Base.metadata, 
+            'user',
+            Base.metadata,
             Column('id', Integer, primary_key=True),
             starrocks_PROPERTIES={'replication_num': '1'}
         )
@@ -89,8 +105,8 @@ class TestMVLifecycle:
         # 1. Initial state
         Base = declarative_base()
         Table(
-            'user', 
-            Base.metadata, 
+            'user',
+            Base.metadata,
             Column('id', Integer, primary_key=True),
             starrocks_PROPERTIES={'replication_num': '1'}
         )
@@ -106,8 +122,8 @@ class TestMVLifecycle:
         # 2. Metadata without the MV
         EmptyBase = declarative_base()
         Table(
-            'user', 
-            EmptyBase.metadata, 
+            'user',
+            EmptyBase.metadata,
             Column('id', Integer, primary_key=True),
             starrocks_PROPERTIES={'replication_num': '1'}
         )
@@ -119,7 +135,7 @@ class TestMVLifecycle:
         assert "op.drop_materialized_view('user_mv')" in upgrade_content
         downgrade_content = ScriptContentParser.extract_downgrade_content(script_content)
         assert "op.create_materialized_view('user_mv'" in downgrade_content
-        
+
         alembic_env.harness.upgrade("head")
         inspector = inspect(sr_engine)
         is_true('user_mv' not in inspector.get_materialized_view_names())
@@ -135,8 +151,8 @@ class TestMVLifecycle:
         # 1. Initial state
         Base = declarative_base()
         Table(
-            'user', 
-            Base.metadata, 
+            'user',
+            Base.metadata,
             Column('id', Integer, primary_key=True),
             starrocks_PROPERTIES={'replication_num': '1'}
         )
@@ -152,8 +168,8 @@ class TestMVLifecycle:
         # 2. Altered metadata with different properties
         AlteredBase = declarative_base()
         Table(
-            'user', 
-            AlteredBase.metadata, 
+            'user',
+            AlteredBase.metadata,
             Column('id', Integer, primary_key=True),
             starrocks_PROPERTIES={'replication_num': '1'}
         )
@@ -173,7 +189,7 @@ class TestMVLifecycle:
         assert "op.create_materialized_view('user_mv'" in upgrade_content
         assert "'replication_num': '3'" in upgrade_content
         assert "'storage_medium': 'SSD'" in upgrade_content
-        
+
         alembic_env.harness.upgrade("head")
         inspector = inspect(sr_engine)
         is_true('user_mv' in inspector.get_materialized_view_names())
@@ -189,8 +205,8 @@ class TestMVLifecycle:
         # 1. Initial state
         Base = declarative_base()
         Table(
-            'user', 
-            Base.metadata, 
+            'user',
+            Base.metadata,
             Column('id', Integer, primary_key=True),
             starrocks_PROPERTIES={'replication_num': '1'}
         )
@@ -206,8 +222,8 @@ class TestMVLifecycle:
         # 2. Altered metadata with different definition
         AlteredBase = declarative_base()
         Table(
-            'user', 
-            AlteredBase.metadata, 
+            'user',
+            AlteredBase.metadata,
             Column('id', Integer, primary_key=True),
             starrocks_PROPERTIES={'replication_num': '1'}
         )
@@ -226,7 +242,7 @@ class TestMVLifecycle:
         assert "op.drop_materialized_view('user_mv')" in upgrade_content
         assert "op.create_materialized_view('user_mv'" in upgrade_content
         assert "sum(id) as total" in upgrade_content
-        
+
         alembic_env.harness.upgrade("head")
         inspector = inspect(sr_engine)
         is_true('user_mv' in inspector.get_materialized_view_names())

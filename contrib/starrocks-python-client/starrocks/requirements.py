@@ -13,8 +13,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from sqlalchemy.testing.requirements import SuiteRequirements
 from sqlalchemy.testing import exclusions
+from sqlalchemy.testing.requirements import SuiteRequirements
 
 
 class Requirements(SuiteRequirements):
@@ -182,28 +182,43 @@ class Requirements(SuiteRequirements):
 # ===================================================================================
 # Below is the section with manual exclusions which cannot be excluded by Requirements
 # ===================================================================================
-from sqlalchemy.testing.suite.test_insert import InsertBehaviorTest
-from sqlalchemy.testing.suite.test_dialect import ExceptionTest
-from sqlalchemy.testing.suite.test_select import FetchLimitOffsetTest, LikeFunctionsTest
+# fmt: off
 from sqlalchemy.testing.suite.test_ddl import LongNameBlowoutTest
+from sqlalchemy.testing.suite.test_dialect import ExceptionTest
+from sqlalchemy.testing.suite.test_insert import InsertBehaviorTest
+from sqlalchemy.testing.suite.test_select import FetchLimitOffsetTest, LikeFunctionsTest
 from sqlalchemy.testing.suite.test_types import (
+    BinaryTest,
     DateTest,
     DateTimeCoercedToDateTimeTest,
     DateTimeTest,
+    EnumTest,
     JSONTest,
     NumericTest,
     StringTest,
-    BinaryTest,
-    EnumTest,
 )
-from sqlalchemy.testing.suite.test_reflection import (
-    BizarroCharacterFKResolutionTest,
-    ComponentReflectionTest,
-    CompositeKeyReflectionTest,
-    HasIndexTest,
-    HasTableTest,
-    QuotedNameArgumentTest,
-)
+# fmt: on
+
+
+try:
+    from sqlalchemy.testing.suite.test_reflection import (
+        BizarroCharacterFKResolutionTest,
+        ComponentReflectionTest,
+        CompositeKeyReflectionTest,
+        HasIndexTest,
+        HasTableTest,
+        QuotedNameArgumentTest,
+    )
+except ImportError:
+    from sqlalchemy.testing.suite.test_reflection import (
+        ComponentReflectionTest,
+        CompositeKeyReflectionTest,
+        HasIndexTest,
+        HasTableTest,
+        QuotedNameArgumentTest,
+    )
+    class BizarroCharacterFKResolutionTest:  # placeholder when removed in newer SQLAlchemy
+        pass
 
 # ========== Add missing requires. TODO: Can be deleted when https://github.com/sqlalchemy/sqlalchemy/pull/12362 is merged
 BinaryTest.__requires__ = ("binary_literals",)

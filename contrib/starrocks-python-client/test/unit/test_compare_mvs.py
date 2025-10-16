@@ -1,13 +1,27 @@
-from alembic.testing import eq_
+# Copyright 2021-present StarRocks, Inc. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+from unittest.mock import Mock
+
 from alembic.operations import ops
+from alembic.testing import eq_
 import pytest
 from sqlalchemy import MetaData
-from starrocks.sql.schema import MaterializedView
+
 from starrocks.alembic.compare import autogen_for_materialized_views
-from starrocks.alembic.ops import (
-    CreateMaterializedViewOp, DropMaterializedViewOp
-)
-from unittest.mock import Mock
+from starrocks.alembic.ops import CreateMaterializedViewOp, DropMaterializedViewOp
+from starrocks.sql.schema import MaterializedView
 
 
 @pytest.skip(reason="Skipping MV autogenerate test for now", allow_module_level=True)
@@ -73,7 +87,7 @@ class TestAutogenerateMV:
         self.mock_inspector.get_materialized_view_names.return_value = []
         m2 = MetaData()
         mv = MaterializedView(
-            'my_test_mv', 
+            'my_test_mv',
             'SELECT id, count(*) FROM users GROUP BY id',
             properties={'replication_num': '1', 'storage_medium': 'SSD'}
         )
@@ -134,7 +148,7 @@ class TestAutogenerateMV:
         self.mock_inspector.get_materialized_view_definition.return_value = 'SELECT 1'
         m2 = MetaData()
         mv2 = MaterializedView(
-            'my_test_mv', 
+            'my_test_mv',
             'SELECT 1',
             properties={'replication_num': '3', 'storage_medium': 'SSD'}
         )
@@ -202,7 +216,7 @@ class TestAutogenerateMV:
         self.mock_autogen_context.metadata = m2
         autogen_for_materialized_views(self.mock_autogen_context, upgrade_ops, [None])
         eq_(len(upgrade_ops.ops), 3)
-        
+
         # Should have: 1 create, 1 modify (drop+create), 1 drop
         op_types = [op.__class__.__name__ for op in upgrade_ops.ops]
         eq_(op_types.count('CreateMaterializedViewOp'), 2)  # new + modified

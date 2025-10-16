@@ -1,14 +1,35 @@
-from typing import Any, Final
-from alembic.autogenerate import renderers
-from sqlalchemy.types import TypeEngine
-from .ops import (
-    CreateViewOp, DropViewOp, CreateMaterializedViewOp, DropMaterializedViewOp, AlterViewOp,
-    AlterTablePropertiesOp, AlterTableDistributionOp, AlterTableOrderOp
-)
-from alembic.autogenerate.api import AutogenContext
-import logging
+# Copyright 2021-present StarRocks, Inc. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
-from ..datatype import ARRAY, MAP, STRUCT
+import logging
+from typing import Any, Final
+
+from alembic.autogenerate import renderers
+from alembic.autogenerate.api import AutogenContext
+from sqlalchemy.types import TypeEngine
+
+from .ops import (
+    AlterTableDistributionOp,
+    AlterTableOrderOp,
+    AlterTablePropertiesOp,
+    AlterViewOp,
+    CreateMaterializedViewOp,
+    CreateViewOp,
+    DropMaterializedViewOp,
+    DropViewOp,
+)
+
 
 logger = logging.getLogger("starrocks.alembic.render")
 
@@ -115,7 +136,7 @@ def _drop_view(autogen_context: AutogenContext, op: DropViewOp) -> str:
     args = [f"{op.view_name!r}"]
     if op.schema:
         args.append(f"schema={_quote_schema(op.schema)}")
-    
+
     call = f"op.drop_view({', '.join(args)})"
     logger.debug("render drop_view: %s", call)
     return call
@@ -172,7 +193,7 @@ def _render_alter_table_order(autogen_context: AutogenContext, op: AlterTableOrd
     ]
     if op.schema:
         args.append(f"schema={_quote_schema(op.schema)}")
-    
+
     return f"op.alter_table_order({', '.join(args)})"
 
 
@@ -185,5 +206,5 @@ def _render_alter_table_properties(autogen_context: AutogenContext, op: AlterTab
     ]
     if op.schema:
         args.append(f"schema={_quote_schema(op.schema)}")
-    
+
     return f"op.alter_table_properties({', '.join(args)})"

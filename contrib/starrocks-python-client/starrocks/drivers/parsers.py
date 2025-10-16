@@ -19,7 +19,7 @@ import importlib.resources
 import logging
 from typing import Any, List, Tuple
 
-from lark import Lark, Transformer, v_args, Token
+from lark import Lark, Token, Transformer, v_args
 from sqlalchemy.sql import sqltypes
 
 from .. import datatype
@@ -161,10 +161,10 @@ class _MVRefreshTransformer(Transformer):
         if details:
             return f"ASYNC {details}"
         return "ASYNC"
-    
+
     def REFRESH(self, t: Token):
         return "REFRESH"
-    
+
     def IMMEDIATE(self, t: Token):
         return "IMMEDIATE"
 

@@ -1,15 +1,35 @@
+# Copyright 2021-present StarRocks, Inc. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import logging
-import pytest
+from unittest.mock import Mock, PropertyMock
+
 from alembic.autogenerate.api import AutogenContext
 from alembic.operations.ops import UpgradeOps
-from unittest.mock import Mock, PropertyMock
+import pytest
 from sqlalchemy.exc import NotSupportedError
 
 from starrocks.alembic.compare import compare_starrocks_table, extract_starrocks_dialect_attributes
-from starrocks.params import AlterTableEnablement, SRKwargsPrefix, TableInfoKeyWithPrefix, DialectName, TablePropertyForFuturePartitions
-from starrocks.defaults import ReflectionTableDefaults
-from starrocks.types import TableType
-from starrocks.utils import TableAttributeNormalizer
+from starrocks.common.defaults import ReflectionTableDefaults
+from starrocks.common.params import (
+    AlterTableEnablement,
+    DialectName,
+    SRKwargsPrefix,
+    TableInfoKeyWithPrefix,
+    TablePropertyForFuturePartitions,
+)
+from starrocks.common.types import TableType
 
 
 LOG_ATTRIBUTE_NEED_SPECIFIED = "Please specify this attribute explicitly"
@@ -29,9 +49,10 @@ class TestRealTableObjects:
 
     def test_real_table_schema_diff(self):
         """Test real table schema diff generation with actual Table objects."""
-        from sqlalchemy import MetaData, Table, Column, Integer, String
-        from alembic.autogenerate.api import AutogenContext
         from unittest.mock import Mock
+
+        from alembic.autogenerate.api import AutogenContext
+        from sqlalchemy import Column, Integer, MetaData, String, Table
 
         autogen_context = Mock(spec=AutogenContext)
         autogen_context.dialect.name = DialectName
@@ -71,7 +92,7 @@ class TestRealTableObjects:
         # Should detect multiple changes
         assert len(result) == 3  # distribution, properties, order_by
 
-        from starrocks.alembic.ops import AlterTablePropertiesOp, AlterTableDistributionOp, AlterTableOrderOp
+        from starrocks.alembic.ops import AlterTableDistributionOp, AlterTableOrderOp, AlterTablePropertiesOp
         op_types = [type(op) for op in result]
         assert AlterTablePropertiesOp in op_types
         assert AlterTableDistributionOp in op_types
@@ -93,17 +114,18 @@ class TestRealTableObjects:
 
     def test_real_table_no_changes(self):
         """Test that identical real tables produce no operations."""
-        from sqlalchemy import MetaData, Table, Column, Integer, String
-        from alembic.autogenerate.api import AutogenContext
         from unittest.mock import Mock
-        
+
+        from alembic.autogenerate.api import AutogenContext
+        from sqlalchemy import Column, Integer, MetaData, String, Table
+
         autogen_context = Mock(spec=AutogenContext)
         autogen_context.dialect.name = DialectName
-        
+
         # Use separate MetaData for each table to avoid conflicts
         metadata_conn = MetaData()
         metadata_new = MetaData()
-        
+
         # Create identical table objects
         table_kwargs = {
             'starrocks_ENGINE': 'OLAP',
@@ -111,7 +133,7 @@ class TestRealTableObjects:
             'starrocks_PROPERTIES': {'replication_num': '3'},
             'schema': 'test_db'
         }
-        
+
         conn_table = Table(
             'users', metadata_conn,
             Column('id', Integer),
@@ -124,10 +146,10 @@ class TestRealTableObjects:
             'starrocks_DISTRIBUTED_BY': 'HASH(`id`)  BUCKETS   8',
             'schema': 'test_db'
         }
-        
+
         meta_table = Table(
             'users', metadata_new,
-            Column('id', Integer), 
+            Column('id', Integer),
             Column('name', String(50)),
             **meta_table_kwargs
         )
@@ -143,9 +165,10 @@ class TestRealTableObjects:
 
     def test_real_table_with_table_args(self):
         """Test real table properties defined via __table_args__ (simulated by kwargs)."""
-        from sqlalchemy import MetaData, Table, Column, Integer, String
-        from alembic.autogenerate.api import AutogenContext
         from unittest.mock import Mock
+
+        from alembic.autogenerate.api import AutogenContext
+        from sqlalchemy import Column, Integer, MetaData, String, Table
 
         autogen_context = Mock(spec=AutogenContext)
         autogen_context.dialect.name = DialectName
@@ -194,9 +217,10 @@ class TestRealTableObjects:
 
     def test_real_table_unsupported_engine_change(self):
         """Test unsupported ENGINE change using real Table objects."""
-        from sqlalchemy import MetaData, Table, Column, Integer
-        from alembic.autogenerate.api import AutogenContext
         from unittest.mock import Mock
+
+        from alembic.autogenerate.api import AutogenContext
+        from sqlalchemy import Column, Integer, MetaData, Table
 
         autogen_context = Mock(spec=AutogenContext)
         autogen_context.dialect.name = DialectName
@@ -227,9 +251,10 @@ class TestRealTableObjects:
 
     def test_real_table_unsupported_key_change(self):
         """Test unsupported KEY change using real Table objects."""
-        from sqlalchemy import MetaData, Table, Column, Integer
-        from alembic.autogenerate.api import AutogenContext
         from unittest.mock import Mock
+
+        from alembic.autogenerate.api import AutogenContext
+        from sqlalchemy import Column, Integer, MetaData, Table
 
         autogen_context = Mock(spec=AutogenContext)
         autogen_context.dialect.name = DialectName
@@ -259,9 +284,10 @@ class TestRealTableObjects:
 
     def test_real_table_unsupported_partition_change(self):
         """Test unsupported PARTITION_BY change using real Table objects."""
-        from sqlalchemy import MetaData, Table, Column, Integer, String
-        from alembic.autogenerate.api import AutogenContext
         from unittest.mock import Mock
+
+        from alembic.autogenerate.api import AutogenContext
+        from sqlalchemy import Column, Integer, MetaData, String, Table
 
         autogen_context = Mock(spec=AutogenContext)
         autogen_context.dialect.name = DialectName
@@ -363,7 +389,7 @@ class TestEngineChanges:
             TableInfoKeyWithPrefix.ENGINE: "OLAP",
         }
         conn_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(conn_table.kwargs)}
-        
+
         meta_table = Mock(  # Metadata does not specify ENGINE, implies default OLAP
             kwargs={
                 TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(id)",
@@ -371,7 +397,7 @@ class TestEngineChanges:
             }
         )
         meta_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(meta_table.kwargs)}
-        
+
         upgrade_ops = UpgradeOps([])
         compare_starrocks_table(
             autogen_context, upgrade_ops, conn_table.schema, conn_table.name, conn_table, meta_table
@@ -428,7 +454,7 @@ class TestEngineChanges:
             }
         )
         meta_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(meta_table.kwargs)}
-        
+
         # ENGINE changes are not supported in StarRocks, should raise NotImplementedError
         with pytest.raises(NotImplementedError) as exc_info:
             upgrade_ops = UpgradeOps([])
@@ -455,7 +481,7 @@ class TestEngineChanges:
             TableInfoKeyWithPrefix.ENGINE: conn_engine,
         }
         conn_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(conn_table.kwargs)}
-        
+
         meta_table = Mock(
             kwargs={
                 TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(id)",
@@ -463,7 +489,7 @@ class TestEngineChanges:
             }
         )
         meta_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(meta_table.kwargs)}
-        
+
         upgrade_ops = UpgradeOps([])
         compare_starrocks_table(
             autogen_context, upgrade_ops, conn_table.schema, conn_table.name, conn_table, meta_table
@@ -481,12 +507,12 @@ class TestEngineChanges:
         type(conn_table).schema = PropertyMock(return_value="test_db")
         conn_table.kwargs = {TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(id)"}
         conn_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(conn_table.kwargs)}
-        
+
         meta_table = Mock(  # No ENGINE specified in metadata
             kwargs={TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(id)"}
         )
         meta_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(meta_table.kwargs)}
-        
+
         upgrade_ops = UpgradeOps([])
         compare_starrocks_table(
             autogen_context, upgrade_ops, conn_table.schema, conn_table.name, conn_table, meta_table
@@ -513,7 +539,7 @@ class TestKeyChanges:
         type(conn_table).schema = PropertyMock(return_value="test_db")
         conn_table.kwargs = {TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(id)"}
         conn_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(conn_table.kwargs)}
-        
+
         meta_table = Mock(  # Metadata explicitly sets default DUPLICATE KEY
             kwargs={
                 TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(id)",
@@ -521,7 +547,7 @@ class TestKeyChanges:
             }
         )
         meta_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(meta_table.kwargs)}
-        
+
         upgrade_ops = UpgradeOps([])
         compare_starrocks_table(
             autogen_context, upgrade_ops, conn_table.schema, conn_table.name, conn_table, meta_table
@@ -539,7 +565,7 @@ class TestKeyChanges:
         type(conn_table).schema = PropertyMock(return_value="test_db")
         conn_table.kwargs = {TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(id)"}
         conn_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(conn_table.kwargs)}
-        
+
         meta_table = Mock(  # Metadata sets a non-default KEY
             kwargs={
                 TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(id)",
@@ -547,7 +573,7 @@ class TestKeyChanges:
             }
         )
         meta_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(meta_table.kwargs)}
-        
+
         with pytest.raises(NotSupportedError) as exc_info:
             upgrade_ops = UpgradeOps([])
             compare_starrocks_table(
@@ -568,14 +594,14 @@ class TestKeyChanges:
             TableInfoKeyWithPrefix.DUPLICATE_KEY: 'id',
         }
         conn_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(conn_table.kwargs)}
-        
+
         meta_table = Mock(  # Metadata does not specify KEY, implies default DUPLICATE KEY
             kwargs={
                 TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(id)",
             }
         )
         meta_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(meta_table.kwargs)}
-        
+
         upgrade_ops = UpgradeOps([])
         compare_starrocks_table(
             autogen_context, upgrade_ops, conn_table.schema, conn_table.name, conn_table, meta_table
@@ -611,7 +637,7 @@ class TestKeyChanges:
             compare_starrocks_table(
                 autogen_context, upgrade_ops, conn_table.schema, conn_table.name, conn_table, meta_table
             )
-        
+
         assert LOG_ATTRIBUTE_NEED_SPECIFIED in str(exc_info.value)
 
     def test_key_change(self):
@@ -627,7 +653,7 @@ class TestKeyChanges:
             TableInfoKeyWithPrefix.DUPLICATE_KEY: "id",
         }
         conn_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(conn_table.kwargs)}
-        
+
         meta_table = Mock(
             kwargs={
                 TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(id)",
@@ -657,7 +683,7 @@ class TestKeyChanges:
         conn_table = Mock()
         type(conn_table).name = PropertyMock(return_value="test_table")
         type(conn_table).schema = PropertyMock(return_value="test_db")
-        
+
         conn_key_str = f"{SRKwargsPrefix}{conn_key}"
         conn_table.kwargs = {
             TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(id)",
@@ -673,7 +699,7 @@ class TestKeyChanges:
             }
         )
         meta_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(meta_table.kwargs)}
-        
+
         upgrade_ops = UpgradeOps([])
         compare_starrocks_table(
             autogen_context, upgrade_ops, conn_table.schema, conn_table.name, conn_table, meta_table
@@ -691,12 +717,12 @@ class TestKeyChanges:
         type(conn_table).schema = PropertyMock(return_value="test_db")
         conn_table.kwargs = {TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(id)"}
         conn_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(conn_table.kwargs)}
-        
+
         meta_table = Mock(  # No KEY specified in metadata
             kwargs={TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(id)"}
         )
         meta_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(meta_table.kwargs)}
-        
+
         upgrade_ops = UpgradeOps([])
         compare_starrocks_table(
             autogen_context, upgrade_ops, conn_table.schema, conn_table.name, conn_table, meta_table
@@ -723,7 +749,7 @@ class TestPartitionChanges:
         type(conn_table).schema = PropertyMock(return_value="test_db")
         conn_table.kwargs = {TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(id)"}
         conn_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(conn_table.kwargs)}
-        
+
         meta_table = Mock(  # Metadata sets PARTITION_BY
             kwargs={
                 TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(id)",
@@ -752,14 +778,14 @@ class TestPartitionChanges:
             TableInfoKeyWithPrefix.PARTITION_BY: "RANGE(date_col)",
         }
         conn_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(conn_table.kwargs)}
-        
+
         meta_table = Mock(  # Metadata does not specify PARTITION_BY
             kwargs={
                 TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(id)",
             }
         )
         meta_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(meta_table.kwargs)}
-        
+
         with pytest.raises(NotImplementedError) as exc_info:
             upgrade_ops = UpgradeOps([])
             compare_starrocks_table(
@@ -780,7 +806,7 @@ class TestPartitionChanges:
             TableInfoKeyWithPrefix.PARTITION_BY: "RANGE(date_col)",
         }
         conn_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(conn_table.kwargs)}
-        
+
         meta_table = Mock(
             kwargs={
                 TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(id)",
@@ -788,7 +814,7 @@ class TestPartitionChanges:
             }
         )
         meta_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(meta_table.kwargs)}
-        
+
         with pytest.raises(NotImplementedError) as exc_info:
             upgrade_ops = UpgradeOps([])
             compare_starrocks_table(
@@ -830,7 +856,7 @@ class TestPartitionChanges:
             TableInfoKeyWithPrefix.PARTITION_BY: conn_partition,
         }
         conn_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(conn_table.kwargs)}
-        
+
         meta_table = Mock(
             kwargs={
                 TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(id)",
@@ -838,7 +864,7 @@ class TestPartitionChanges:
             }
         )
         meta_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(meta_table.kwargs)}
-        
+
         upgrade_ops = UpgradeOps([])
         compare_starrocks_table(
             autogen_context, upgrade_ops, conn_table.schema, conn_table.name, conn_table, meta_table
@@ -856,12 +882,12 @@ class TestPartitionChanges:
         type(conn_table).schema = PropertyMock(return_value="test_db")
         conn_table.kwargs = {TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(id)"}
         conn_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(conn_table.kwargs)}
-        
+
         meta_table = Mock(  # No PARTITION_BY specified in metadata
             kwargs={TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(id)"}
         )
         meta_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(meta_table.kwargs)}
-        
+
         upgrade_ops = UpgradeOps([])
         compare_starrocks_table(
             autogen_context, upgrade_ops, conn_table.schema, conn_table.name, conn_table, meta_table
@@ -890,7 +916,7 @@ class TestDistributionChanges:
             }
         )
         meta_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(meta_table.kwargs)}
-        
+
         upgrade_ops = UpgradeOps([])
         compare_starrocks_table(
             autogen_context, upgrade_ops, conn_table.schema, conn_table.name, conn_table, meta_table
@@ -908,14 +934,14 @@ class TestDistributionChanges:
         type(conn_table).schema = PropertyMock(return_value="test_db")
         conn_table.kwargs = {}
         conn_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(conn_table.kwargs)}
-        
+
         meta_table = Mock(  # Metadata sets a non-default DISTRIBUTED_BY
             kwargs={
                 TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(id) BUCKETS 8",
             }
         )
         meta_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(meta_table.kwargs)}
-        
+
         upgrade_ops = UpgradeOps([])
         compare_starrocks_table(
             autogen_context, upgrade_ops, conn_table.schema, conn_table.name, conn_table, meta_table
@@ -937,12 +963,12 @@ class TestDistributionChanges:
         type(conn_table).schema = PropertyMock(return_value="test_db")
         conn_table.kwargs = {TableInfoKeyWithPrefix.DISTRIBUTED_BY: ReflectionTableDefaults.distribution()}
         conn_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(conn_table.kwargs)}
-        
+
         meta_table = Mock(  # Metadata does not specify DISTRIBUTED_BY
             kwargs={}
         )
         meta_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(meta_table.kwargs)}
-        
+
         upgrade_ops = UpgradeOps([])
         compare_starrocks_table(
             autogen_context, upgrade_ops, conn_table.schema, conn_table.name, conn_table, meta_table
@@ -1073,7 +1099,7 @@ class TestOrderByChanges:
         type(conn_table).schema = PropertyMock(return_value="test_db")
         conn_table.kwargs = {TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(id)"}
         conn_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(conn_table.kwargs)}
-        
+
         meta_table = Mock(  # Metadata does not specify ORDER_BY (implying default)
             kwargs={
                 TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(id)",
@@ -1081,7 +1107,7 @@ class TestOrderByChanges:
             }
         )
         meta_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(meta_table.kwargs)}
-        
+
         upgrade_ops = UpgradeOps([])
         compare_starrocks_table(
             autogen_context, upgrade_ops, conn_table.schema, conn_table.name, conn_table, meta_table
@@ -1103,12 +1129,12 @@ class TestOrderByChanges:
             TableInfoKeyWithPrefix.ORDER_BY: "id, c2"
         }
         conn_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(conn_table.kwargs)}
-        
+
         meta_table = Mock(  # Metadata does not specify ORDER_BY, implies empty string
             kwargs={TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(id)"}
         )
         meta_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(meta_table.kwargs)}
-        
+
         upgrade_ops = UpgradeOps([])
         compare_starrocks_table(
             autogen_context, upgrade_ops, conn_table.schema, conn_table.name, conn_table, meta_table
@@ -1129,7 +1155,7 @@ class TestOrderByChanges:
             TableInfoKeyWithPrefix.ORDER_BY: "id, col3",
         }
         conn_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(conn_table.kwargs)}
-        
+
         meta_table = Mock(
             kwargs={
                 TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(id)",
@@ -1137,7 +1163,7 @@ class TestOrderByChanges:
             }
         )
         meta_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(meta_table.kwargs)}
-        
+
         upgrade_ops = UpgradeOps([])
         compare_starrocks_table(
             autogen_context, upgrade_ops, conn_table.schema, conn_table.name, conn_table, meta_table
@@ -1168,7 +1194,7 @@ class TestOrderByChanges:
             TableInfoKeyWithPrefix.ORDER_BY: conn_order_by,
         }
         conn_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(conn_table.kwargs)}
-        
+
         meta_table = Mock(
             kwargs={
                 TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(id)",
@@ -1194,12 +1220,12 @@ class TestOrderByChanges:
         type(conn_table).schema = PropertyMock(return_value="test_db")
         conn_table.kwargs = {TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(id)"}
         conn_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(conn_table.kwargs)}
-        
+
         meta_table = Mock(  # No ORDER_BY specified in metadata
             kwargs={TableInfoKeyWithPrefix.DISTRIBUTED_BY: "HASH(id)"}
         )
         meta_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(meta_table.kwargs)}
-        
+
         upgrade_ops = UpgradeOps([])
         compare_starrocks_table(
             autogen_context, upgrade_ops, conn_table.schema, conn_table.name, conn_table, meta_table
@@ -1279,7 +1305,7 @@ class TestPropertiesChanges:
         )
         result = upgrade_ops.ops
         assert len(result) == 0
-    
+
     @pytest.mark.parametrize("prop_key, default_value, non_default_value", [
         ("colocate_with", None, "not_exists"),
     ])
@@ -1423,9 +1449,9 @@ class TestPropertiesChanges:
 
         conn_props = {"replication_num": "3", "storage_medium": "HDD", "dynamic_partition.enable": "true"}
         meta_props = {"replication_num": "2", "storage_medium": "SSD", "dynamic_partition.enable": "false"}
-    
+
         conn_table = Mock(kwargs={TableInfoKeyWithPrefix.PROPERTIES: conn_props})
-        conn_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(conn_table.kwargs)}    
+        conn_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(conn_table.kwargs)}
         meta_table = Mock(kwargs={TableInfoKeyWithPrefix.PROPERTIES: meta_props})
         meta_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(meta_table.kwargs)}
 
@@ -1447,10 +1473,11 @@ class TestORMTableObjects:
 
     def test_orm_table_with_table_args(self):
         """Test ORM table properties defined via __table_args__ are correctly handled."""
-        from sqlalchemy import Column, Integer, String, MetaData, Table
-        from sqlalchemy.orm import declarative_base
-        from alembic.autogenerate.api import AutogenContext
         from unittest.mock import Mock
+
+        from alembic.autogenerate.api import AutogenContext
+        from sqlalchemy import Column, Integer, MetaData, String, Table
+        from sqlalchemy.orm import declarative_base
 
         Base = declarative_base()
 
@@ -1528,7 +1555,7 @@ class TestComplexScenarios:
             TableInfoKeyWithPrefix.PROPERTIES: {"replication_num": "2"},
         }
         conn_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(conn_table.kwargs)}
-        
+
         meta_table = Mock(
             kwargs={
                 # No ENGINE - focus on testing other attributes
@@ -1538,7 +1565,7 @@ class TestComplexScenarios:
             }
         )
         meta_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(meta_table.kwargs)}
-        
+
         upgrade_ops = UpgradeOps([])
         compare_starrocks_table(
             autogen_context, upgrade_ops, conn_table.schema, conn_table.name, conn_table, meta_table
@@ -1548,10 +1575,7 @@ class TestComplexScenarios:
         # Should generate 3 operations (all detectable changes, excluding ENGINE and PARTITION_BY)
         assert len(result) == 3
 
-        from starrocks.alembic.ops import (
-            AlterTableDistributionOp,
-            AlterTableOrderOp, AlterTablePropertiesOp
-        )
+        from starrocks.alembic.ops import AlterTableDistributionOp, AlterTableOrderOp, AlterTablePropertiesOp
         op_types = [type(op) for op in result]
         assert AlterTableDistributionOp in op_types
         assert AlterTableOrderOp in op_types
@@ -1581,7 +1605,7 @@ class TestComplexScenarios:
             TableInfoKeyWithPrefix.PROPERTIES: {"replication_num": "1"},
         }
         conn_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(conn_table.kwargs)}
-        
+
         meta_table = Mock(
             kwargs={
                 # No ENGINE - focus on supported operations
@@ -1590,7 +1614,7 @@ class TestComplexScenarios:
             }
         )
         meta_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(meta_table.kwargs)}
-        
+
         upgrade_ops = UpgradeOps([])
         compare_starrocks_table(
             autogen_context, upgrade_ops, conn_table.schema, conn_table.name, conn_table, meta_table
@@ -1613,7 +1637,7 @@ class TestComplexScenarios:
 
         conn_table = Mock()
         meta_table = Mock()
-        
+
         upgrade_ops = UpgradeOps([])
         compare_starrocks_table(
             autogen_context, upgrade_ops, "test_schema", "test_table", conn_table, meta_table

@@ -12,62 +12,91 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
+import logging
 import re
 from textwrap import dedent
-import logging
-from typing import Any, Dict, Final, Optional, List, Set, Tuple, Union
+from typing import Any, Dict, Final, List, Optional, Tuple, Union
 
-from alembic.ddl.base import format_table_name, format_column_name, format_server_default, alter_table
-from sqlalchemy import Column, Connection, Table, exc, schema as sa_schema, util, log, text, Row
-
-from sqlalchemy.dialects.mysql.pymysql import MySQLDialect_pymysql
-
-from sqlalchemy.dialects.mysql.base import (
-    MySQLDDLCompiler,
-    MySQLTypeCompiler,
-    MySQLCompiler,
-    MySQLIdentifierPreparer,
-    _DecodingRow,
+from alembic.ddl.base import alter_table, format_column_name, format_server_default, format_table_name
+from alembic.ddl.mysql import (
+    MySQLAlterDefault,
+    MySQLChangeColumn,
+    MySQLModifyColumn,
 )
-from sqlalchemy.engine.interfaces import ReflectedTableComment
-from sqlalchemy.orm import properties
-from sqlalchemy.sql import quoted_name, sqltypes
-from sqlalchemy.sql.expression import Delete, Select
-from sqlalchemy.engine import reflection
-
-from starrocks.types import ColumnAggType, SystemRunMode, TableType
-from starrocks.utils import TableAttributeNormalizer
-
-from .datatype import (
-    TINYINT, SMALLINT, INTEGER, BIGINT, LARGEINT, BOOLEAN,
-    DECIMAL, DOUBLE, FLOAT,
-    DATETIME, DATE,
-    CHAR, VARCHAR, STRING, BINARY, VARBINARY,
-    HLL, BITMAP, PERCENTILE, 
-    ARRAY, MAP, STRUCT, JSON
-)
-from . import reflection as _reflection
-from .sql.ddl import (
-    AlterMaterializedView, CreateView, DropView, AlterView, CreateMaterializedView, DropMaterializedView,
-    AlterTableEngine,
-    AlterTableKey,
-    AlterTablePartition,
-    AlterTableDistribution,
-    AlterTableOrder,
-    AlterTableProperties,
-)
-from .sql.schema import View, MaterializedView
-from .reflection import StarRocksInspector, StarRocksTableDefinitionParser
-from .engine.interfaces import ReflectedDistributionInfo, ReflectedMVState, ReflectedState, ReflectedViewState, ReflectedPartitionInfo, ReflectedMVOptions
-from .defaults import ReflectionTableDefaults, ReflectionViewDefaults
-from .params import ColumnAggInfoKey, ColumnSROptionsKey, DialectName, SRKwargsPrefix, TableInfoKey, TableInfoKeyWithPrefix, ColumnAggInfoKeyWithPrefix
 from alembic.operations.ops import AlterColumnOp
 from alembic.util.sqla_compat import compiles
-from alembic.ddl.mysql import (
-    MySQLModifyColumn,
-    MySQLChangeColumn,
-    MySQLAlterDefault,
+from sqlalchemy import Column, Connection, Row, Table, exc, log, schema as sa_schema, text, util
+from sqlalchemy.dialects.mysql.base import (
+    MySQLCompiler,
+    MySQLDDLCompiler,
+    MySQLIdentifierPreparer,
+    MySQLTypeCompiler,
+    _DecodingRow,
 )
+from sqlalchemy.dialects.mysql.pymysql import MySQLDialect_pymysql
+from sqlalchemy.engine import reflection
+from sqlalchemy.engine.interfaces import ReflectedTableComment
+from sqlalchemy.sql import sqltypes
+from sqlalchemy.sql.expression import Delete, Select
+
+from starrocks.common.defaults import ReflectionTableDefaults, ReflectionViewDefaults
+from starrocks.common.params import (
+    ColumnAggInfoKey,
+    ColumnAggInfoKeyWithPrefix,
+    ColumnSROptionsKey,
+    DialectName,
+    SRKwargsPrefix,
+    TableInfoKey,
+    TableInfoKeyWithPrefix,
+)
+from starrocks.common.types import ColumnAggType, SystemRunMode, TableType
+from starrocks.common.utils import TableAttributeNormalizer
+
+from . import reflection as _reflection
+from .datatype import (
+    ARRAY,
+    BIGINT,
+    BINARY,
+    BITMAP,
+    BOOLEAN,
+    CHAR,
+    DATE,
+    DATETIME,
+    DECIMAL,
+    DOUBLE,
+    FLOAT,
+    HLL,
+    INTEGER,
+    JSON,
+    LARGEINT,
+    MAP,
+    PERCENTILE,
+    SMALLINT,
+    STRING,
+    STRUCT,
+    TINYINT,
+    VARBINARY,
+    VARCHAR,
+)
+from .engine.interfaces import ReflectedMVOptions, ReflectedMVState, ReflectedState, ReflectedViewState
+from .reflection import StarRocksInspector, StarRocksTableDefinitionParser
+from .sql.ddl import (
+    AlterMaterializedView,
+    AlterTableDistribution,
+    AlterTableEngine,
+    AlterTableKey,
+    AlterTableOrder,
+    AlterTablePartition,
+    AlterTableProperties,
+    AlterView,
+    CreateMaterializedView,
+    CreateView,
+    DropMaterializedView,
+    DropView,
+)
+from .sql.schema import View
+
 
 # Register the compiler methods
 # The @compiles decorator is the public API for registering new SQL constructs.
@@ -439,8 +468,8 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
         if table.comment is not None:
             comment = self.sql_compiler.render_literal_value(table.comment, sqltypes.String())
             table_opts.append(f"COMMENT {comment}")
-        elif comment_val := opts.get(TableInfoKey.COMMENT):
-            logger.warnig(
+        elif opts.get(TableInfoKey.COMMENT):
+            logger.warning(
                 f"Don't use 'starrocks_comment' dialect-specific argument to set the comment. "
                 f"Please directly use the standard 'comment' argument on the Table object for table '{table.name}'."
             )
@@ -476,10 +505,10 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
         logger.debug(f"table opts for table: {table.name}, schema: {table.schema}, processed opts: {table_opts!r}")
 
         return "\n".join(table_opts)
-    
+
     def _extract_table_options(self, table: sa_schema.Table) -> Dict[str, Any]:
         """Extract table options, with the prefix `starrocks_` removed.
-        It seems useless. Because we retrieve the options from dialect_options 
+        It seems useless. Because we retrieve the options from dialect_options
         by removing all the defaults with value 'None'.
         """
         opts: Dict[str, Any] = dict(
@@ -528,7 +557,7 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
     def _has_column_info_key(self, column: sa_schema.Column, key: str) -> bool:
         """Check if column has a specific info key (case-insensitive)."""
         return any(k.lower() == key.lower() for k in column.info.keys())
-    
+
     def _get_column_info_value(self, column: sa_schema.Column, key: str, default: Any = None) -> Any:
         """Get column info value by key (case-insensitive)."""
         for k, v in column.info.items():
@@ -593,7 +622,7 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
 
             elif default is not None:
                 colspec.append("DEFAULT " + default)
-        
+
         # Computed
         if column.computed is not None:
             colspec.append(self.process(column.computed))
@@ -659,7 +688,7 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
         # AUTO_INCREMENT or default value or computed column
         if autoincrement is True:
             raise exc.NotSupportedError(f"AUTO_INCREMENT is not supported for ALTER COLUMN in StarRocks, for column: {name}")
-            
+
         # DEFAULT: include if provided (even if 0 or empty string), but not when False
         if default is not False and default is not None:
             default = format_server_default(self, default)
@@ -667,7 +696,7 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
                 colspec.append("AUTO_INCREMENT")
             elif default is not None:
                 colspec.append("DEFAULT " + default)
-        
+
         # Computed is not supported in ALTER COLUMN
         # if computed is not None:
         #     colspec.append(self.process(computed))
@@ -690,7 +719,7 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
         Returns:
             The aggregate information for the column (`KEY` or `agg_type`, such as `SUM`, or None).
         """
-        
+
         table = column.table
 
         # Determine whether the target table is an AGGREGATE KEY table.
@@ -710,7 +739,7 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
         if is_agg_table is None:
             try:
                 # Remove items with value being None, because the `defaults` has all the keys.
-                table_opt_upper_keys: set[str] = {k.upper() for k, v in table.dialect_options[DialectName].items() 
+                table_opt_upper_keys: set[str] = {k.upper() for k, v in table.dialect_options[DialectName].items()
                     if v is not None
                 }
                 if table_opt_upper_keys:
@@ -974,11 +1003,11 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
         """
         table_name = format_table_name(self, alter.table_name, alter.schema)
         # logger.debug(f"ALTER TABLE '{table_name}' SET ({alter.properties})")
-        
+
         # Escape double quotes in property values
         def escape_value(value: str) -> str:
             return value.replace('"', '\\"')
-        
+
         multi_set_statement = "; ".join([f'ALTER TABLE {table_name} SET ("{k}" = "{escape_value(v)}")' for k, v in alter.properties.items()])
         logger.debug(f"Compiled SQL for AlterTableProperties: \n{multi_set_statement}")
         return multi_set_statement
@@ -1070,13 +1099,13 @@ class StarRocksDialect(MySQLDialect_pymysql):
 
     def _get_run_mode(self, connection: Connection) -> str:
         """Get the StarRocks system run_mode (shared_data or shared_nothing).
-        
+
         Args:
             connection: The SQLAlchemy connection object.
-            
+
         Returns:
             The run_mode as a string ('shared_data' or 'shared_nothing').
-            
+
         Raises:
             exc.DBAPIError: If the query fails.
         """
@@ -1290,7 +1319,7 @@ class StarRocksDialect(MySQLDialect_pymysql):
             schema: Optional[str] = None, state: str = 'RUNNING') -> Optional[Row]:
         """Get the SHOW ALTER TABLE OPTIMIZE statement for a given table."""
         if alter_type.upper() not in ["COLUMN", "OPTIMIZE"]:
-            raise exc.NotSupportedError(f"You can only SHOW ALTER TABLE [ COLUMN | OPTIMIZE ].")
+            raise exc.NotSupportedError("You can only SHOW ALTER TABLE [ COLUMN | OPTIMIZE ].")
         st: str = StarRocksDialect.gen_show_alter_table_statement(table_name, alter_type, schema, state)
         try:
             return connection.execute(text(st)).fetchone()
@@ -1335,7 +1364,7 @@ class StarRocksDialect(MySQLDialect_pymysql):
 
         # TODO: same logic as MySQL?
         for spec in parsed_state.keys:
-            
+
             dialect_options: Dict[str, Any] = {}
             unique = False
             flavor: Optional[str] = spec["type"]
@@ -1441,7 +1470,7 @@ class StarRocksDialect(MySQLDialect_pymysql):
         """
         if schema is None:
             schema = self.default_schema_name
-        
+
         try:
             view_rows = self._read_from_information_schema(
                 connection, "views", table_schema=schema, table_name=view_name
@@ -1459,7 +1488,7 @@ class StarRocksDialect(MySQLDialect_pymysql):
                     table_row = table_rows[0]
             except Exception as e:
                 self.logger.info(f"Could not retrieve comment for View '{schema}.{view_name}': {e}")
-            
+
             parser = self._tabledef_parser
             return parser.parse_view(view_row, table_row)
 
@@ -1546,7 +1575,7 @@ class StarRocksDialect(MySQLDialect_pymysql):
                     table_row = table_rows[0]
             except Exception as e:
                 self.logger.info(f"Could not retrieve comment for MV '{schema}.{view_name}': {e}")
-            
+
             # 3. Get config row (for distribution, order_by) from information_schema.tables_config
             config_row = None
             try:
@@ -1557,7 +1586,7 @@ class StarRocksDialect(MySQLDialect_pymysql):
                     config_row = config_rows[0]
             except Exception as e:
                 self.logger.info(f"Could not retrieve config for MV '{schema}.{view_name}': {e}")
-            
+
             # 4. Pass all raw data to the parser
             parser = self._tabledef_parser
             return parser.parse_mv(mv_row, table_row, config_row)
@@ -1615,12 +1644,12 @@ def _starrocks_change_column(element: MySQLChangeColumn, compiler: StarRocksDDLC
     It's a must for RENAMEing a column, because MODIFY COLUMN does not support changing the name.
     And in StarRocks, there should be two alter clauses if both RENAME and MODIFY
     NOTE: Currently, MySQL will pass column_type even for RENAME COLUMN. SO, it will also generate
-    an MODIFY COLUMN clause, because we don't know whether the column_type is changed, and StarRocks 
+    an MODIFY COLUMN clause, because we don't know whether the column_type is changed, and StarRocks
     doesn't support CHANGE COLUMN.
     """
     rename_clause = "RENAME COLUMN %s TO %s" % (
         format_column_name(compiler, element.column_name),
-        format_column_name(compiler, element.newname),    
+        format_column_name(compiler, element.newname),
     ) if element.newname else None
 
     modify_clause = "MODIFY COLUMN %s %s" % (

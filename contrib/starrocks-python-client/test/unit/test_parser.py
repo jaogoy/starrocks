@@ -14,12 +14,14 @@
 # limitations under the License.
 
 import logging
-from lark import LarkError, UnexpectedCharacters
+
+from lark import LarkError
 import pytest
-from starrocks.drivers.parsers import parse_data_type, parse_mv_refresh_clause
+
 from starrocks import datatype as datatype
-from starrocks.reflection import StarRocksTableDefinitionParser
+from starrocks.drivers.parsers import parse_data_type, parse_mv_refresh_clause
 from starrocks.engine.interfaces import ReflectedTableKeyInfo
+from starrocks.reflection import StarRocksTableDefinitionParser
 
 
 logger = logging.getLogger(__name__)

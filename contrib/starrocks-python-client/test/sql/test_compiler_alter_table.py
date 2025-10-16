@@ -1,3 +1,17 @@
+# Copyright 2021-present StarRocks, Inc. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 # test/sql/test_compiler_alter_table.py
 """
 DDL Compiler tests for StarRocks ALTER TABLE statements.
@@ -9,27 +23,21 @@ import logging
 from unittest.mock import Mock, patch
 
 from alembic.operations import Operations
-from sqlalchemy.dialects.mysql.base import MySQLIdentifierPreparer
 
-from starrocks import dialect
-from starrocks.dialect import StarRocksDialect, StarRocksDDLCompiler, StarRocksIdentifierPreparer
 from starrocks.alembic.ops import (
-    AlterTablePropertiesOp,
     AlterTableDistributionOp,
     AlterTableOrderOp,
+    AlterTablePropertiesOp,
 )
-
-from sqlalchemy.testing import fixtures
-from sqlalchemy import text
-
+from starrocks.dialect import StarRocksDDLCompiler, StarRocksDialect, StarRocksIdentifierPreparer
 from starrocks.sql.ddl import (
-    AlterTableEngine,
-    AlterTableKey,
-    AlterTablePartition,
     AlterTableDistribution,
+    AlterTableKey,
     AlterTableOrder,
-    AlterTableProperties
+    AlterTablePartition,
+    AlterTableProperties,
 )
+
 
 logger = logging.getLogger(__name__)
 

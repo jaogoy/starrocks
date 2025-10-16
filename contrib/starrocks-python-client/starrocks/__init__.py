@@ -21,14 +21,30 @@ __version__ = "1.3.0"
 # from . import alembic
 
 from .datatype import (
-    BOOLEAN, TINYINT, SMALLINT, INTEGER, BIGINT, LARGEINT,
-    DECIMAL, DOUBLE, FLOAT,
-    DATETIME, DATE,
-    CHAR, VARCHAR, STRING, BINARY, VARBINARY,
-    HLL, BITMAP, PERCENTILE, 
-    ARRAY, MAP, STRUCT, JSON
+    ARRAY,
+    BIGINT,
+    BINARY,
+    BITMAP,
+    BOOLEAN,
+    CHAR,
+    DATE,
+    DATETIME,
+    DECIMAL,
+    DOUBLE,
+    FLOAT,
+    HLL,
+    INTEGER,
+    JSON,
+    LARGEINT,
+    MAP,
+    PERCENTILE,
+    SMALLINT,
+    STRING,
+    STRUCT,
+    TINYINT,
+    VARBINARY,
+    VARCHAR,
 )
-
 from .sql import schema
 
 
@@ -37,7 +53,7 @@ __all__ = (
     "DECIMAL", "DOUBLE", "FLOAT",
     "DATETIME", "DATE",
     "CHAR", "VARCHAR", "STRING", "BINARY", "VARBINARY",
-    "HLL", "BITMAP", "PERCENTILE", 
+    "HLL", "BITMAP", "PERCENTILE",
     "ARRAY", "MAP", "STRUCT", "JSON",
 
     "schema",

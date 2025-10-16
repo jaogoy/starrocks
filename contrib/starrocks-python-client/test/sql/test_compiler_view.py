@@ -1,8 +1,23 @@
+# Copyright 2021-present StarRocks, Inc. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import logging
+
 from sqlalchemy.dialects import registry
 from sqlalchemy.schema import MetaData
 
-from starrocks.sql.ddl import CreateView, DropView, AlterView
+from starrocks.sql.ddl import AlterView, CreateView, DropView
 from starrocks.sql.schema import View
 from test.unit.test_utils import normalize_sql
 
@@ -179,7 +194,7 @@ class TestViewCompiler:
     def test_compile_alter_view_with_window_functions(self):
         """Test ALTER VIEW with window functions."""
         window_query = """
-        SELECT 
+        SELECT
             user_id,
             order_date,
             amount,
@@ -198,7 +213,7 @@ class TestViewCompiler:
     def test_compile_alter_view_with_joins(self):
         """Test ALTER VIEW with various JOIN types."""
         join_query = """
-        SELECT 
+        SELECT
             u.id,
             u.name,
             p.title as product_name,
@@ -220,7 +235,7 @@ class TestViewCompiler:
     def test_compile_alter_view_with_aggregation(self):
         """Test ALTER VIEW with aggregation functions."""
         agg_query = """
-        SELECT 
+        SELECT
             category_id,
             COUNT(*) as product_count,
             AVG(price) as avg_price,

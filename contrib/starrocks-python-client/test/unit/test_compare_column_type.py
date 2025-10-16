@@ -1,11 +1,43 @@
+# Copyright 2021-present StarRocks, Inc. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import pytest
 from sqlalchemy import Column
 
-from starrocks.datatype import (
-    BIGINT, INTEGER, VARCHAR, DECIMAL, TINYINT, BOOLEAN, STRING, ARRAY, MAP, STRUCT,
-    SMALLINT, LARGEINT, FLOAT, DOUBLE, CHAR, DATE, DATETIME, HLL, BITMAP, PERCENTILE, JSON
-)
 from starrocks.alembic.starrocks import StarRocksImpl
+from starrocks.datatype import (
+    ARRAY,
+    BIGINT,
+    BITMAP,
+    BOOLEAN,
+    CHAR,
+    DATE,
+    DATETIME,
+    DECIMAL,
+    DOUBLE,
+    FLOAT,
+    HLL,
+    INTEGER,
+    JSON,
+    LARGEINT,
+    MAP,
+    SMALLINT,
+    STRING,
+    STRUCT,
+    TINYINT,
+    VARCHAR,
+)
 from starrocks.dialect import StarRocksDialect
 
 
@@ -57,13 +89,13 @@ simple_type_params = [
     pytest.param(BITMAP(), BITMAP(), False, id="BITMAP vs BITMAP (same)"),
     # pytest.param(PERCENTILE(), PERCENTILE(), False, id="PERCENTILE vs PERCENTILE (same)"),  # Not supported by compiler yet
     pytest.param(JSON(), JSON(), False, id="JSON vs JSON (same)"),
-    
+
     # 1.2 Equivalent types (special rules)
     pytest.param(TINYINT(1), BOOLEAN(), False, id="TINYINT(1) vs BOOLEAN (equivalent)"),
     pytest.param(BOOLEAN(), TINYINT(1), False, id="BOOLEAN vs TINYINT(1) (equivalent)"),
     pytest.param(VARCHAR(65533), STRING(), False, id="VARCHAR(65533) vs STRING (equivalent)"),
     pytest.param(STRING(), VARCHAR(65533), False, id="STRING vs VARCHAR(65533) (equivalent)"),
-    
+
     # 1.3 Different types
     pytest.param(INTEGER(), STRING(), True, id="INTEGER vs STRING (different)"),
     pytest.param(VARCHAR(10), VARCHAR(20), True, id="VARCHAR(10) vs VARCHAR(20) (different)"),
@@ -75,7 +107,7 @@ simple_type_params = [
     pytest.param(DATE(), DATETIME(), True, id="DATE vs DATETIME (different)"),
     pytest.param(HLL(), BITMAP(), True, id="HLL vs BITMAP (different)"),
     pytest.param(JSON(), STRING(), True, id="JSON vs STRING (different)"),
-    
+
     # 1.4 Edge cases with parameters
     pytest.param(TINYINT(2), BOOLEAN(), True, id="TINYINT(2) vs BOOLEAN (not equivalent)"),
     pytest.param(VARCHAR(65532), STRING(), True, id="VARCHAR(65532) vs STRING (not equivalent)"),
@@ -145,55 +177,55 @@ struct_type_params = [
 # 7. Complex nested types (ARRAY, MAP, STRUCT combined)
 complex_nested_params = [
     pytest.param(
-        ARRAY(MAP(STRING, STRUCT(a=INTEGER, b=ARRAY(STRING)))), 
-        ARRAY(MAP(STRING, STRUCT(a=INTEGER, b=ARRAY(STRING)))), 
-        False, 
+        ARRAY(MAP(STRING, STRUCT(a=INTEGER, b=ARRAY(STRING)))),
+        ARRAY(MAP(STRING, STRUCT(a=INTEGER, b=ARRAY(STRING)))),
+        False,
         id="ARRAY<MAP<STR,STRUCT<INT,ARRAY<STR>>>> (same)"
     ),
     pytest.param(
-        ARRAY(MAP(STRING, STRUCT(a=INTEGER, b=ARRAY(STRING)))), 
-        ARRAY(MAP(STRING, STRUCT(a=INTEGER, b=ARRAY(INTEGER)))), 
-        True, 
+        ARRAY(MAP(STRING, STRUCT(a=INTEGER, b=ARRAY(STRING)))),
+        ARRAY(MAP(STRING, STRUCT(a=INTEGER, b=ARRAY(INTEGER)))),
+        True,
         id="ARRAY<MAP<STR,STRUCT<INT,ARRAY<STR>>>> vs ARRAY<MAP<STR,STRUCT<INT,ARRAY<INT>>>> (deep difference)"
     ),
     pytest.param(
-        MAP(INTEGER, ARRAY(STRUCT(a=STRING, b=MAP(STRING, INTEGER)))), 
-        MAP(INTEGER, ARRAY(STRUCT(a=STRING, b=MAP(STRING, INTEGER)))), 
-        False, 
+        MAP(INTEGER, ARRAY(STRUCT(a=STRING, b=MAP(STRING, INTEGER)))),
+        MAP(INTEGER, ARRAY(STRUCT(a=STRING, b=MAP(STRING, INTEGER)))),
+        False,
         id="MAP<INT,ARRAY<STRUCT<STR,MAP<STR,INT>>>> (same)"
     ),
     pytest.param(
-        MAP(INTEGER, ARRAY(STRUCT(a=STRING, b=MAP(STRING, INTEGER)))), 
-        MAP(INTEGER, ARRAY(STRUCT(a=STRING, b=MAP(INTEGER, INTEGER)))), 
-        True, 
+        MAP(INTEGER, ARRAY(STRUCT(a=STRING, b=MAP(STRING, INTEGER)))),
+        MAP(INTEGER, ARRAY(STRUCT(a=STRING, b=MAP(INTEGER, INTEGER)))),
+        True,
         id="MAP<INT,ARRAY<STRUCT<STR,MAP<STR,INT>>>> vs MAP<INT,ARRAY<STRUCT<STR,MAP<INT,INT>>>> (deep difference)"
     ),
     pytest.param(
         STRUCT(
-            id=INTEGER, 
-            tags=ARRAY(STRING), 
+            id=INTEGER,
+            tags=ARRAY(STRING),
             metadata=MAP(STRING, STRUCT(value=STRING, count=INTEGER))
-        ), 
+        ),
         STRUCT(
-            id=INTEGER, 
-            tags=ARRAY(STRING), 
+            id=INTEGER,
+            tags=ARRAY(STRING),
             metadata=MAP(STRING, STRUCT(value=STRING, count=INTEGER))
-        ), 
-        False, 
+        ),
+        False,
         id="STRUCT<INT,ARRAY<STR>,MAP<STR,STRUCT<STR,INT>>> (same)"
     ),
     pytest.param(
         STRUCT(
-            id=INTEGER, 
-            tags=ARRAY(STRING), 
+            id=INTEGER,
+            tags=ARRAY(STRING),
             metadata=MAP(STRING, STRUCT(value=STRING, count=INTEGER))
-        ), 
+        ),
         STRUCT(
-            id=INTEGER, 
-            tags=ARRAY(INTEGER), 
+            id=INTEGER,
+            tags=ARRAY(INTEGER),
             metadata=MAP(STRING, STRUCT(value=STRING, count=INTEGER))
-        ), 
-        True, 
+        ),
+        True,
         id="STRUCT<INT,ARRAY<STR>,MAP<STR,STRUCT<STR,INT>>> vs STRUCT<INT,ARRAY<INT>,MAP<STR,STRUCT<STR,INT>>> (deep difference)"
     ),
 ]
@@ -239,7 +271,7 @@ class TestCompareColumnType:
 
     def test_real_world_scenarios(self):
         """Test real-world complex type scenarios that might be problematic."""
-        
+
         # E-commerce product catalog scenario
         product_v1 = STRUCT(
             id=BIGINT,
@@ -253,7 +285,7 @@ class TestCompareColumnType:
                 last_updated=DATETIME
             )
         )
-        
+
         # Same structure
         product_v2 = STRUCT(
             id=BIGINT,
@@ -267,10 +299,10 @@ class TestCompareColumnType:
                 last_updated=DATETIME
             )
         )
-        
+
         # Should be the same
         assert run_compare(product_v1, product_v2) is False
-        
+
         # Subtle difference: quantity INTEGER -> BIGINT
         product_v3 = STRUCT(
             id=BIGINT,
@@ -284,60 +316,60 @@ class TestCompareColumnType:
                 last_updated=DATETIME
             )
         )
-        
+
         # Should be different
         assert run_compare(product_v1, product_v3) is True
 
     def test_edge_case_parameters(self):
         """Test edge cases with type parameters that should be carefully handled."""
-        
+
         # VARCHAR length edge cases
         assert run_compare(VARCHAR(1), VARCHAR(1)) is False
         assert run_compare(VARCHAR(1), VARCHAR(2)) is True
         assert run_compare(VARCHAR(65533), VARCHAR(65533)) is False
-        
-        # DECIMAL precision/scale edge cases  
+
+        # DECIMAL precision/scale edge cases
         assert run_compare(DECIMAL(1, 0), DECIMAL(1, 0)) is False
         assert run_compare(DECIMAL(1, 0), DECIMAL(1, 1)) is True
         assert run_compare(DECIMAL(38, 18), DECIMAL(38, 18)) is False
         assert run_compare(DECIMAL(38, 18), DECIMAL(38, 17)) is True
-        
+
         # TINYINT display width edge cases
         assert run_compare(TINYINT(1), TINYINT(1)) is False
         assert run_compare(TINYINT(1), TINYINT(2)) is False  # no print width in SR?
 
     def test_special_equivalence_in_deep_nesting(self):
         """Test that special equivalence rules work correctly in deeply nested structures."""
-        
+
         # Deep nesting with BOOLEAN <-> TINYINT(1) equivalence
         deep1 = ARRAY(MAP(STRING, STRUCT(
             flags=ARRAY(BOOLEAN),
             metadata=MAP(VARCHAR(65533), TINYINT(1))
         )))
-        
+
         deep2 = ARRAY(MAP(STRING, STRUCT(
             flags=ARRAY(TINYINT(1)),
             metadata=MAP(STRING, BOOLEAN)
         )))
-        
+
         # Should be equivalent due to special rules
         assert run_compare(deep1, deep2) is False
-        
+
         # But this should be different (TINYINT(2) != BOOLEAN)
         deep3 = ARRAY(MAP(STRING, STRUCT(
             flags=ARRAY(TINYINT(2)),  # Not equivalent to BOOLEAN
             metadata=MAP(STRING, BOOLEAN)
         )))
-        
+
         assert run_compare(deep1, deep3) is True
 
     def test_case_sensitivity_in_struct_fields(self):
         """Test case sensitivity behavior in STRUCT field names."""
-        
+
         # Different case in field names
         struct1 = STRUCT(Name=STRING, Age=INTEGER)
         struct2 = STRUCT(name=STRING, age=INTEGER)
-        
+
         # Current implementation treats names as case-sensitive, so they differ
         # TODO: we may need to implement case-insensitive comparison
         result = run_compare(struct1, struct2)

@@ -1,3 +1,17 @@
+# Copyright 2021-present StarRocks, Inc. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 Integration tests for StarRocks ALTER TABLE comparison logic.
 
@@ -20,21 +34,23 @@ Set STARROCKS_URL environment variable to run these tests.
 Example: STARROCKS_URL=starrocks://user:pass@localhost:9030/test_db
 """
 
-import textwrap
-import pytest
 import logging
-from sqlalchemy import MetaData, Table, Column, Integer, String, Engine
-from unittest.mock import Mock
+import textwrap
 from typing import Optional
+from unittest.mock import Mock
 
-from starrocks.params import AlterTableEnablement, TableInfoKeyWithPrefix
-from starrocks.engine.interfaces import ReflectedPartitionInfo
-from starrocks.types import PartitionType
-from test.unit import test_utils
-from test.conftest_sr import create_test_engine, test_default_schema
-from starrocks.alembic.compare import compare_starrocks_table
-from alembic.operations.ops import UpgradeOps, AlterTableOp, ModifyTableOps
 from alembic.autogenerate import comparators
+from alembic.operations.ops import ModifyTableOps, UpgradeOps
+import pytest
+from sqlalchemy import Column, Engine, Integer, MetaData, String, Table
+
+from starrocks.alembic.compare import compare_starrocks_table
+from starrocks.common.params import AlterTableEnablement, TableInfoKeyWithPrefix
+from starrocks.common.types import PartitionType
+from starrocks.engine.interfaces import ReflectedPartitionInfo
+from test.conftest_sr import create_test_engine, test_default_schema
+from test.unit import test_utils
+
 
 logger = logging.getLogger(__name__)
 
@@ -110,7 +126,7 @@ class TestAlterTableIntegration:
         table_name = "test_comment_change"
         with self.engine.connect() as conn:
             conn.exec_driver_sql(
-                f"""CREATE TABLE {self._get_full_table_name(table_name)} (id INT) 
+                f"""CREATE TABLE {self._get_full_table_name(table_name)} (id INT)
                 COMMENT 'old comment'
                 PROPERTIES("replication_num" = "1")"""
             )
@@ -122,16 +138,16 @@ class TestAlterTableIntegration:
 
                 metadata_target = MetaData()
                 target_table = Table(
-                    table_name, metadata_target, 
-                    Column('id', Integer), 
-                    comment='new comment', 
+                    table_name, metadata_target,
+                    Column('id', Integer),
+                    comment='new comment',
                     schema=self.test_schema,
                     starrocks_PROPERTIES={"replication_num": "1"}
                 )
 
                 autogen_context = self._setup_autogen_context()
                 modify_table_ops = ModifyTableOps(table_name, [], schema=self.test_schema)
-                
+
                 # Call the table comparator dispatcher which includes comment comparison
                 comparators.dispatch("table")(
                     autogen_context,
@@ -141,7 +157,7 @@ class TestAlterTableIntegration:
                     reflected_table,
                     target_table
                 )
-                
+
                 result = modify_table_ops.ops
 
                 assert len(result) == 1
@@ -172,16 +188,16 @@ class TestAlterTableIntegration:
 
                 metadata_target = MetaData()
                 target_table = Table(
-                    table_name, metadata_target, 
-                    Column('id', Integer), 
-                    comment='new comment', 
+                    table_name, metadata_target,
+                    Column('id', Integer),
+                    comment='new comment',
                     schema=self.test_schema,
                     starrocks_PROPERTIES={"replication_num": "1"}
                 )
 
                 autogen_context = self._setup_autogen_context()
                 modify_table_ops = ModifyTableOps(table_name, [], schema=self.test_schema)
-                
+
                 # Call the table comparator dispatcher which includes comment comparison
                 comparators.dispatch("table")(
                     autogen_context,
@@ -191,7 +207,7 @@ class TestAlterTableIntegration:
                     reflected_table,
                     target_table
                 )
-                
+
                 result = modify_table_ops.ops
 
                 assert len(result) == 1
@@ -224,16 +240,16 @@ class TestAlterTableIntegration:
 
                 metadata_target = MetaData()
                 target_table = Table(
-                    table_name, metadata_target, 
-                    Column('id', Integer), 
-                    comment=None, 
+                    table_name, metadata_target,
+                    Column('id', Integer),
+                    comment=None,
                     schema=self.test_schema,
                     starrocks_PROPERTIES={"replication_num": "1"}
                 )
 
                 autogen_context = self._setup_autogen_context()
                 modify_table_ops = ModifyTableOps(table_name, [], schema=self.test_schema)
-                
+
                 # Call the table comparator dispatcher which includes comment comparison
                 comparators.dispatch("table")(
                     autogen_context,
@@ -243,7 +259,7 @@ class TestAlterTableIntegration:
                     reflected_table,
                     target_table
                 )
-                
+
                 result = modify_table_ops.ops
 
                 assert len(result) == 1
@@ -275,16 +291,16 @@ class TestAlterTableIntegration:
 
                 metadata_target = MetaData()
                 target_table = Table(
-                    table_name, metadata_target, 
-                    Column('id', Integer), 
-                    comment='same comment', 
+                    table_name, metadata_target,
+                    Column('id', Integer),
+                    comment='same comment',
                     schema=self.test_schema,
                     starrocks_PROPERTIES={"replication_num": "1"}
                 )
 
                 autogen_context = self._setup_autogen_context()
                 modify_table_ops = ModifyTableOps(table_name, [], schema=self.test_schema)
-                
+
                 # Call the table comparator dispatcher which includes comment comparison
                 comparators.dispatch("table")(
                     autogen_context,
@@ -294,7 +310,7 @@ class TestAlterTableIntegration:
                     reflected_table,
                     target_table
                 )
-                
+
                 result = modify_table_ops.ops
 
                 assert len(result) == 0
@@ -733,9 +749,7 @@ class TestAlterTableIntegration:
                 # Should detect 3 changes
                 assert len(result) == 3
 
-                from starrocks.alembic.ops import (
-                    AlterTableDistributionOp, AlterTableOrderOp, AlterTablePropertiesOp
-                )
+                from starrocks.alembic.ops import AlterTableDistributionOp, AlterTableOrderOp, AlterTablePropertiesOp
                 # op_types: list = [type(op) for op in result]
                 distribution_op: AlterTableDistributionOp = result[0]
                 assert distribution_op.distribution_method == "RANDOM"

@@ -13,13 +13,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from inspect import isclass
-from typing import Optional, List, Any, Tuple, Type, Dict, Callable, Union
 from datetime import date
+from inspect import isclass
+from typing import Any, Callable, Dict, List, Optional, Tuple, Type, Union
 
+import sqlalchemy.dialects.mysql.types as mysql_types
 from sqlalchemy.engine import Dialect
 from sqlalchemy.sql import sqltypes
-import sqlalchemy.dialects.mysql.types as mysql_types
 from sqlalchemy.types import UserDefinedType
 
 

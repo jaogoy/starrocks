@@ -1,11 +1,26 @@
-import logging
-from sqlalchemy import text, Table, MetaData, Column, Integer, String, inspect
-from sqlalchemy.engine import Engine
-import pytest
+# Copyright 2021-present StarRocks, Inc. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
-from starrocks.sql.schema import View
+import logging
+
+import pytest
+from sqlalchemy import inspect, text
+from sqlalchemy.engine import Engine
+
+from starrocks.common.utils import TableAttributeNormalizer
 from starrocks.engine.interfaces import ReflectedViewState
-from starrocks.utils import TableAttributeNormalizer
+
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +83,7 @@ class TestReflectionViewsIntegration:
         with sr_engine.connect() as connection:
             # Clean up any existing view
             connection.execute(text(f"DROP VIEW IF EXISTS {view_name}"))
-            
+
             # Create a simple view
             create_view_sql = f"""
             CREATE VIEW {view_name} AS
@@ -80,15 +95,15 @@ class TestReflectionViewsIntegration:
                 # Inspect the database to get view information
                 inspector = inspect(connection)
                 view_info = inspector.get_view(view_name, schema=sr_engine.url.database)
-                
+
                 assert view_info is not None
                 assert isinstance(view_info, ReflectedViewState)
                 assert view_info.name == view_name
-                
+
                 # Check that the definition is correctly reflected
                 expected_def = "SELECT 1 AS id, 'test' AS name"
                 assert TableAttributeNormalizer.normalize_sql(view_info.definition) == TableAttributeNormalizer.normalize_sql(expected_def)
-                
+
                 logger.info("Reflected view info: %s", view_info)
 
             finally:
@@ -101,10 +116,10 @@ class TestReflectionViewsIntegration:
 
         with sr_engine.connect() as connection:
             connection.execute(text(f"DROP VIEW IF EXISTS {view_name}"))
-            
+
             # Create a view with comment
             create_view_sql = f"""
-            CREATE VIEW {view_name} 
+            CREATE VIEW {view_name}
             COMMENT 'This is a test view with comment'
             AS SELECT id, name FROM users WHERE active = 1
             """
@@ -113,11 +128,11 @@ class TestReflectionViewsIntegration:
             try:
                 inspector = inspect(connection)
                 view_info = inspector.get_view(view_name, schema=sr_engine.url.database)
-                
+
                 assert view_info is not None
                 assert view_info.name == view_name
                 assert view_info.comment == "This is a test view with comment"
-                
+
                 logger.info("Reflected view with comment: %s", view_info)
 
             finally:
@@ -130,10 +145,10 @@ class TestReflectionViewsIntegration:
 
         with sr_engine.connect() as connection:
             connection.execute(text(f"DROP VIEW IF EXISTS {view_name}"))
-            
+
             # Create a view with security definer
             create_view_sql = f"""
-            CREATE VIEW {view_name} 
+            CREATE VIEW {view_name}
             SECURITY INVOKER
             AS SELECT COUNT(*) as total FROM users
             """
@@ -142,7 +157,7 @@ class TestReflectionViewsIntegration:
             try:
                 inspector = inspect(connection)
                 view_info = inspector.get_view(view_name, schema=sr_engine.url.database)
-                
+
                 assert view_info is not None
                 assert view_info.name == view_name
                 # TODO: StarRocks may not preserve SECURITY INVOKER in reflection
@@ -159,7 +174,7 @@ class TestReflectionViewsIntegration:
 
         with sr_engine.connect() as connection:
             connection.execute(text(f"DROP VIEW IF EXISTS {view_name}"))
-            
+
             # Create a view with explicit column names and comments
             create_view_sql = f"""
             CREATE VIEW {view_name} (
@@ -177,15 +192,15 @@ class TestReflectionViewsIntegration:
             try:
                 inspector = inspect(connection)
                 view_info = inspector.get_view(view_name, schema=sr_engine.url.database)
-                
+
                 assert view_info is not None
                 assert view_info.name == view_name
-                
+
                 # Check that the definition includes the GROUP BY clause
                 definition = TableAttributeNormalizer.normalize_sql(view_info.definition)
                 assert "group by" in definition
                 assert "count" in definition
-                
+
                 logger.info("Reflected view with columns: %s", view_info)
 
             finally:
@@ -198,11 +213,11 @@ class TestReflectionViewsIntegration:
 
         with sr_engine.connect() as connection:
             connection.execute(text(f"DROP VIEW IF EXISTS {view_name}"))
-            
+
             # Create a complex view
             create_view_sql = f"""
             CREATE VIEW {view_name} AS
-            SELECT 
+            SELECT
                 u.id,
                 u.name,
                 COUNT(o.id) as order_count,
@@ -220,10 +235,10 @@ class TestReflectionViewsIntegration:
             try:
                 inspector = inspect(connection)
                 view_info = inspector.get_view(view_name, schema=sr_engine.url.database)
-                
+
                 assert view_info is not None
                 assert view_info.name == view_name
-                
+
                 # Verify complex SQL elements are preserved
                 definition = TableAttributeNormalizer.normalize_sql(view_info.definition)
                 assert "left outer join" in definition
@@ -233,7 +248,7 @@ class TestReflectionViewsIntegration:
                 assert "count" in definition
                 assert "sum" in definition
                 assert "avg" in definition
-                
+
                 logger.info("Reflected complex view: %s", view_info)
 
             finally:
@@ -246,11 +261,11 @@ class TestReflectionViewsIntegration:
 
         with sr_engine.connect() as connection:
             connection.execute(text(f"DROP VIEW IF EXISTS {view_name}"))
-            
+
             # Create a view with window functions
             create_view_sql = f"""
             CREATE VIEW {view_name} AS
-            SELECT 
+            SELECT
                 user_id,
                 order_date,
                 amount,
@@ -263,17 +278,17 @@ class TestReflectionViewsIntegration:
             try:
                 inspector = inspect(connection)
                 view_info = inspector.get_view(view_name, schema=sr_engine.url.database)
-                
+
                 assert view_info is not None
                 assert view_info.name == view_name
-                
+
                 # Verify window functions are preserved
                 definition = TableAttributeNormalizer.normalize_sql(view_info.definition)
                 assert "row_number()" in definition
                 assert "over (" in definition
                 assert "partition by" in definition
                 assert "order by" in definition
-                
+
                 logger.info("Reflected view with window functions: %s", view_info)
 
             finally:
@@ -286,7 +301,7 @@ class TestReflectionViewsIntegration:
 
         with sr_engine.connect() as connection:
             connection.execute(text(f"DROP VIEW IF EXISTS {view_name}"))
-            
+
             # Create a view with CTE
             create_view_sql = f"""
             CREATE VIEW {view_name} AS
@@ -305,16 +320,16 @@ class TestReflectionViewsIntegration:
             try:
                 inspector = inspect(connection)
                 view_info = inspector.get_view(view_name, schema=sr_engine.url.database)
-                
+
                 assert view_info is not None
                 assert view_info.name == view_name
-                
+
                 # Verify CTE is preserved
                 definition = TableAttributeNormalizer.normalize_sql(view_info.definition)
                 assert "with" in definition
                 assert "monthly_stats" in definition
                 assert "coalesce" in definition
-                
+
                 logger.info("Reflected view with CTE: %s", view_info)
 
             finally:
@@ -327,11 +342,11 @@ class TestReflectionViewsIntegration:
 
         with sr_engine.connect() as connection:
             connection.execute(text(f"DROP VIEW IF EXISTS {view_name}"))
-            
+
             # Create a view with special characters
             create_view_sql = f"""
             CREATE VIEW {view_name} AS
-            SELECT 
+            SELECT
                 `user-id` as user_id,
                 `user name` as user_name,
                 `email@domain.com` as email
@@ -343,15 +358,15 @@ class TestReflectionViewsIntegration:
             try:
                 inspector = inspect(connection)
                 view_info = inspector.get_view(view_name, schema=sr_engine.url.database)
-                
+
                 assert view_info is not None
                 assert view_info.name == view_name
-                
+
                 # Verify special characters are handled correctly
                 definition = TableAttributeNormalizer.normalize_sql(view_info.definition)
                 assert "user-id" in definition or "user_id" in definition
                 assert "user name" in definition or "user_name" in definition
-                
+
                 logger.info("Reflected view with special characters: %s", view_info)
 
             finally:
@@ -366,7 +381,7 @@ class TestReflectionViewsIntegration:
             # Clean up any existing views
             for view_name in view_names:
                 connection.execute(text(f"DROP VIEW IF EXISTS {view_name}"))
-            
+
             # Create multiple views
             for i, view_name in enumerate(view_names):
                 create_view_sql = f"""
@@ -377,19 +392,19 @@ class TestReflectionViewsIntegration:
 
             try:
                 inspector = inspect(connection)
-                
+
                 # Test get_view_names
                 all_view_names = inspector.get_view_names(schema=sr_engine.url.database)
                 for view_name in view_names:
                     assert view_name in all_view_names
-                
+
                 # Test individual view reflection
                 for i, view_name in enumerate(view_names):
                     view_info = inspector.get_view(view_name, schema=sr_engine.url.database)
                     assert view_info is not None
                     assert view_info.name == view_name
                     assert str(i + 1) in TableAttributeNormalizer.normalize_sql(view_info.definition)
-                
+
                 logger.info("Reflected multiple views: %s", all_view_names)
 
             finally:
@@ -402,7 +417,7 @@ class TestReflectionViewsIntegration:
 
         inspector = inspect(sr_engine)
         view_info = inspector.get_view("nonexistent_view_12345", schema=sr_engine.url.database)
-        
+
         assert view_info is None
         logger.info("Correctly returned None for non-existent view")
 
@@ -416,7 +431,7 @@ class TestReflectionViewsIntegration:
             # Clean up
             connection.execute(text(f"DROP VIEW IF EXISTS {view_name_lower}"))
             connection.execute(text(f"DROP VIEW IF EXISTS {view_name_upper}"))
-            
+
             # Create view with lowercase name
             create_view_sql = f"""
             CREATE VIEW {view_name_lower} AS
@@ -426,16 +441,16 @@ class TestReflectionViewsIntegration:
 
             try:
                 inspector = inspect(connection)
-                
+
                 # Test reflection with exact case
                 view_info = inspector.get_view(view_name_lower, schema=sr_engine.url.database)
                 assert view_info is not None
                 assert view_info.name == view_name_lower
-                
+
                 # Test reflection with different case (may or may not work depending on DB settings)
                 view_info_upper = inspector.get_view(view_name_upper, schema=sr_engine.url.database)
                 # This might be None or the same view depending on case sensitivity settings
-                
+
                 logger.info("Reflected view case sensitivity test: %s", view_info)
 
             finally:

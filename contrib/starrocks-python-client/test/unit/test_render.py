@@ -1,26 +1,69 @@
+# Copyright 2021-present StarRocks, Inc. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+import re
+from unittest.mock import Mock
+
+from alembic.autogenerate.api import AutogenContext
+import pytest
+
 from starrocks.alembic.ops import (
-    CreateViewOp, DropViewOp, AlterViewOp,
-    CreateMaterializedViewOp, DropMaterializedViewOp,
-    AlterTablePropertiesOp, AlterTableDistributionOp, AlterTableOrderOp
+    AlterTableDistributionOp,
+    AlterTableOrderOp,
+    AlterTablePropertiesOp,
+    AlterViewOp,
+    CreateMaterializedViewOp,
+    CreateViewOp,
+    DropMaterializedViewOp,
+    DropViewOp,
 )
 from starrocks.alembic.render import (
-    _create_view, _drop_view, _alter_view,
-    _create_materialized_view, _drop_materialized_view,
-    _render_alter_table_properties, _render_alter_table_distribution, _render_alter_table_order,
-    render_column_type
+    _alter_view,
+    _create_materialized_view,
+    _create_view,
+    _drop_materialized_view,
+    _drop_view,
+    _render_alter_table_distribution,
+    _render_alter_table_order,
+    _render_alter_table_properties,
+    render_column_type,
 )
 from starrocks.datatype import (
-    TINYINT, SMALLINT, INTEGER, BIGINT, LARGEINT, BOOLEAN,
-    DECIMAL, DOUBLE, FLOAT,
-    CHAR, VARCHAR, STRING, BINARY, VARBINARY,
-    DATETIME, DATE,
-    HLL, BITMAP, PERCENTILE, JSON,
-    ARRAY, MAP, STRUCT
+    ARRAY,
+    BIGINT,
+    BINARY,
+    BITMAP,
+    BOOLEAN,
+    CHAR,
+    DATE,
+    DATETIME,
+    DECIMAL,
+    DOUBLE,
+    FLOAT,
+    HLL,
+    INTEGER,
+    JSON,
+    LARGEINT,
+    MAP,
+    PERCENTILE,
+    SMALLINT,
+    STRING,
+    STRUCT,
+    TINYINT,
+    VARBINARY,
+    VARCHAR,
 )
-from alembic.autogenerate.api import AutogenContext
-from unittest.mock import Mock
-import re
-import pytest
 
 
 def _normalize_py_call(s: str) -> str:
@@ -223,18 +266,18 @@ COMPLEX_RENDER_TEST_CASES = [
     (ARRAY(VARCHAR(50)), "ARRAY(VARCHAR(length=50))"),
     (ARRAY(ARRAY(STRING)), "ARRAY(ARRAY(STRING()))"),
     (ARRAY(DECIMAL(10, 2)), "ARRAY(DECIMAL(precision=10, scale=2))"),
-    
+
     # MAP types
     (MAP(STRING, INTEGER), "MAP(STRING(), INTEGER())"),
     (MAP(VARCHAR(50), DOUBLE), "MAP(VARCHAR(length=50), DOUBLE(asdecimal=True))"),
     (MAP(STRING, MAP(INTEGER, STRING)), "MAP(STRING(), MAP(INTEGER(), STRING()))"),
     (MAP(STRING, DECIMAL(8, 2)), "MAP(STRING(), DECIMAL(precision=8, scale=2))"),
-    
+
     # STRUCT types
     (STRUCT(name=STRING, age=INTEGER), "STRUCT(name=STRING(), age=INTEGER())"),
-    (STRUCT(id=INTEGER, name=VARCHAR(100), active=BOOLEAN), 
+    (STRUCT(id=INTEGER, name=VARCHAR(100), active=BOOLEAN),
      "STRUCT(id=INTEGER(), name=VARCHAR(length=100), active=BOOLEAN())"),
-    (STRUCT(user=STRUCT(id=INTEGER, name=STRING), metadata=MAP(STRING, STRING)), 
+    (STRUCT(user=STRUCT(id=INTEGER, name=STRING), metadata=MAP(STRING, STRING)),
      "STRUCT(user=STRUCT(id=INTEGER(), name=STRING()), metadata=MAP(STRING(), STRING()))"),
 ]
 
@@ -254,7 +297,7 @@ NON_STARROCKS_TYPE_TEST_CASES = [
 
 class TestDataTypeRendering:
     """Test rendering of StarRocks data types in Alembic autogenerate"""
-    
+
     def _create_mock_autogen_context(self):
         """Create a mock AutogenContext for testing"""
         ctx = Mock()
@@ -289,15 +332,15 @@ class TestDataTypeRendering:
     def test_render_deeply_nested_complex_type(self):
         """Test rendering of deeply nested complex data types"""
         autogen_context = self._create_mock_autogen_context()
-        
+
         # Test ARRAY of MAP
         result = render_column_type('type', ARRAY(MAP(STRING, INTEGER)), autogen_context)
         assert result == "ARRAY(MAP(STRING(), INTEGER()))"
-        
+
         # Test MAP of ARRAY
         result = render_column_type('type', MAP(STRING, ARRAY(INTEGER)), autogen_context)
         assert result == "MAP(STRING(), ARRAY(INTEGER()))"
-        
+
         # Test STRUCT with ARRAY and MAP
         result = render_column_type('type', STRUCT(
             id=INTEGER,
@@ -309,14 +352,14 @@ class TestDataTypeRendering:
 
     def test_render_non_starrocks_types(self):
         """Test that non-StarRocks types are not handled by our renderer"""
-        from sqlalchemy import String as SQLAString, Integer as SQLAInteger
-        
+        from sqlalchemy import Integer as SQLAInteger, String as SQLAString
+
         autogen_context = self._create_mock_autogen_context()
-        
+
         # Test SQLAlchemy String (should return False)
         result = render_column_type('type', SQLAString(255), autogen_context)
         assert result is False
-        
+
         # Test SQLAlchemy Integer (should return False)
         result = render_column_type('type', SQLAInteger(), autogen_context)
         assert result is False
@@ -324,11 +367,11 @@ class TestDataTypeRendering:
     def test_render_non_type_objects(self):
         """Test that non-type objects are not handled by our renderer"""
         autogen_context = self._create_mock_autogen_context()
-        
+
         # Test with non-type parameter (should return False)
         result = render_column_type('column', INTEGER(), autogen_context)
         assert result is False
-        
+
         # Test with string object (should return False)
         result = render_column_type('type', "not_a_type", autogen_context)
         assert result is False
@@ -336,17 +379,17 @@ class TestDataTypeRendering:
     def test_imports_added_correctly(self):
         """Test that proper imports are added to autogen context"""
         autogen_context = self._create_mock_autogen_context()
-        
+
         # Initially no imports
         assert len(autogen_context.imports) == 0
-        
+
         # Render a StarRocks type
         render_column_type('type', INTEGER(), autogen_context)
-        
+
         # Check that the import was added
         assert "from starrocks import *" in autogen_context.imports
         assert len(autogen_context.imports) == 1
-        
+
         # Render another type, should not add duplicate import
         render_column_type('type', VARCHAR(50), autogen_context)
         assert len(autogen_context.imports) == 1

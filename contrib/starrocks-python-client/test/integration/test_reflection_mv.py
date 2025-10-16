@@ -1,14 +1,30 @@
+# Copyright 2021-present StarRocks, Inc. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import logging
 import time
-from sqlalchemy import text, Table, MetaData, Column, Integer, String, inspect, Inspector
-from sqlalchemy.engine import Engine
-import pytest
-from sqlalchemy.dialects import registry
 
+import pytest
+from sqlalchemy import Inspector, MetaData, inspect, text
+from sqlalchemy.dialects import registry
+from sqlalchemy.engine import Engine
+
+from starrocks.common.utils import TableAttributeNormalizer
 from starrocks.engine.interfaces import ReflectedMVOptions
 from starrocks.sql.ddl import CreateMaterializedView
 from starrocks.sql.schema import MaterializedView
-from starrocks.utils import TableAttributeNormalizer
+
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +36,7 @@ def setup_mv_reflection_test_tables(sr_root_engine: Engine):
     with sr_root_engine.connect() as connection:
         for table_name in table_names:
             connection.execute(text(f"DROP TABLE IF EXISTS {table_name}"))
-        
+
         connection.execute(text("""
             CREATE TABLE users (
                 id INT,
@@ -105,7 +121,7 @@ class TestReflectionMaterializedViewsIntegration:
         with sr_engine.connect() as connection:
             # Clean up any existing MV
             connection.execute(text(f"DROP MATERIALIZED VIEW IF EXISTS {mv_name}"))
-            
+
             # Create a simple materialized view using the users table
             create_mv_sql = f"""
             CREATE MATERIALIZED VIEW {mv_name}
@@ -122,10 +138,10 @@ class TestReflectionMaterializedViewsIntegration:
                 _wait_for_mv_creation(inspector, mv_name)
                 inspector.clear_cache()
                 mv_definition = inspector.get_materialized_view_definition(mv_name, schema=sr_engine.url.database)
-                
+
                 assert mv_definition is not None
                 # logger.debug(f"MV definition: {mv_definition}")
-                
+
                 # Check that the definition is correctly reflected
                 expected_def = "SELECT id, name FROM users WHERE active = true"
                 assert TableAttributeNormalizer.normalize_sql(expected_def, remove_qualifiers=True) \
@@ -140,10 +156,10 @@ class TestReflectionMaterializedViewsIntegration:
 
         with sr_engine.connect() as connection:
             connection.execute(text(f"DROP MATERIALIZED VIEW IF EXISTS {mv_name}"))
-            
+
             # Create a materialized view with properties
             create_mv_sql = f"""
-            CREATE MATERIALIZED VIEW {mv_name} 
+            CREATE MATERIALIZED VIEW {mv_name}
             REFRESH MANUAL
             PROPERTIES (
                 "replication_num" = "1",
@@ -159,15 +175,15 @@ class TestReflectionMaterializedViewsIntegration:
                 _wait_for_mv_creation(inspector, mv_name)
                 inspector.clear_cache()
                 mv_definition = inspector.get_materialized_view_definition(mv_name, schema=sr_engine.url.database)
-                
+
                 assert mv_definition is not None
                 logger.debug(f"mv_definition: {mv_definition}")
-                
+
                 # Check that the definition includes the WHERE clause
                 definition = TableAttributeNormalizer.normalize_sql(mv_definition)
                 assert "where" in definition
                 assert "active" in definition
-                
+
                 # Check properties
                 mv_opts: ReflectedMVOptions = inspector.get_materialized_view_options(mv_name, schema=sr_engine.url.database)
                 assert mv_opts is not None
@@ -177,7 +193,7 @@ class TestReflectionMaterializedViewsIntegration:
                 assert "SSD" in properties
                 assert "storage_cooldown_time" in properties
                 assert "2025-12-31 23:59:59" in properties
-                
+
                 logger.info("Reflected MV with properties: %s", mv_definition)
 
             finally:
@@ -190,7 +206,7 @@ class TestReflectionMaterializedViewsIntegration:
 
         with sr_root_engine.connect() as connection:
             connection.execute(text(f"DROP MATERIALIZED VIEW IF EXISTS {mv_name}"))
-            
+
             # Create a materialized view with comment
             create_mv_sql = f"""
             CREATE MATERIALIZED VIEW {mv_name}
@@ -204,9 +220,9 @@ class TestReflectionMaterializedViewsIntegration:
                 inspector = inspect(connection)
                 _wait_for_mv_creation(inspector, mv_name)
                 inspector.clear_cache()
-                
+
                 mv_state = inspector.get_materialized_view(mv_name, schema=sr_engine.url.database)
-                
+
                 assert mv_state is not None
                 assert mv_state.comment == 'This is a test comment for the materialized view.'
                 logger.info(f"Reflected MV comment: '{mv_state.comment}'")
@@ -221,13 +237,13 @@ class TestReflectionMaterializedViewsIntegration:
 
         with sr_engine.connect() as connection:
             connection.execute(text(f"DROP MATERIALIZED VIEW IF EXISTS {mv_name}"))
-            
+
             # Create a materialized view with aggregation
             create_mv_sql = f"""
-            CREATE MATERIALIZED VIEW {mv_name} 
+            CREATE MATERIALIZED VIEW {mv_name}
             REFRESH MANUAL
             AS
-            SELECT 
+            SELECT
                 u.id,
                 u.name,
                 COUNT(o.id) as order_count,
@@ -244,9 +260,9 @@ class TestReflectionMaterializedViewsIntegration:
                 _wait_for_mv_creation(inspector, mv_name)
                 inspector.clear_cache()
                 mv_definition = inspector.get_materialized_view_definition(mv_name, schema=sr_engine.url.database)
-                
+
                 assert mv_definition is not None
-                
+
                 # Verify aggregation functions are preserved
                 definition = TableAttributeNormalizer.normalize_sql(mv_definition)
                 assert "left outer join" in definition
@@ -254,7 +270,7 @@ class TestReflectionMaterializedViewsIntegration:
                 assert "count" in definition
                 assert "sum" in definition
                 assert "avg" in definition
-                
+
                 logger.info("Reflected MV with aggregation: %s", mv_definition)
 
             finally:
@@ -267,13 +283,13 @@ class TestReflectionMaterializedViewsIntegration:
 
         with sr_engine.connect() as connection:
             connection.execute(text(f"DROP MATERIALIZED VIEW IF EXISTS {mv_name}"))
-            
+
             # Create a materialized view with window functions
             create_mv_sql = f"""
-            CREATE MATERIALIZED VIEW {mv_name} 
+            CREATE MATERIALIZED VIEW {mv_name}
             REFRESH MANUAL
             AS
-            SELECT 
+            SELECT
                 user_id,
                 order_date,
                 amount,
@@ -288,16 +304,16 @@ class TestReflectionMaterializedViewsIntegration:
                 _wait_for_mv_creation(inspector, mv_name)
                 inspector.clear_cache()
                 mv_definition = inspector.get_materialized_view_definition(mv_name, schema=sr_engine.url.database)
-                
+
                 assert mv_definition is not None
-                
+
                 # Verify window functions are preserved
                 definition = TableAttributeNormalizer.normalize_sql(mv_definition)
                 assert "row_number()" in definition
                 assert "over (" in definition
                 assert "partition by" in definition
                 assert "order by" in definition
-                
+
                 logger.info("Reflected MV with window functions: %s", mv_definition)
 
             finally:
@@ -310,10 +326,10 @@ class TestReflectionMaterializedViewsIntegration:
 
         with sr_engine.connect() as connection:
             connection.execute(text(f"DROP MATERIALIZED VIEW IF EXISTS {mv_name}"))
-            
+
             # Create a materialized view with CTE
             create_mv_sql = f"""
-            CREATE MATERIALIZED VIEW {mv_name} 
+            CREATE MATERIALIZED VIEW {mv_name}
             REFRESH MANUAL
             AS
             WITH monthly_stats AS (
@@ -333,15 +349,15 @@ class TestReflectionMaterializedViewsIntegration:
                 _wait_for_mv_creation(inspector, mv_name)
                 inspector.clear_cache()
                 mv_definition = inspector.get_materialized_view_definition(mv_name, schema=sr_engine.url.database)
-                
+
                 assert mv_definition is not None
-                
+
                 # Verify CTE is preserved
                 definition = TableAttributeNormalizer.normalize_sql(mv_definition)
                 assert "with" in definition
                 assert "monthly_stats" in definition
                 assert "coalesce" in definition
-                
+
                 logger.info("Reflected MV with CTE: %s", mv_definition)
 
             finally:
@@ -354,13 +370,13 @@ class TestReflectionMaterializedViewsIntegration:
 
         with sr_engine.connect() as connection:
             connection.execute(text(f"DROP MATERIALIZED VIEW IF EXISTS {mv_name}"))
-            
+
             # Create a materialized view with special characters
             create_mv_sql = f"""
-            CREATE MATERIALIZED VIEW {mv_name} 
+            CREATE MATERIALIZED VIEW {mv_name}
             REFRESH MANUAL
             AS
-            SELECT 
+            SELECT
                 `user-id` as user_id,
                 `user name` as user_name,
                 `email@domain.com` as email
@@ -374,16 +390,16 @@ class TestReflectionMaterializedViewsIntegration:
                 _wait_for_mv_creation(inspector, mv_name)
                 inspector.clear_cache()
                 mv_definition = inspector.get_materialized_view_definition(mv_name, schema=sr_engine.url.database)
-                
+
                 assert mv_definition is not None
                 logger.info("Reflected MV definition: %s", mv_definition)
-                
+
                 # Verify special characters are handled correctly
                 definition = TableAttributeNormalizer.normalize_sql(mv_definition, remove_qualifiers=True)
                 logger.info("Normalized reflected MV definition: %s", definition)
                 assert "user-id" in definition or "user_id" in definition
                 assert "user name" in definition or "user_name" in definition
-                
+
                 logger.info("Reflected MV with special characters: %s", mv_definition)
 
             finally:
@@ -398,11 +414,11 @@ class TestReflectionMaterializedViewsIntegration:
             # Clean up any existing MVs
             for mv_name in mv_names:
                 connection.execute(text(f"DROP MATERIALIZED VIEW IF EXISTS {mv_name}"))
-            
+
             # Create multiple materialized views
             for i, mv_name in enumerate(mv_names):
                 create_mv_sql = f"""
-                CREATE MATERIALIZED VIEW {mv_name} 
+                CREATE MATERIALIZED VIEW {mv_name}
                 REFRESH MANUAL
                 AS
                 SELECT id, name FROM users WHERE id = {i + 1}
@@ -413,12 +429,12 @@ class TestReflectionMaterializedViewsIntegration:
             try:
                 inspector = inspect(connection)
                 inspector.clear_cache()
-                
+
                 # Test get_materialized_view_names
                 all_mv_names = inspector.get_materialized_view_names(schema=sr_engine.url.database)
                 for mv_name in mv_names:
                     assert mv_name in all_mv_names
-                
+
                 # Test individual MV reflection
                 for i, mv_name in enumerate(mv_names):
                     inspector.clear_cache()
@@ -428,7 +444,7 @@ class TestReflectionMaterializedViewsIntegration:
                     assert "users" in definition
                     assert "id" in definition
                     assert "name" in definition
-                
+
                 logger.info("Reflected multiple MVs: %s", all_mv_names)
 
             finally:
@@ -453,7 +469,7 @@ class TestReflectionMaterializedViewsIntegration:
 
         with sr_engine.connect() as connection:
             connection.execute(text(f"DROP MATERIALIZED VIEW IF EXISTS {mv_name}"))
-            
+
             # Create MV with lowercase keywords in its definition
             create_mv_sql = f"""
             create materialized view {mv_name}
@@ -467,13 +483,13 @@ class TestReflectionMaterializedViewsIntegration:
                 inspector = inspect(connection)
                 _wait_for_mv_creation(inspector, mv_name)
                 inspector.clear_cache()
-                
+
                 mv_opts = inspector.get_materialized_view_options(mv_name, schema=sr_engine.url.database)
                 assert mv_opts is not None
-                
+
                 # Assert that the reflected refresh_type is normalized to uppercase
                 assert mv_opts.refresh_type == "MANUAL"
-                
+
                 logger.info(f"Reflected refresh_type '{mv_opts.refresh_type}' is correctly normalized.")
 
             finally:
@@ -486,13 +502,13 @@ class TestReflectionMaterializedViewsIntegration:
 
         with sr_engine.connect() as connection:
             connection.execute(text(f"DROP MATERIALIZED VIEW IF EXISTS {mv_name}"))
-            
+
             # Create a materialized view with complex joins
             create_mv_sql = f"""
-            CREATE MATERIALIZED VIEW {mv_name} 
+            CREATE MATERIALIZED VIEW {mv_name}
             REFRESH MANUAL
             AS
-            SELECT 
+            SELECT
                 u.id as user_id,
                 u.name as user_name,
                 p.id as product_id,
@@ -512,16 +528,16 @@ class TestReflectionMaterializedViewsIntegration:
                 _wait_for_mv_creation(inspector, mv_name)
                 inspector.clear_cache()
                 mv_definition = inspector.get_materialized_view_definition(mv_name, schema=sr_engine.url.database)
-                
+
                 assert mv_definition is not None
-                
+
                 # Verify complex join elements are preserved
                 definition = TableAttributeNormalizer.normalize_sql(mv_definition)
                 assert "inner join" in definition
                 assert "left outer join" in definition
                 assert "where" in definition
                 assert "order by" in definition
-                
+
                 logger.info("Reflected MV with complex joins: %s", mv_definition)
 
             finally:
@@ -541,7 +557,7 @@ class TestReflectionMaterializedViewsIntegration:
         sr_engine = sr_root_engine
         with sr_engine.connect() as connection:
             connection.execute(text(f"DROP MATERIALIZED VIEW IF EXISTS {mv_name}"))
-            
+
             create_mv_sql = f"""
             CREATE MATERIALIZED VIEW {mv_name}
             {dist_clause}
@@ -556,7 +572,7 @@ class TestReflectionMaterializedViewsIntegration:
                 inspector = inspect(connection)
                 logger.debug(f"inspector: {inspector!r}")
                 _wait_for_mv_creation(inspector, mv_name)
-                
+
                 mv_opts = inspector.get_materialized_view_options(mv_name)
                 assert mv_opts is not None
                 assert str(mv_opts.distributed_by) == expected_dist
@@ -597,7 +613,7 @@ class TestReflectionMaterializedViewsIntegration:
         mv_name = f"test_reflect_mv_partition_{table_name}"
         with sr_root_engine.connect() as connection:
             connection.execute(text(f"DROP MATERIALIZED VIEW IF EXISTS {mv_name}"))
-            
+
             create_mv_sql = f"""
             CREATE MATERIALIZED VIEW {mv_name}
             {partition_clause}
@@ -632,13 +648,13 @@ class TestReflectionMaterializedViewsIntegration:
             ("REFRESH DEFERRED MANUAL", "DEFERRED", "MANUAL"),
         ]
     )
-    def test_reflect_mv_refresh_strategy(self, sr_root_engine: Engine, refresh_clause: str, expected_moment: str, 
+    def test_reflect_mv_refresh_strategy(self, sr_root_engine: Engine, refresh_clause: str, expected_moment: str,
                                            expected_type: str):
         """Test reflection of different MV refresh strategies."""
         mv_name = "test_reflect_mv_refresh"
         with sr_root_engine.connect() as connection:
             connection.execute(text(f"DROP MATERIALIZED VIEW IF EXISTS {mv_name}"))
-            
+
             create_mv_sql = f"""
             CREATE MATERIALIZED VIEW {mv_name}
             {refresh_clause}
@@ -651,7 +667,7 @@ class TestReflectionMaterializedViewsIntegration:
                 inspector = inspect(connection)
                 _wait_for_mv_creation(inspector, mv_name)
                 inspector.clear_cache()
-                
+
                 mv_opts = inspector.get_materialized_view_options(mv_name)
                 assert mv_opts is not None
                 assert mv_opts.refresh_moment == expected_moment
@@ -668,7 +684,7 @@ class TestReflectionMaterializedViewsIntegration:
 
         with sr_engine.connect() as connection:
             connection.execute(text(f"DROP MATERIALIZED VIEW IF EXISTS {mv_name}"))
-            
+
             create_mv_sql = f"""
             CREATE MATERIALIZED VIEW {mv_name}
             PARTITION BY date_trunc('month', order_date)
@@ -698,7 +714,7 @@ class TestReflectionMaterializedViewsIntegration:
                 # Assert Distribution & Order
                 assert str(mv_opts.distributed_by) == 'HASH(`user_id`) BUCKETS 8'
                 assert mv_opts.order_by == '`order_date`'
-                
+
                 # Assert Partitioning
                 assert "date_trunc('month', `order_date`)" in str(mv_opts.partition_by)
 
@@ -721,7 +737,7 @@ class TestReflectionMaterializedViewsIntegration:
         """Tests that a MaterializedView schema object and a reflected MV are equivalent."""
         mv_name = "test_reflect_from_object"
         schema = sr_root_engine.url.database
-        
+
         # 1. Define the MaterializedView object
         metadata = MetaData()
         mv_obj = MaterializedView(
@@ -743,7 +759,7 @@ class TestReflectionMaterializedViewsIntegration:
 
         with sr_root_engine.connect() as connection:
             connection.execute(text(f"DROP MATERIALIZED VIEW IF EXISTS {mv_name}"))
-            
+
             # 2. Compile and create the MV
             dialect = registry.load("starrocks")()
             create_sql = str(CreateMaterializedView(mv_obj).compile(dialect=dialect))
@@ -753,20 +769,20 @@ class TestReflectionMaterializedViewsIntegration:
                 # 3. Reflect the MV
                 inspector = inspect(connection)
                 _wait_for_mv_creation(inspector, mv_name)
-                
+
                 reflected_state = inspector.get_materialized_view(mv_name, schema=schema)
                 assert reflected_state is not None
-                
+
                 # 4. Compare original object with reflected state
                 assert reflected_state.name == mv_obj.name
                 assert reflected_state.comment == mv_obj.comment
-                
+
                 # Compare options
                 reflected_opts = reflected_state.mv_options
                 assert reflected_opts.refresh_moment == mv_obj.refresh_moment.upper()
                 assert reflected_opts.refresh_type == mv_obj.refresh_type.upper()
                 assert str(reflected_opts.order_by) == '`order_date`'
-                
+
                 assert "date_trunc('month', `order_date`)" in str(reflected_opts.partition_by)
                 assert str(reflected_opts.distributed_by) == 'HASH(`user_id`) BUCKETS 8'
 

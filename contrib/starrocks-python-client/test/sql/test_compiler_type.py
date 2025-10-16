@@ -1,18 +1,49 @@
+# Copyright 2021-present StarRocks, Inc. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import logging
+
 import pytest
-from sqlalchemy.dialects import registry
 from sqlalchemy import Column, MetaData, Table
+from sqlalchemy.dialects import registry
 from sqlalchemy.schema import CreateTable
 
-from test.unit.test_utils import normalize_sql
 from starrocks.datatype import (
-    TINYINT, SMALLINT, INTEGER, BIGINT, LARGEINT, BOOLEAN,
-    DECIMAL, DOUBLE, FLOAT,
-    CHAR, VARCHAR, STRING, BINARY, VARBINARY,
-    DATETIME, DATE,
-    HLL, BITMAP, PERCENTILE, JSON,
-    ARRAY, MAP, STRUCT
+    ARRAY,
+    BIGINT,
+    BINARY,
+    BITMAP,
+    BOOLEAN,
+    CHAR,
+    DATE,
+    DATETIME,
+    DECIMAL,
+    DOUBLE,
+    FLOAT,
+    HLL,
+    INTEGER,
+    JSON,
+    LARGEINT,
+    MAP,
+    SMALLINT,
+    STRING,
+    STRUCT,
+    TINYINT,
+    VARBINARY,
+    VARCHAR,
 )
+from test.unit.test_utils import normalize_sql
 
 
 # Test data for different type categories
@@ -49,17 +80,17 @@ COMPLEX_TYPE_TEST_CASES = [
     (ARRAY(INTEGER), "col ARRAY<INTEGER>"),
     (ARRAY(VARCHAR(50)), "col ARRAY<VARCHAR(50)>"),
     (ARRAY(ARRAY(INTEGER)), "col ARRAY<ARRAY<INTEGER>>"),
-    
+
     # MAP types
     (MAP(STRING, INTEGER), "col MAP<STRING,INTEGER>"),
     (MAP(VARCHAR(50), DOUBLE), "col MAP<VARCHAR(50),DOUBLE>"),
     (MAP(STRING, MAP(INTEGER, STRING)), "col MAP<STRING,MAP<INTEGER,STRING>>"),
-    
+
     # STRUCT types
     (STRUCT(name=STRING, age=INTEGER), "col STRUCT<name STRING,age INTEGER>"),
-    (STRUCT(id=INTEGER, name=VARCHAR(100), active=BOOLEAN), 
+    (STRUCT(id=INTEGER, name=VARCHAR(100), active=BOOLEAN),
      "col STRUCT<id INTEGER,name VARCHAR(100),active BOOLEAN>"),
-    (STRUCT(user=STRUCT(id=INTEGER, name=STRING), metadata=MAP(STRING, STRING)), 
+    (STRUCT(user=STRUCT(id=INTEGER, name=STRING), metadata=MAP(STRING, STRING)),
      "col STRUCT<user STRUCT<id INTEGER,name STRING>,metadata MAP<STRING,STRING>>"),
 ]
 
@@ -68,7 +99,7 @@ CONSTRAINT_TEST_CASES = [
     (INTEGER(), False, None, None, "col INTEGER NOT NULL"),
     (VARCHAR(100), None, 'A test column', None, "col VARCHAR(100) COMMENT 'A test column'"),
     (INTEGER(), None, None, '0', "col INTEGER DEFAULT '0'"),
-    (VARCHAR(50), False, 'Full test column', 'test', 
+    (VARCHAR(50), False, 'Full test column', 'test',
      "col VARCHAR(50) NOT NULL DEFAULT 'test' COMMENT 'Full test column'"),
 ]
 
@@ -123,7 +154,7 @@ class TestDataTypeCompiler:
             kwargs['comment'] = comment
         if server_default is not None:
             kwargs['server_default'] = server_default
-            
+
         col = Column('col', type_instance, **kwargs)
         result = self._compile_column_type(col)
         assert normalize_sql(result) == normalize_sql(expected_sql)

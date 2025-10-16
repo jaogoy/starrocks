@@ -1,14 +1,30 @@
+# Copyright 2021-present StarRocks, Inc. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import logging
 import re
-from sqlalchemy import inspect, Column, Table
-from sqlalchemy.orm import declarative_base
-from sqlalchemy.testing.assertions import eq_, is_true
+
 from pytest import LogCaptureFixture
+from sqlalchemy import Column, Table, inspect
+from sqlalchemy.orm import declarative_base
+from sqlalchemy.testing.assertions import is_true
 
 from starrocks.datatype import INTEGER, STRING
 from starrocks.sql.schema import View
 from test.system.conftest import AlembicTestEnv
 from test.system.test_table_lifecycle import EMPTY_DOWNGRADE_STR, EMPTY_UPGRADE_STR, ScriptContentParser
+
 
 logger = logging.getLogger(__name__)
 
@@ -34,11 +50,11 @@ def test_create_view(database: str, alembic_env: AlembicTestEnv, sr_engine):
 
     # 3. Verify the script and upgrade
     script_content = ScriptContentParser.check_script_content(alembic_env, 1, "create_view")
-    logger.debug(f"extract upgrade content")
+    logger.debug("extract upgrade content")
     upgrade_content = ScriptContentParser.extract_upgrade_content(script_content)
     assert "op.create_view('user_view'" in upgrade_content
     assert "SELECT id FROM user" in upgrade_content
-    logger.debug(f"extract downgrade content")
+    logger.debug("extract downgrade content")
     downgrade_content = ScriptContentParser.extract_downgrade_content(script_content)
     assert "op.drop_view('user_view')" in downgrade_content
 
@@ -180,7 +196,7 @@ def test_alter_view(database: str, alembic_env: AlembicTestEnv, sr_engine):
     downgrade_content = ScriptContentParser.extract_downgrade_content(script_content)
     assert "op.alter_view('user_view'" in downgrade_content
     assert "SELECT id FROM user".lower() in downgrade_content
-    
+
     alembic_env.harness.upgrade("head")
     inspector = inspect(sr_engine)
     definition = inspector.get_view_definition('user_view')
@@ -223,7 +239,7 @@ def test_drop_view(database: str, alembic_env: AlembicTestEnv, sr_engine):
     assert "op.drop_view('user_view')" in upgrade_content
     downgrade_content = ScriptContentParser.extract_downgrade_content(script_content)
     assert "op.create_view('user_view'" in downgrade_content
-    
+
     alembic_env.harness.upgrade("head")
     inspector = inspect(sr_engine)
     is_true('user_view' not in inspector.get_view_names())

@@ -1,6 +1,20 @@
+# Copyright 2021-present StarRocks, Inc. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Tests for SQL normalization functions."""
 
-from starrocks.utils import TableAttributeNormalizer
+from starrocks.common.utils import TableAttributeNormalizer
 
 
 class TestStripIdentifierBackticks:
@@ -220,21 +234,21 @@ class TestRealCases():
         expected = "select id, name from users where active = true"
         result = TableAttributeNormalizer.normalize_sql(sql, remove_qualifiers=True)
         assert result == expected
-    
+
     def test_real_case_4_with_special_char_in_backticks(self):
         """Test real case 4 with qualifiers."""
         sql = "select `schema name`.`table@name@x`.`column x`"
         expected = "select column x"
         result = TableAttributeNormalizer.normalize_sql(sql, remove_qualifiers=True)
         assert result == expected
-    
+
     def test_real_case_5_with_qualifiers(self):
         """Test real case 5 with special char in backticks."""
         sql = "select orders_part_expr.user_id, orders_part_expr.order_date, count(*) as cnt from test.orders_part_expr group by orders_part_expr.user_id, orders_part_expr.order_date"
         expected = "select user_id, order_date, count(*) as cnt from orders_part_expr group by user_id, order_date"
         result = TableAttributeNormalizer.normalize_sql(sql, remove_qualifiers=True)
         assert result == expected
-    
+
     def test_real_case_6_with_qualifiers_and_backticks(self):
         """Test real case 6 with special char in backticks."""
         sql = """SELECT `orders_part_expr`.`user_id`, `orders_part_expr`.`order_date`, count(*) AS `cnt`
