@@ -34,7 +34,7 @@ my_table = Table(
 
 Note: Usage mirrors standard SQLAlchemy patterns (e.g., MySQL dialect), but you should use types from `starrocks` and keep them uppercase.
 
-Important: If you specify a StarRocks table key via `starrocks_PRIMARY_KEY`, `starrocks_UNIQUE_KEY`, `starrocks_DUPLICATE_KEY`, or `starrocks_AGGREGATE_KEY`, all columns listed in that key **MUST** also be declared with `primary_key=True` on their `Column(...)` definitions. This ensures SQLAlchemy metadata and Alembic autogenerate behave correctly.
+**Important**: If you specify a StarRocks table key via `starrocks_PRIMARY_KEY`, `starrocks_UNIQUE_KEY`, `starrocks_DUPLICATE_KEY`, or `starrocks_AGGREGATE_KEY`, all columns listed in that key **MUST** also be declared with `primary_key=True` on their `Column(...)` definitions. This ensures SQLAlchemy metadata and Alembic autogenerate behave correctly.
 
 ## Defining Table Attributes
 
@@ -47,6 +47,8 @@ StarRocks-specific physical attributes for a table are configured by passing spe
 #### Available Table-Level Options
 
 Here is a comprehensive list of the supported `starrocks_` prefixed arguments. The order of attributes in the documentation follows the recommended order in the `CREATE TABLE` DDL statement.
+
+The prefix `starrocks_` should be **lower case**, the other part is recommended to be upper case for clearity.
 
 ##### 1. `starrocks_ENGINE`
 
@@ -82,7 +84,7 @@ Defines the table's type (key) and the columns that constitute the key. You must
   - **Type**: `str` (comma-separated column names)
   - **Example**: `starrocks_UNIQUE_KEY="device_id"`
 
-> Although you **CAN'T** specify the Primary Key type in Columns, such as `Column('id', Integer, primary_key=True)`, or by using `PrimaryKeyConstraint`, You still need to specify it as the SQLAlchemy's stardard primary key declaration, either via Columns or `PrimaryKeyConstraint`, to prevent errors.
+> Although you **CAN'T only** specify the Primary Key type in Columns, such as `Column('id', Integer, primary_key=True)`, or by using `PrimaryKeyConstraint`, You still need to specify it as the SQLAlchemy's stardard primary key declaration, either via Columns or `PrimaryKeyConstraint`, to prevent errors.
 
 ##### 3. `COMMENT`
 
@@ -109,7 +111,7 @@ Specifies the data distribution (including bucketing) strategy.
 - **Default**: `RANDOM`
 - **Example**: `starrocks_DISTRIBUTED_BY="HASH(user_id) BUCKETS 32"`
 
-> **Note on Buckets**: If you specify a distribution method (e.g., `HASH(user_id)`) but omit the `BUCKETS` clause, StarRocks will automatically assign a bucket count. Alembic's `autogenerate` feature is designed to handle this: if the distribution method in your metadata matches the one in the database and you haven't specified a bucket count, no changes will be detected. This prevents unnecessary `ALTER TABLE` statements when the bucket count is managed by the system.
+> **Note on Buckets**: If you specify a distribution method (e.g., `HASH(user_id)`) but omit the `BUCKETS` clause, StarRocks will automatically assign a bucket count. Alembic's `autogenerate` feature is designed to handle this: if the distribution method in your metadata matches the one in the database and you haven't specified a bucket count, no changes will be detected. This prevents unnecessary `ALTER TABLE` statements when the bucket count is automatically managed by the system.
 
 ##### 6. `starrocks_ORDER_BY`
 
@@ -133,7 +135,7 @@ A dictionary of additional table attributes.
   }
   ```
 
-> **Note on Future Partition Properties**: Certain properties, such as `replication_num` and `storage_medium`, can be modified to apply only to newly created partitions. When `alembic revision --autogenerate` detects changes to these specific properties, it will generate an `ALTER TABLE` statement that prefixes them with `default.` (e.g., `SET ("default.replication_num" = "...")`). This ensures that the changes do not affect existing data.
+> **Note on Future Partition Properties**: Certain properties, such as `replication_num` and `storage_medium`, can be modified to apply only to newly created partitions. When `alembic revision --autogenerate` detects changes to these specific properties, it will generate an `ALTER TABLE` statement that prefixes them with `default.` prefix (e.g., `SET ("default.replication_num" = "...")`). This ensures that the changes do not affect existing data.
 
 ### Column Attributes
 
@@ -173,7 +175,7 @@ Column(
 )
 ```
 
-Note: Syntax and usage are analogous to SQLAlchemy's style (e.g., MySQL types), but always import and use the StarRocks types in uppercase from `starrocks`.
+**Note**: Syntax and usage are analogous to SQLAlchemy's style (e.g., MySQL types), but always import and use the StarRocks types in uppercase from `starrocks`.
 
 #### Column-Level Attributes (`starrocks_*` Prefixes)
 
@@ -181,16 +183,16 @@ For `AGGREGATE KEY` tables, you can specify attributes for each column by passin
 
 ##### Available Column-Level Options
 
+- **`starrocks_is_agg_key`**: A boolean that can be set to `True` to explicitly mark a column as a key in an `AGGREGATE KEY` table. This is optional but improves clarity.
 - **`starrocks_agg_type`**: A string specifying the aggregate type for a value column. Supported values are:
   - `'SUM'`, `'REPLACE'`, `'REPLACE_IF_NOT_NULL'`, `'MAX'`, `'MIN'`, `'HLL_UNION'`, `'BITMAP_UNION'`
-- **`starrocks_is_agg_key`**: A boolean that can be set to `True` to explicitly mark a column as a key in an `AGGREGATE KEY` table. This is optional but improves clarity.
 
 ##### Notes on ALTER TABLE ADD/MODIFY COLUMN
 
 - When creating, adding or modifying columns on an `AGGREGATE KEY` table, StarRocks requires that each column’s role be explicit:
   - Key columns can be marked with `starrocks_is_agg_key=True`.
   - Value columns must specify `starrocks_agg_type` (e.g., `'SUM'`, `'REPLACE'`, etc.).
-- Column-level `starrocks_is_agg_key`/`starrocks_agg_type` are only valid for `AGGREGATE KEY` tables.
+- Column-level `starrocks_is_agg_key`/`starrocks_agg_type` attributes are only valid for `AGGREGATE KEY` tables.
 - In `ALTER TABLE ... ADD COLUMN`/`MODIFY COLUMN` contexts, Alembic may not provide table-level attributes to the compiler. The dialect therefore allows specifying `starrocks_is_agg_key` or `starrocks_agg_type` directly on the column for these operations.
 
 Examples:
@@ -248,6 +250,119 @@ aggregate_table = Table(
     starrocks_DISTRIBUTED_BY="RANDOM",
     starrocks_PROPERTIES={"replication_num": "3"}
 )
+```
+
+## Examples
+
+### Primary Key table with ORDER BY and DISTRIBUTION (two-column key)
+
+```python
+from sqlalchemy import Table, MetaData, Column
+from starrocks import INTEGER, VARCHAR, DATETIME
+
+metadata = MetaData()
+
+orders = Table(
+    'orders',
+    metadata,
+    Column('order_id', INTEGER, primary_key=True),
+    Column('order_dt', DATETIME, primary_key=True),
+    Column('customer', VARCHAR(100), nullable=False),
+
+    starrocks_PRIMARY_KEY='order_id, order_dt',
+    starrocks_ORDER_BY='order_dt, order_id',
+    # With BUCKETS
+    starrocks_DISTRIBUTED_BY='HASH(order_id) BUCKETS 16',
+)
+```
+
+Note: If you omit BUCKETS (e.g., `starrocks_DISTRIBUTED_BY='HASH(order_id)'`), StarRocks assigns a bucket count. Autogenerate won’t emit changes when the distribution method matches and buckets were omitted in both metadata and DB.
+
+### Aggregate Key table with PARTITION and PROPERTIES
+
+```python
+from sqlalchemy import Table, MetaData, Column
+from starrocks import INTEGER, DATE, HLL, BITMAP
+
+metadata = MetaData()
+
+daily_stats = Table(
+    'daily_stats',
+    metadata,
+    Column('dt', DATE, primary_key=True),
+    Column('site_id', INTEGER, primary_key=True, starrocks_is_agg_key=True),
+    Column('pv', INTEGER, starrocks_agg_type='SUM'),
+    Column('uv_est', HLL, starrocks_agg_type='HLL_UNION'),
+    Column('user_ids', BITMAP, starrocks_agg_type='BITMAP_UNION'),
+
+    starrocks_AGGREGATE_KEY='dt, site_id',
+    starrocks_PARTITION_BY="date_trunc('day', dt)",
+    starrocks_DISTRIBUTED_BY='RANDOM',
+    starrocks_PROPERTIES={'replication_num': '1'},
+)
+```
+
+### Duplicate Key table focused on complex types (ARRAY/MAP/STRUCT)
+
+```python
+from sqlalchemy import Table, MetaData, Column
+from starrocks import INTEGER, VARCHAR, STRING, DECIMAL, ARRAY, MAP, STRUCT
+
+metadata = MetaData()
+
+events = Table(
+    'events',
+    metadata,
+    Column('event_id', INTEGER, primary_key=True),
+    Column('event_type', VARCHAR(50)),
+    Column('tags', ARRAY(STRING)),
+    Column('attributes', MAP(STRING, STRING)),
+    Column('payload', STRUCT(
+        id=INTEGER,
+        labels=ARRAY(VARCHAR(20)),
+        metrics=MAP(STRING, DECIMAL(10, 2))
+    )),
+
+    starrocks_DUPLICATE_KEY='event_id, event_type',
+    starrocks_DISTRIBUTED_BY='RANDOM',
+)
+```
+
+## Alembic Operations Examples (manual operations)
+
+### Column changes with `op.alter_column`
+
+```python
+from alembic import op
+from starrocks import INTEGER, VARCHAR
+
+# Change type and nullable
+op.alter_column('orders', 'customer',
+    existing_type=VARCHAR(50),
+    modify_type=VARCHAR(100),
+    modify_nullable=False)
+
+# Aggregate Key context: include role markers for clarity when adding/modifying
+# (agg type changes are unsupported by StarRocks)
+op.add_column('daily_stats', Column('pv2', INTEGER, nullable=False, starrocks_agg_type='SUM'))
+```
+
+### Table-level StarRocks attributes with `op.alter_table_*`
+
+```python
+from alembic import op
+
+# Partition (method only; create partitions separately)
+op.alter_table_partition('daily_stats', "date_trunc('month', dt)")
+
+# Distribution (with or without buckets)
+op.alter_table_distribution('orders', 'HASH(order_id)', buckets=32)
+
+# Order by
+op.alter_table_order('orders', 'order_dt, order_id')
+
+# Properties (note: certain changes may be emitted as default.* for new partitions)
+op.alter_table_properties('daily_stats', {'replication_num': '2'})
 ```
 
 ## Defining Tables with the ORM (Declarative Style)
@@ -322,7 +437,7 @@ from starrocks import *
 Alternatively, you can import specific types as needed:
 
 ```python
-from starrocks.types import TINYINT, VARCHAR
+from starrocks.common.types import TINYINT, VARCHAR
 ```
 
 This ensures that your model definitions correctly map to StarRocks's native data types, allowing `alembic revision --autogenerate` to produce accurate migration scripts.
