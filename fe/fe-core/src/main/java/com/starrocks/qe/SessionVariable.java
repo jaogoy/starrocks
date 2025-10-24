@@ -420,10 +420,10 @@ public class SessionVariable implements Serializable, Writable, Cloneable {
             "enable_rewrite_groupingsets_to_union_all";
     public static final String ENABLE_PARTITION_LEVEL_CARDINALITY_ESTIMATION =
             "enable_partition_level_cardinality_estimation";
-    public static final String ENABLE_OPTIMIZER_SKEW_JOIN_BY_QUERY_REWRITE =
-            "enable_optimize_skew_join_by_query_rewrite";
-    public static final String ENABLE_OPTIMIZER_SKEW_JOIN_BY_BROADCAST_SKEW_VALUES =
-            "enable_optimize_skew_join_by_broadcast_skew_values";
+    public static final String ENABLE_OPTIMIZER_SKEW_JOIN_V1 =
+            "enable_optimize_skew_join_v1";
+    public static final String ENABLE_OPTIMIZER_SKEW_JOIN_V2 =
+            "enable_optimize_skew_join_v2";
 
     public static final String CBO_USE_DB_LOCK = "cbo_use_lock_db";
     public static final String CBO_PREDICATE_SUBFIELD_PATH = "cbo_enable_predicate_subfield_path";
@@ -531,6 +531,7 @@ public class SessionVariable implements Serializable, Writable, Cloneable {
 
     // command, file
     public static final String TRACE_LOG_MODE = "trace_log_mode";
+    public static final String TRACE_LOG_LEVEL = "trace_log_level";
     public static final String JOIN_IMPLEMENTATION_MODE = "join_implementation_mode";
     public static final String JOIN_IMPLEMENTATION_MODE_V2 = "join_implementation_mode_v2";
 
@@ -795,6 +796,8 @@ public class SessionVariable implements Serializable, Writable, Cloneable {
     public static final String SQL_QUOTE_SHOW_CREATE = "sql_quote_show_create";
 
     public static final String ENABLE_PLAN_VALIDATION = "enable_plan_validation";
+
+    public static final String ENABLE_OPTIMIZER_RULE_DEBUG = "enable_optimizer_rule_debug";
 
     public static final String ENABLE_STRICT_TYPE = "enable_strict_type";
 
@@ -1584,10 +1587,10 @@ public class SessionVariable implements Serializable, Writable, Cloneable {
     @VariableMgr.VarAttr(name = ENABLE_PARTITION_LEVEL_CARDINALITY_ESTIMATION, flag = VariableMgr.INVISIBLE)
     private boolean enablePartitionLevelCardinalityEstimation = true;
 
-    @VariableMgr.VarAttr(name = ENABLE_OPTIMIZER_SKEW_JOIN_BY_QUERY_REWRITE)
+    @VariableMgr.VarAttr(name = ENABLE_OPTIMIZER_SKEW_JOIN_V1)
     private boolean enableOptimizerSkewJoinByQueryRewrite = true;
 
-    @VariableMgr.VarAttr(name = ENABLE_OPTIMIZER_SKEW_JOIN_BY_BROADCAST_SKEW_VALUES)
+    @VariableMgr.VarAttr(name = ENABLE_OPTIMIZER_SKEW_JOIN_V2)
     private boolean enableOptimizerSkewJoinByBroadCastSkewValues = false;
 
     // value should be 0~4
@@ -1725,6 +1728,10 @@ public class SessionVariable implements Serializable, Writable, Cloneable {
     // command, file
     @VarAttr(name = TRACE_LOG_MODE, flag = VariableMgr.INVISIBLE)
     private String traceLogMode = "command";
+
+    // 0, 1, 2... : more detail logs will be printed with higher level
+    @VarAttr(name = TRACE_LOG_LEVEL, flag = VariableMgr.INVISIBLE)
+    private int traceLogLevel = 0;
 
     @VariableMgr.VarAttr(name = INTERPOLATE_PASSTHROUGH, flag = VariableMgr.INVISIBLE)
     private boolean interpolatePassthrough = true;
@@ -2069,6 +2076,14 @@ public class SessionVariable implements Serializable, Writable, Cloneable {
 
     public String getTraceLogMode() {
         return traceLogMode;
+    }
+
+    public void setTraceLogLevel(int traceLogLevel) {
+        this.traceLogLevel = traceLogLevel;
+    }
+
+    public int getTraceLogLevel() {
+        return traceLogLevel;
     }
 
     public void setPartialUpdateMode(String mode) {
@@ -2493,6 +2508,9 @@ public class SessionVariable implements Serializable, Writable, Cloneable {
 
     @VarAttr(name = ENABLE_PLAN_VALIDATION, flag = VariableMgr.INVISIBLE)
     private boolean enablePlanValidation = true;
+
+    @VarAttr(name = ENABLE_OPTIMIZER_RULE_DEBUG)
+    private boolean enableOptimizerRuleDebug = false;
 
     @VarAttr(name = SCAN_OR_TO_UNION_LIMIT, flag = VariableMgr.INVISIBLE)
     private int scanOrToUnionLimit = 4;
@@ -4122,6 +4140,7 @@ public class SessionVariable implements Serializable, Writable, Cloneable {
 
     public void setEnableOptimizerSkewJoinByBroadCastSkewValues(boolean enableOptimizerSkewJoinByBroadCastSkewValues) {
         this.enableOptimizerSkewJoinByBroadCastSkewValues = enableOptimizerSkewJoinByBroadCastSkewValues;
+        this.enableOptimizerSkewJoinByQueryRewrite = !enableOptimizerSkewJoinByBroadCastSkewValues;
     }
 
     public boolean isEnableOptimizerSkewJoinByQueryRewrite() {
@@ -4130,6 +4149,7 @@ public class SessionVariable implements Serializable, Writable, Cloneable {
 
     public void setEnableOptimizerSkewJoinByQueryRewrite(boolean enableOptimizerSkewJoinByQueryRewrite) {
         this.enableOptimizerSkewJoinByQueryRewrite = enableOptimizerSkewJoinByQueryRewrite;
+        this.enableOptimizerSkewJoinByBroadCastSkewValues = !enableOptimizerSkewJoinByQueryRewrite;
     }
 
     public boolean isEnableColumnExprPredicate() {
@@ -4785,6 +4805,14 @@ public class SessionVariable implements Serializable, Writable, Cloneable {
 
     public void setEnablePlanValidation(boolean val) {
         this.enablePlanValidation = val;
+    }
+
+    public boolean enableOptimizerRuleDebug() {
+        return this.enableOptimizerRuleDebug;
+    }
+
+    public void setEnableOptimizerRuleDebug(boolean enableOptimizerRuleDebug) {
+        this.enableOptimizerRuleDebug = enableOptimizerRuleDebug;
     }
 
     public boolean isCboPruneSubfield() {
