@@ -4,9 +4,9 @@ Alembic is a database migration tool for SQLAlchemy that allows you to manage ch
 
 > Views and Materialized Views will be supported in the near future.
 
-### 1. Create and configure your Alembic project
+## 1. Create and configure your Alembic project
 
-#### Installing Alembic
+### Installing Alembic
 
 First, ensure you have Alembic installed. If not, you can install it via pip:
 
@@ -16,7 +16,7 @@ pip install "alembic>=1.16"
 
 For more detailed installation instructions, refer to the [Alembic Installation Guide](https://alembic.sqlalchemy.org/en/latest/front.html#installation).
 
-#### Initializing an Alembic Project
+### Initializing an Alembic Project
 
 If you are starting a new project, initialize an Alembic environment in your project directory:
 
@@ -28,7 +28,7 @@ alembic init alembic
 
 This command creates a new `alembic` directory with the necessary configuration files and a `versions` directory for your migration scripts. For more information on setting up an Alembic project, see the [Alembic Basic Usage Guide](https://alembic.sqlalchemy.org/en/latest/tutorial.html).
 
-#### Configuration
+### Configuration
 
 First, configure your Alembic environment.
 
@@ -46,11 +46,11 @@ sqlalchemy.url = starrocks://myname:pswd1234@localhost:9030/mydatabase
 
 Set the metadata of you models as the `target_metadata`.
 
-Ensure the StarRocks dialect and Alembic integration is imported and configure `render_item` in both `run_migrations_offline()` and `run_migrations_online()`, so autogenerate recognizes StarRocks column types.
+Ensure the StarRocks dialect and Alembic integration is imported and configure `render_item` and `include_object` in both `run_migrations_offline()` and `run_migrations_online()`, so autogenerate recognizes StarRocks column types and properly handles Views/MVs.
 
 ```python
 # Add these imports at the top of your env.py
-from starrocks.alembic import render  # For type rendering
+from starrocks.alembic import render_column_type, include_object_for_view_mv  # For type rendering and View/MV support
 from starrocks.alembic.starrocks import StarRocksImpl  # Ensure impl registered
 
 from myapps import models  # Adjust 'myapps.models' to your actual models file path as defined later
@@ -70,7 +70,8 @@ def run_migrations_offline() -> None:
     ...
     context.configure(
         # ... other parameters ...
-        render_item=render.render_column_type,
+        render_item=render_column_type,
+        include_object=include_object_for_view_mv,
         version_table_kwargs=version_table_kwargs,
     )
     ...
@@ -80,19 +81,100 @@ def run_migrations_online() -> None:
     with connectable.connect() as connection:
         context.configure(
             # ... other parameters ...
-            render_item=render.render_column_type,
+            render_item=render_column_type,
+            include_object=include_object_for_view_mv,
             version_table_kwargs=version_table_kwargs,
         )
         ...
 ```
 
-### 2. Defining Schema Objects
+### Advanced: Custom Object Filtering
+
+If you need to add custom filtering logic to control which database objects Alembic should process during autogeneration (e.g., excluding temporary tables, test tables, or certain schemas), you can use the `combine_include_object` helper function.
+
+#### Why is this needed?
+
+The `include_object_for_view_mv` callback is required for proper View/MV support. If you want to add your own filtering rules on top of this, you must combine them properly rather than replacing the callback entirely.
+
+#### Example: Excluding temporary objects
+
+```python
+# alembic/env.py
+from starrocks.alembic import render_column_type, combine_include_object
+from starrocks.alembic.starrocks import StarRocksImpl
+
+from myapps import models
+
+target_metadata = models.Base.metadata
+
+# Define your custom filter function
+def my_custom_filter(object, name, type_, reflected, compare_to):
+    """
+    Custom filter to exclude temporary objects.
+
+    Args:
+        object: The schema object (may be None for reflected objects)
+        name: The name of the object
+        type_: The type of object ("table", "column", "index", etc.)
+        reflected: Whether the object is from the database (True) or metadata (False)
+        compare_to: The corresponding object from the other side (metadata or database)
+
+    Returns:
+        True to include the object, False to exclude it
+    """
+    # Skip any object starting with 'temp_'
+    if name.startswith('temp_'):
+        return False
+
+    # Skip objects in 'test' schema (if your database has schemas)
+    if type_ == "table" and compare_to is not None:
+        if getattr(compare_to, 'schema', None) == 'test':
+            return False
+
+    # Include everything else
+    return True
+
+# Combine your filter with View/MV filter
+combined_filter = combine_include_object(my_custom_filter)
+
+def run_migrations_offline() -> None:
+    ...
+    context.configure(
+        # ... other parameters ...
+        render_item=render_column_type,
+        include_object=combined_filter,  # Use combined filter
+        version_table_kwargs=version_table_kwargs,
+    )
+    ...
+
+def run_migrations_online() -> None:
+    ...
+    with connectable.connect() as connection:
+        context.configure(
+            # ... other parameters ...
+            render_item=render_column_type,
+            include_object=combined_filter,  # Use combined filter
+            version_table_kwargs=version_table_kwargs,
+        )
+        ...
+```
+
+#### Common use cases
+
+1. **Exclude temporary tables**: Filter out tables with specific prefixes or patterns
+2. **Exclude test objects**: Skip objects in test schemas or with test names for production env.
+3. **Include only specific schemas**: Filter by schema name
+4. **Skip system tables**: Exclude internal or system-managed tables
+
+For more details on the `include_object` callback, see [Alembic's documentation on filtering](https://alembic.sqlalchemy.org/en/latest/autogenerate.html#controlling-what-to-be-autogenerated).
+
+## 2. Defining Schema Objects
 
 You define your schema in your Python models file (e.g., `models.py`) using SQLAlchemy's declarative style.
 
 > You can put `models.py` into a directory `myapps` under your alembic project. such as `my_sr_alembic_project/myapps/models.py`.
 
-#### Defining Tables with StarRocks Attributes and Types
+### Defining Tables with StarRocks Attributes and Types
 
 Use uppercase types (such as `INTEGER` instead of `Integer`) from `starrocks` and specify StarRocks attributes via `__table_args__` (in ORM style).
 
@@ -132,7 +214,7 @@ class MyTable(Base):
 
 **Note**: Usage mirrors SQLAlchemy’s patterns (e.g., MySQL), but always import and use uppercase types from `starrocks`.
 
-#### Defining Views and Materialized Views (Invalid for the moment)
+### Defining Views and Materialized Views (Invalid for the moment)
 
 Define Views and Materialized Views using the provided `View` and `MaterializedView` classes. These objects should be associated with your `MetaData` object.
 
@@ -168,7 +250,7 @@ my_mv = MaterializedView(
 )
 ```
 
-### 3. Generating and Applying Migrations
+## 3. Generating and Applying Migrations
 
 Follow the standard Alembic workflow:
 
@@ -193,7 +275,7 @@ Follow the standard Alembic workflow:
 
 If there is some problems of the generated script (e.g., `versions/<revision_id>_...py`), or some problems of the `models.py`, you should delete the generated script file, and re-run the `--autogenerate` commond above, to re-generate a migration script.
 
-#### View Autogenerate Details and Limitations (Invalid for the moment)
+### View Autogenerate Details and Limitations (Invalid for the moment)
 
 When you define `View` or `MaterializedView` objects in your model files (e.g., `models_view.py`), Alembic's autogenerate process will detect them and create the appropriate migration operations, which are similar with Tables.
 
@@ -217,7 +299,7 @@ def downgrade():
 - **StarRocks Limitation:** `ALTER VIEW` only supports redefining the `AS SELECT` clause. It does not support changing `COMMENT` or `SECURITY` directly. If only `COMMENT`/`SECURITY` change, no operation is emitted; if the definition also changes, those attributes are ignored and only `ALTER VIEW` is generated.
 - **Definition Comparison:** View/MV definition comparison uses normalization: remove identifier backticks, strip comments, collapse whitespace, and compare case-insensitively. But, it's still recommended to give the definition with a good and unified SQL style.
 
-### 4. Modifying Existing Tables and Applying a New Migration
+## 4. Modifying Existing Tables and Applying a New Migration
 
 After your initial migration, you may need to modify your tables. Let's say you want to add a new column to `MyTable`.
 
@@ -253,7 +335,7 @@ class MyTable(Base):
     }
 ```
 
-#### 4.1 Generating a New Migration Script
+### 4.1 Generating a New Migration Script
 
 ```bash
 alembic revision --autogenerate -m "Add column and modify comment"
@@ -282,7 +364,7 @@ def downgrade():
     op.drop_column('my_table', 'new_column')
 ```
 
-#### 4.2 Viewing the Generated SQL (optional)
+### 4.2 Viewing the Generated SQL (optional)
 
 For users who are more familiar with SQL, it can be helpful to see the exact SQL statements that Alembic will execute before applying a migration. You can do this using the `--sql` flag. This will output the SQL to your console without actually running it against the database.
 
@@ -300,7 +382,7 @@ alembic upgrade <current_rev>:<target_rev> --sql
 
 Setting `<target_rev>` to be `head`, you can see the SQL for changes to the newest version.
 
-#### 4.3 Applying This Migration to Your Database
+### 4.3 Applying This Migration to Your Database
 
 ```bash
 alembic upgrade head
@@ -314,7 +396,7 @@ alembic upgrade head
 >
 > For more detailed information on StarRocks table attributes and modification limitations, please refer to the [Tables Usage Guide](docs/usage_guide/tables.md).
 
-#### 4.4 Verifying No Further Changes (optional)
+### 4.4 Verifying No Further Changes (optional)
 
 After you have applied all migrations and your database schema is in sync with your models, running the `autogenerate` command again should produce an empty migration script. This is a good way to verify that your schema is up-to-date.
 
@@ -326,7 +408,7 @@ If there are no differences between your models and the database, Alembic will r
 
 > Delete the generated empty script after you have checked.
 
-#### 4.5 Downgrade the Migration (optional)
+### 4.5 Downgrade the Migration (optional)
 
 If you discover an issue after applying a migration, you can revert it using the `alembic downgrade` command. To revert the most recent migration, you can use `-1`:
 
@@ -336,13 +418,13 @@ alembic downgrade -1
 
 This will execute the `downgrade()` function in the latest revision file, effectively undoing the changes. You can also specify a target revision to downgrade to. For more details, refer to the [Alembic documentation](https://alembic.sqlalchemy.org/en/latest/tutorial.html#running-our-first-migration).
 
-### 5. Debugging and Logging
+## 5. Debugging and Logging
 
 To see the raw SQL that the dialect compiles and executes during an Alembic migration, you can configure logging.
 
 Add a logger for `starrocks` in your `alembic.ini` and set the level to `DEBUG`. This will print all generated SQL statements to your console.
 
-#### For Alembic commands
+### For Alembic commands
 
 ```ini
 [loggers]
@@ -356,7 +438,7 @@ handlers =
 qualname = starrocks
 ```
 
-#### For `pytest`
+### For `pytest`
 
 Create a `pytest.ini` file in your project root with the following content, if you want to do some simple tests:
 

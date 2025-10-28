@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 from typing import Final
 
 from starrocks.common.types import TableModel, TableType
@@ -22,6 +24,24 @@ DialectName: Final[str] = 'starrocks'
 
 SRKwargsPrefix: Final[str] = 'starrocks_'
 """Prefix for StarRocks-specific kwargs."""
+
+
+class TableKind:
+    """Table kind constants.
+    Used in `table.info[TableInfoKey.TABLE_KIND]` to distinguish object types.
+    """
+    TABLE = "TABLE"
+    VIEW = "VIEW"
+    MATERIALIZED_VIEW = "MATERIALIZED_VIEW"
+
+
+class TableObjectInfoKey:
+    """Keys for the `info` dictionary on Table objects, used for storing
+    cross-dialect metadata about StarRocks objects like Views and MVs.
+    """
+    TABLE_KIND = "table_kind"
+    DEFINITION = "definition"
+    SELECTABLE = "_selectable"
 
 
 class AlterTableEnablement:
@@ -74,6 +94,8 @@ class TableInfoKey:
     BUCKETS = 'BUCKETS'
     ORDER_BY = 'ORDER_BY'
     PROPERTIES = 'PROPERTIES'
+    SECURITY = 'SECURITY'
+    REFRESH = 'REFRESH'
 
 
 TableInfoKey.ALL = {
@@ -122,6 +144,8 @@ class TableInfoKeyWithPrefix:
     BUCKETS = 'starrocks_BUCKETS'
     ORDER_BY = 'starrocks_ORDER_BY'
     PROPERTIES = 'starrocks_PROPERTIES'
+    SECURITY = 'starrocks_SECURITY'
+    REFRESH = 'starrocks_REFRESH'
 
 
 TableInfoKeyWithPrefix.ALL = {
@@ -163,8 +187,3 @@ class ColumnAggInfoKeyWithPrefix:
 ColumnAggInfoKeyWithPrefix.ALL = {
     k for k, v in vars(ColumnAggInfoKeyWithPrefix).items() if not callable(v) and not k.startswith("__")
 }
-
-
-ColumnSROptionsKey: str = "column_sr_options"
-"""Column StarRocks-specific options key, used to store StarRocks-specific options in the Column object.
-"""

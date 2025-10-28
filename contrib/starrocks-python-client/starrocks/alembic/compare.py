@@ -23,7 +23,7 @@ from alembic.operations.ops import AlterColumnOp, AlterTableOp, UpgradeOps
 from sqlalchemy import Column, quoted_name
 from sqlalchemy.engine.reflection import Inspector
 from sqlalchemy.exc import ArgumentError, NotSupportedError
-from sqlalchemy.sql import sqltypes
+from sqlalchemy.sql import schema as sa_schema, sqltypes
 from sqlalchemy.sql.schema import Table
 
 from starrocks import datatype
@@ -42,16 +42,13 @@ from starrocks.common.params import (
     DialectName,
     SRKwargsPrefix,
     TableInfoKey,
+    TableObjectInfoKey,
+    TableKind,
     TablePropertyForFuturePartitions,
 )
 from starrocks.common.utils import CaseInsensitiveDict, TableAttributeNormalizer
 from starrocks.datatype import ARRAY, BOOLEAN, MAP, STRING, STRUCT, TINYINT, VARCHAR
-from starrocks.engine.interfaces import (
-    ReflectedMVState,
-    ReflectedPartitionInfo,
-    ReflectedTableKeyInfo,
-    ReflectedViewState,
-)
+from starrocks.engine.interfaces import ReflectedPartitionInfo, ReflectedTableKeyInfo
 from starrocks.reflection import StarRocksTableDefinitionParser
 from starrocks.sql.schema import MaterializedView, View
 
@@ -212,11 +209,54 @@ def comparators_dispatch_for_starrocks(dispatch_type: str):
 
 
 # ==============================================================================
+# include_object handling
+# ==============================================================================
+def include_object_for_view_mv(object, name, type_, reflected, compare_to):
+    """
+    Filter objects for Alembic'autogenerate - exclude View/MV from table comparisons.
+
+    This function is used to filter out views and materialized views from the
+    default table comparison logic, as they are handled by custom hooks.
+    """
+    if type_ == "table":
+        # object is a sqlalchemy.Table object, from metadata or reflected
+        table_kind = object.info.get(TableObjectInfoKey.TABLE_KIND)
+        if table_kind in (TableKind.VIEW, TableKind.MATERIALIZED_VIEW):
+            return False
+    return True
+
+
+def combine_include_object(user_include_object):
+    """
+    Combine the dialect's include_object function with a user-defined one.
+
+    The dialect's filter is executed first. If it returns False, the object
+    is excluded. If it returns True, the user's filter is then executed.
+    This allows users to further customize object inclusion without overriding
+    the dialect's necessary filters.
+    """
+    dialect_include_object = include_object_for_view_mv
+
+    if user_include_object is None:
+        return dialect_include_object
+
+    @wraps(user_include_object)
+    def combined(object, name, type_, reflected, compare_to):
+        if not dialect_include_object(object, name, type_, reflected, compare_to):
+            return False
+        return user_include_object(object, name, type_, reflected, compare_to)
+
+    return combined
+
+
+# ==============================================================================
 # View Comparison
 # ==============================================================================
 @comparators_dispatch_for_starrocks("schema")
 def autogen_for_views(
-    autogen_context: AutogenContext, upgrade_ops: UpgradeOps, schemas: List[Optional[str]]
+    autogen_context: AutogenContext,
+    upgrade_ops: UpgradeOps,
+    schemas: Union[Set[None], Set[Optional[str]]]
 ) -> None:
     """
     Main autogenerate entrypoint for views.
@@ -224,90 +264,116 @@ def autogen_for_views(
     Scan views in database and compare with metadata.
     """
     inspector: Inspector = autogen_context.inspector
+    metadata = autogen_context.metadata
 
-    conn_views: Set[Tuple[Optional[str], str]] = set()
+    conn_view_names: Set[Tuple[Optional[str], str]] = set()
+
     for schema in schemas:
-        conn_views.update((schema, name) for name in inspector.get_view_names(schema=schema))
+        views = set(inspector.get_view_names(schema=schema))
+        conn_view_names.update(
+            (schema, vname)
+            for vname in views
+            if autogen_context.run_name_filters(
+                vname, "view", {"schema_name": schema}
+            )
+        )
 
-    metadata_views_info = autogen_context.metadata.info.get("views", {})
-    metadata_views: Dict[Tuple[Optional[str], str], View] = {
-        key: view for key, view in metadata_views_info.items() if key[0] in schemas
-    }
+    metadata_view_names = set(
+        (table.schema, table.name)
+        for table in metadata.tables.values()
+        if table.info.get(TableObjectInfoKey.TABLE_KIND) == TableKind.VIEW
+    )
 
-    logger.debug(f"_compare_views: conn_views: ({conn_views}), metadata_views: ({metadata_views})")
-    _compare_views(conn_views, metadata_views, autogen_context, upgrade_ops)
+    _compare_views(
+        conn_view_names,
+        metadata_view_names,
+        inspector,
+        upgrade_ops,
+        autogen_context,
+    )
 
 
 def _compare_views(
-    conn_views: Set[Tuple[Optional[str], str]],
-    metadata_views: Dict[Tuple[Optional[str], str], View],
-    autogen_context: AutogenContext,
+    conn_view_names: Set[Tuple[Optional[str], str]],
+    metadata_view_names: Set[Tuple[Optional[str], str]],
+    inspector: Inspector,
     upgrade_ops: UpgradeOps,
+    autogen_context: AutogenContext,
 ) -> None:
-    """Compare views between the database and the metadata and generate operations."""
-    inspector: Inspector = autogen_context.inspector
+    """Compare views between database and metadata, generating add/drop/alter operations."""
+    metadata = autogen_context.metadata
 
-    # Find new views to create
-    for schema, view_name in sorted(metadata_views.keys() - conn_views):
-        view: View = metadata_views[(schema, view_name)]
-        upgrade_ops.ops.append(
-            CreateViewOp(
-                view.name,
-                view.definition,
-                schema=schema,
-                security=view.security,
-                comment=view.comment,
+    # Build a lookup from (schema, name) to Table object for metadata views
+    view_name_to_table = {
+        (table.schema, table.name): table
+        for table in metadata.tables.values()
+        if table.info.get(TableObjectInfoKey.TABLE_KIND) == TableKind.VIEW
+    }
+
+    # Added views (in metadata but not in database)
+    for s, vname in metadata_view_names.difference(conn_view_names):
+        name = "%s.%s" % (s, vname) if s else vname
+        metadata_view = view_name_to_table[(s, vname)]
+        if autogen_context.run_object_filters(
+            metadata_view, vname, "view", False, None
+        ):
+            upgrade_ops.ops.append(CreateViewOp.from_view(metadata_view))
+            logger.info("Detected added view %r", name)
+
+    # Dropped views (in database but not in metadata)
+    # Use a separate MetaData to avoid polluting the user's metadata
+    removal_metadata = sa_schema.MetaData()
+
+    for s, vname in conn_view_names.difference(metadata_view_names):
+        name = sa_schema._get_table_key(vname, s)
+        exists = name in removal_metadata.tables
+        t = sa_schema.Table(vname, removal_metadata, schema=s)
+
+        if not exists:
+            # Reflect the view using StarRocks' custom reflection logic
+            # This will automatically populate table_kind, definition, and dialect_options
+            inspector.reflect_table(t, include_columns=None)
+
+        if autogen_context.run_object_filters(t, vname, "view", True, None):
+            upgrade_ops.ops.append(DropViewOp.from_view(t))
+            logger.info("Detected removed view %r", name)
+
+    # Modified views (in both database and metadata)
+    # Use a separate MetaData for reflected views
+    existing_metadata = sa_schema.MetaData()
+    existing_views = conn_view_names.intersection(metadata_view_names)
+
+    for s, vname in existing_views:
+        # Use reflect_table to get the full view object from database
+        name = sa_schema._get_table_key(vname, s)
+        exists = name in existing_metadata.tables
+        t = sa_schema.Table(vname, existing_metadata, schema=s)
+
+        if not exists:
+            # Reflect the view using StarRocks' custom reflection logic
+            # This will automatically populate table_kind, definition, and dialect_options
+            inspector.reflect_table(t, include_columns=None)
+
+    # Compare existing views in sorted order for consistent output
+    for s, vname in sorted(existing_views, key=lambda x: (x[0] or "", x[1])):
+        s = s or None
+        name = "%s.%s" % (s, vname) if s else vname
+        metadata_view = view_name_to_table[(s, vname)]
+        conn_view = existing_metadata.tables[name]
+
+        # Apply object filters
+        if autogen_context.run_object_filters(
+            metadata_view, vname, "view", False, conn_view
+        ):
+            # Dispatch to compare_view for detailed comparison
+            comparators.dispatch("view")(
+                autogen_context,
+                upgrade_ops,
+                s,
+                vname,
+                conn_view,
+                metadata_view,
             )
-        )
-
-    # Find old views to drop
-    for schema, view_name in sorted(conn_views - metadata_views.keys()):
-        view_info: Optional[ReflectedViewState] = inspector.get_view(view_name, schema=schema)
-        if not view_info:
-            continue
-        upgrade_ops.ops.append(
-            DropViewOp(
-                view_name,
-                schema=schema,
-                _reverse_view_definition=view_info.definition,
-                _reverse_view_comment=view_info.comment,
-                _reverse_view_security=view_info.security,
-            )
-        )
-
-    # Find views that exist in both and compare their definitions
-    for schema, view_name in sorted(conn_views.intersection(metadata_views.keys())):
-        view_info: Optional[ReflectedViewState] = inspector.get_view(view_name, schema=schema)
-        if not view_info:
-            continue
-
-        conn_view = View(
-            name=view_info.name,
-            # definition=view_info.definition,
-            definition=TableAttributeNormalizer.normalize_sql(view_info.definition, remove_qualifiers=True),
-            metadata=autogen_context.metadata,
-            schema=schema,
-            comment=view_info.comment,
-            security=view_info.security
-        )
-        metadata_view: View = metadata_views[(schema, view_name)]
-
-        logger.debug(
-            "Comparing view %s.%s: conn(def)=%r meta(def)=%r",
-            schema or autogen_context.dialect.default_schema_name,
-            view_name,
-            TableAttributeNormalizer.normalize_sql(conn_view.definition),
-            TableAttributeNormalizer.normalize_sql(metadata_view.definition),
-        )
-
-        comparators.dispatch("view")(
-            autogen_context,
-            upgrade_ops,
-            schema,
-            view_name,
-            conn_view,
-            metadata_view,
-        )
 
 
 @comparators_dispatch_for_starrocks("view")
@@ -322,73 +388,342 @@ def compare_view(
     """
     Compare a single view and generate operations if needed.
 
-    Check for changes in view definition, comment and security attributes.
+    Check for changes in view definition, comment, security attributes, and columns.
     """
-    # currently, conn_view or metadata_view is not None.
+    # Handle view creation and deletion scenarios (should not happen here)
     if conn_view is None or metadata_view is None:
-        logger.warning(f"both conn_view and meta_view should not be None for compare_view: {schema}.{view_name}, "
-                       f"skipping. conn_view: {'not None' if conn_view else 'None'}, "
-                       f"meta_view: {'not None' if metadata_view else 'None'}")
+        logger.warning(
+            "compare_view: both conn_view and metadata_view should not be None for %s.%s, skipping",
+            schema or autogen_context.dialect.default_schema_name,
+            view_name
+        )
         return
-    logger.debug(f"compare_view: conn_view: {conn_view!r}, metadata_view: {metadata_view!r}")
 
-    conn_def_norm: Optional[str] = TableAttributeNormalizer.normalize_sql(conn_view.definition)
-    metadata_def_norm: Optional[str] = TableAttributeNormalizer.normalize_sql(metadata_view.definition)
-    definition_changed = conn_def_norm != metadata_def_norm
+    logger.debug(f"compare_view: view_name={view_name}, schema={schema}")
 
-    # Comment/security normalized for comparison
-    conn_view_comment = (conn_view.comment or "").strip()
-    metadata_view_comment = (metadata_view.comment or "").strip()
-    comment_changed = conn_view_comment != metadata_view_comment
-
-    conn_view_security = (conn_view.security or "").upper()
-    metadata_view_security = (metadata_view.security or "").upper()
-    security_changed = conn_view_security != metadata_view_security
+    # Extract dialect_options for comparison, similar to compare_starrocks_table
+    conn_view_attributes = CaseInsensitiveDict(
+        {k: v for k, v in conn_view.dialect_options[DialectName].items() if v is not None}
+    )
+    meta_view_attributes = CaseInsensitiveDict(
+        {k: v for k, v in metadata_view.dialect_options[DialectName].items() if v is not None}
+    )
 
     logger.debug(
-        "compare_view: %s.%s def_changed=%s comment_changed=%s security_changed=%s",
-        schema or autogen_context.dialect.default_schema_name,
+        "View-specific attributes comparison for view '%s': "
+        "Detected in database: %s. Found in metadata: %s.",
         view_name,
+        conn_view_attributes,
+        meta_view_attributes,
+    )
+
+    # Create AlterViewOp object first, then each comparison function will set attributes if needed
+    alter_view_op = AlterViewOp(
+        view_name=metadata_view.name,
+        schema=schema,
+    )
+
+    view_fqn = f"{schema or autogen_context.dialect.default_schema_name}.{view_name}"
+
+    # Track which attributes have changed (True = changed, False = not changed)
+    changed_flags = {'definition': False, 'comment': False, 'security': False}
+
+    # Compare each view attribute using dedicated functions
+    # Order: definition+columns -> comment -> security
+    changed_flags['definition'] = _compare_view_definition_and_columns(
+        alter_view_op, view_fqn, conn_view, metadata_view
+    )
+    changed_flags['comment'] = _compare_view_comment(
+        alter_view_op, view_fqn, conn_view, metadata_view
+    )
+    changed_flags['security'] = _compare_view_security(
+        alter_view_op, view_fqn, conn_view, metadata_view,
+        conn_view_attributes, meta_view_attributes
+    )
+
+    # If any attribute changed, append the operation
+    if any(changed_flags.values()):
+        upgrade_ops.ops.append(alter_view_op)
+
+        # Log which attributes changed
+        changed_attrs = [attr for attr, changed in changed_flags.items() if changed]
+
+        logger.info(
+            "Detected view changes for %s: %s",
+            view_fqn,
+            ", ".join(changed_attrs),
+        )
+
+
+def _compare_view_definition_and_columns(
+    alter_view_op: AlterViewOp,
+    view_fqn: str,
+    conn_view: View,
+    metadata_view: View,
+) -> bool:
+    """
+    Compare view definition and columns, and update AlterViewOp if changed.
+
+    Definition and columns are compared together because in StarRocks,
+    columns can only be changed by changing the definition (SELECT statement).
+
+    Args:
+        alter_view_op: AlterViewOp object to update
+        view_fqn: Fully qualified view name for logging
+        conn_view: View reflected from database
+        metadata_view: View defined in metadata
+
+    Returns:
+        True if definition changed, False otherwise
+    """
+    from starrocks.sql.schema import extract_view_columns
+
+    # Compare definition (the main content of a view)
+    # Definition is stored in table.info (not in dialect_options)
+    conn_definition = conn_view.info.get(TableObjectInfoKey.DEFINITION, "")
+    meta_definition = metadata_view.info.get(TableObjectInfoKey.DEFINITION, "")
+    conn_def_norm = TableAttributeNormalizer.normalize_sql(conn_definition)
+    meta_def_norm = TableAttributeNormalizer.normalize_sql(meta_definition)
+    definition_changed = conn_def_norm != meta_def_norm
+
+    # Compare columns (if metadata specifies columns explicitly)
+    # Note: Only column names and comments are compared, as StarRocks VIEW
+    # does not support explicit column type/nullable specifications
+    columns_changed = _compare_view_columns(conn_view, metadata_view)
+
+    # Log comparison results
+    logger.debug(
+        "compare_view_definition_and_columns: %s, definition_changed=%s, columns_changed=%s",
+        view_fqn,
         definition_changed,
+        columns_changed,
+    )
+
+    # Log detailed changes for debugging
+    if definition_changed:
+        logger.debug(
+            "  Definition change for %s:\n"
+            "    Database: %s\n"
+            "    Metadata: %s",
+            view_fqn,
+            conn_def_norm[:100] + "..." if len(conn_def_norm) > 100 else conn_def_norm,
+            meta_def_norm[:100] + "..." if len(meta_def_norm) > 100 else meta_def_norm,
+        )
+
+    if columns_changed:
+        conn_cols = {col.name: (col.comment or '') for col in conn_view.columns} if conn_view.columns else {}
+        meta_cols = {col.name: (col.comment or '') for col in metadata_view.columns} if metadata_view.columns else {}
+        logger.debug(
+            "  Columns change for %s:\n"
+            "    Database columns: %s\n"
+            "    Metadata columns: %s",
+            view_fqn,
+            conn_cols,
+            meta_cols,
+        )
+
+    # StarRocks limitation: Columns can only be changed together with definition
+    if columns_changed and not definition_changed:
+        raise ValueError(
+            f"StarRocks does not support altering view columns independently; "
+            f"column changes detected for {view_fqn}, "
+            f"but definition is unchanged. "
+            f"You must change the definition (SELECT statement) together with columns, "
+            f"or use DROP + CREATE to apply this change."
+        )
+
+    # Set definition and columns if definition changed
+    if definition_changed:
+        alter_view_op.definition = meta_definition
+        alter_view_op.columns = extract_view_columns(metadata_view)
+        alter_view_op.reverse_view_definition = conn_definition
+        alter_view_op.reverse_view_columns = extract_view_columns(conn_view)
+
+    return definition_changed
+
+
+def _compare_view_comment(
+    alter_view_op: AlterViewOp,
+    view_fqn: str,
+    conn_view: View,
+    metadata_view: View,
+) -> bool:
+    """
+    Compare view comment and update AlterViewOp if changed.
+
+    Args:
+        alter_view_op: AlterViewOp object to update
+        view_fqn: Fully qualified view name for logging
+        conn_view: View reflected from database
+        metadata_view: View defined in metadata
+
+    Returns:
+        True if comment changed, False otherwise
+    """
+    import warnings
+
+    # Compare comment (views don't use Alembic's built-in _compare_table_comment)
+    conn_comment = (conn_view.comment or "").strip()
+    meta_comment = (metadata_view.comment or "").strip()
+    comment_changed = conn_comment != meta_comment
+
+    logger.debug(
+        "compare_view_comment: %s, comment_changed=%s",
+        view_fqn,
         comment_changed,
-        security_changed,
     )
 
     if comment_changed:
-        logger.warning(
-            "StarRocks does not support altering view comments via ALTER VIEW; "
-            "comment change detected for %s.%s, from '%s' to '%s', and will be ignored",
-            schema or autogen_context.dialect.default_schema_name,
-            view_name,
-            conn_view_comment,
-            metadata_view_comment,
+        logger.debug(
+            "  Comment change for %s:\n"
+            "    Database: '%s'\n"
+            "    Metadata: '%s'",
+            view_fqn,
+            conn_comment,
+            meta_comment,
         )
+
+        # Warn about comment changes (not supported via ALTER VIEW)
+        warnings.warn(
+            f"StarRocks does not support altering view comments via ALTER VIEW; "
+            f"comment change detected for {view_fqn}, "
+            f"from '{conn_comment}' to '{meta_comment}'. "
+            f"Consider using DROP + CREATE to apply this change.",
+            UserWarning,
+            stacklevel=4  # Adjusted stacklevel for nested function call
+        )
+
+        # Set comment in AlterViewOp for future compatibility
+        alter_view_op.comment = metadata_view.comment
+        alter_view_op.reverse_view_comment = conn_view.comment
+
+    return comment_changed
+
+
+def _compare_view_security(
+    alter_view_op: AlterViewOp,
+    view_fqn: str,
+    conn_view: View,
+    metadata_view: View,
+    conn_view_attributes: CaseInsensitiveDict,
+    meta_view_attributes: CaseInsensitiveDict,
+) -> bool:
+    """
+    Compare view security attribute and update AlterViewOp if changed.
+
+    Args:
+        alter_view_op: AlterViewOp object to update
+        view_fqn: Fully qualified view name for logging
+        conn_view: View reflected from database
+        metadata_view: View defined in metadata
+        conn_view_attributes: View attributes reflected from database
+        meta_view_attributes: View attributes defined in metadata
+
+    Returns:
+        True if security changed, False otherwise
+    """
+    import warnings
+
+    # Compare security attribute
+    conn_security = TableAttributeNormalizer._simple_normalize(
+        conn_view_attributes.get(TableInfoKey.SECURITY)
+    )
+    meta_security = TableAttributeNormalizer._simple_normalize(
+        meta_view_attributes.get(TableInfoKey.SECURITY)
+    )
+    security_changed = conn_security != meta_security
+
+    logger.debug(
+        "compare_view_security: %s, security_changed=%s",
+        view_fqn,
+        security_changed,
+    )
 
     if security_changed:
-        logger.warning(
-            "StarRocks does not support altering view security via ALTER VIEW; "
-            "security change detected for %s.%s, from '%s' to '%s', and will be ignored",
-            schema or autogen_context.dialect.default_schema_name,
-            view_name,
-            conn_view_security,
-            metadata_view_security,
+        logger.debug(
+            "  Security change for %s:\n"
+            "    Database: '%s'\n"
+            "    Metadata: '%s'",
+            view_fqn,
+            conn_security,
+            meta_security,
         )
 
-    if definition_changed:
-        upgrade_ops.ops.append(
-            AlterViewOp(
-                metadata_view.name,
-                metadata_view.definition,
-                schema=schema,
-                reverse_view_definition=conn_view.definition,
-            )
+        # Warn about security changes (not supported via ALTER VIEW)
+        warnings.warn(
+            f"StarRocks does not support altering view security via ALTER VIEW; "
+            f"security change detected for {view_fqn}, "
+            f"from '{conn_security}' to '{meta_security}'. "
+            f"Consider using DROP + CREATE to apply this change.",
+            UserWarning,
+            stacklevel=4  # Adjusted stacklevel for nested function call
         )
+
+        # Set security in AlterViewOp for future compatibility
+        alter_view_op.security = meta_view_attributes.get(TableInfoKey.SECURITY)
+        alter_view_op.reverse_view_security = conn_view_attributes.get(TableInfoKey.SECURITY)
+
+    return security_changed
+
+
+def _compare_view_columns(conn_view: View, metadata_view: View) -> bool:
+    """
+    Compare columns between connection view and metadata view.
+
+    Returns True if columns have changed, False otherwise.
+    Only compares if metadata_view explicitly defines columns.
+
+    Note: StarRocks VIEW columns only support name and comment (not type or nullable).
+    These are derived from the query statement and cannot be explicitly specified.
+
+    Args:
+        conn_view: View reflected from database
+        metadata_view: View defined in metadata
+
+    Returns:
+        True if column names or comments differ, False otherwise
+    """
+    # If metadata doesn't define columns, skip comparison
+    if not metadata_view.columns:
+        return False
+
+    # If conn_view has no columns (reflection failed), we can't compare
+    # This might happen if reflection encountered an error
+    if not conn_view.columns:
+        logger.warning(
+            f"View '{metadata_view.name}' has columns defined in metadata, "
+            f"but no columns were reflected from database. Cannot compare columns."
+        )
+        return False
+
+    # Build column name -> comment mapping
+    conn_cols = {col.name: (col.comment or '') for col in conn_view.columns}
+    meta_cols = {col.name: (col.comment or '') for col in metadata_view.columns}
+
+    # Check for added or removed columns
+    conn_col_names = set(conn_cols.keys())
+    meta_col_names = set(meta_cols.keys())
+
+    if conn_col_names != meta_col_names:
         logger.debug(
-            "Generated AlterViewOp for %s.%s",
-            schema or autogen_context.dialect.default_schema_name,
-            view_name,
+            f"View '{metadata_view.name}': Column names differ. "
+            f"Database: {sorted(conn_col_names)}, Metadata: {sorted(meta_col_names)}"
         )
-    # else: only comment/security changed -> no operation generated
+        return True
+
+    # Check for column comment changes
+    for col_name in meta_col_names:
+        conn_comment = conn_cols[col_name]
+        meta_comment = meta_cols[col_name]
+
+        if conn_comment != meta_comment:
+            logger.debug(
+                f"View '{metadata_view.name}': Column '{col_name}' comment differs. "
+                f"Database: '{conn_comment}', Metadata: '{meta_comment}'"
+            )
+            return True
+
+    return False
 
 
 # ==============================================================================
@@ -396,7 +731,9 @@ def compare_view(
 # ==============================================================================
 @comparators_dispatch_for_starrocks("schema")
 def autogen_for_materialized_views(
-    autogen_context: AutogenContext, upgrade_ops: UpgradeOps, schemas: List[Optional[str]]
+    autogen_context: AutogenContext,
+    upgrade_ops: UpgradeOps,
+    schemas: Union[Set[None], Set[Optional[str]]]
 ) -> None:
     """
     Main autogenerate entrypoint for materialized views.
@@ -404,62 +741,116 @@ def autogen_for_materialized_views(
     Scan materialized views in database and compare with metadata.
     """
     inspector: Inspector = autogen_context.inspector
+    metadata = autogen_context.metadata
 
-    conn_mvs: Set[Tuple[Optional[str], str]] = set()
+    conn_mv_names: Set[Tuple[Optional[str], str]] = set()
+
     for schema in schemas:
-        conn_mvs.update(
-            (schema, name)
-            for name in inspector.get_materialized_view_names(schema=schema)
+        mvs = set(inspector.get_materialized_view_names(schema))
+        conn_mv_names.update(
+            (schema, mvname)
+            for mvname in mvs
+            if autogen_context.run_name_filters(
+                mvname, "materialized_view", {"schema_name": schema}
+            )
         )
 
-    metadata_mvs_info = autogen_context.metadata.info.get("materialized_views", {})
-    # Expect strictly (schema, name) -> MaterializedView mapping
-    metadata_mvs: Dict[Tuple[Optional[str], str], MaterializedView] = {
-        key: mv for key, mv in metadata_mvs_info.items()
-        if isinstance(key, tuple) and len(key) == 2 and key[0] in schemas
-    }
-    _compare_materialized_views(conn_mvs, metadata_mvs, autogen_context, upgrade_ops)
+    metadata_mv_names = set(
+        (table.schema, table.name)
+        for table in metadata.tables.values()
+        if table.info.get(TableObjectInfoKey.TABLE_KIND) == TableKind.MATERIALIZED_VIEW
+    )
+
+    _compare_mvs(
+        conn_mv_names,
+        metadata_mv_names,
+        inspector,
+        upgrade_ops,
+        autogen_context,
+    )
 
 
-def _compare_materialized_views(
-    conn_mvs: Set[Tuple[Optional[str], str]],
-    metadata_mvs: Dict[Tuple[Optional[str], str], MaterializedView],
-    autogen_context: AutogenContext,
+def _compare_mvs(
+    conn_mv_names: Set[Tuple[Optional[str], str]],
+    metadata_mv_names: Set[Tuple[Optional[str], str]],
+    inspector: Inspector,
     upgrade_ops: UpgradeOps,
+    autogen_context: AutogenContext,
 ) -> None:
-    """Compare MVs between the database and the metadata and generate operations."""
-    inspector: Inspector = autogen_context.inspector
+    """Compare materialized views between database and metadata, generating add/drop/alter operations."""
+    metadata = autogen_context.metadata
 
-    # Find new MVs to create
-    for schema, mv_name in sorted(metadata_mvs.keys() - conn_mvs):
-        mv: MaterializedView = metadata_mvs[(schema, mv_name)]
-        upgrade_ops.ops.append(
-            CreateMaterializedViewOp(mv.name, mv.definition, schema=schema)
-        )
+    # Build a lookup from (schema, name) to Table object for metadata MVs
+    mv_name_to_table = {
+        (table.schema, table.name): table
+        for table in metadata.tables.values()
+        if table.info.get(TableObjectInfoKey.TABLE_KIND) == TableKind.MATERIALIZED_VIEW
+    }
 
-    # Find old MVs to drop
-    for schema, mv_name in sorted(conn_mvs - metadata_mvs.keys()):
-        upgrade_ops.ops.append(DropMaterializedViewOp(mv_name, schema=schema))
+    # Added MVs (in metadata but not in database)
+    for s, mvname in metadata_mv_names.difference(conn_mv_names):
+        name = "%s.%s" % (s, mvname) if s else mvname
+        metadata_mv = mv_name_to_table[(s, mvname)]
+        if autogen_context.run_object_filters(
+            metadata_mv, mvname, "materialized_view", False, None
+        ):
+            upgrade_ops.ops.append(CreateMaterializedViewOp.from_materialized_view(metadata_mv))
+            logger.info("Detected added materialized view %r", name)
 
-    # Find modified MVs
-    for schema, mv_name in sorted(conn_mvs.intersection(metadata_mvs.keys())):
-        view_info: Optional[ReflectedMVState] = inspector.get_materialized_view(mv_name, schema=schema)
-        conn_mv = MaterializedView(
-            mv_name,
-            view_info,
-            autogen_context.metadata,
-            schema=schema
-        )
-        metadata_mv: MaterializedView = metadata_mvs[(schema, mv_name)]
+    # Dropped MVs (in database but not in metadata)
+    # Use a separate MetaData to avoid polluting the user's metadata
+    removal_metadata = sa_schema.MetaData()
 
-        comparators.dispatch("materialized_view")(
-            autogen_context,
-            upgrade_ops,
-            schema,
-            mv_name,
-            conn_mv,
-            metadata_mv,
-        )
+    for s, mvname in conn_mv_names.difference(metadata_mv_names):
+        name = sa_schema._get_table_key(mvname, s)
+        exists = name in removal_metadata.tables
+        t = sa_schema.Table(mvname, removal_metadata, schema=s)
+
+        if not exists:
+            # Reflect the MV using StarRocks' custom reflection logic
+            # This will automatically populate table_kind, definition, and dialect_options
+            inspector.reflect_table(t, include_columns=None)
+
+        if autogen_context.run_object_filters(t, mvname, "materialized_view", True, None):
+            upgrade_ops.ops.append(DropMaterializedViewOp.from_materialized_view(t))
+            logger.info("Detected removed materialized view %r", name)
+
+    # Modified MVs (in both database and metadata)
+    # Use a separate MetaData for reflected MVs
+    existing_metadata = sa_schema.MetaData()
+    existing_mvs = conn_mv_names.intersection(metadata_mv_names)
+
+    for s, mvname in existing_mvs:
+        # Use reflect_table to get the full MV object from database
+        name = sa_schema._get_table_key(mvname, s)
+        exists = name in existing_metadata.tables
+        t = sa_schema.Table(mvname, existing_metadata, schema=s)
+
+        if not exists:
+            # Reflect the MV using StarRocks' custom reflection logic
+            # This will automatically populate table_kind, definition, and dialect_options
+            inspector.reflect_table(t, include_columns=None)
+
+    # Compare existing MVs in sorted order for consistent output
+    for s, mvname in sorted(existing_mvs, key=lambda x: (x[0] or "", x[1])):
+        s = s or None
+        name = "%s.%s" % (s, mvname) if s else mvname
+        metadata_mv = mv_name_to_table[(s, mvname)]
+        conn_mv = existing_metadata.tables[name]
+
+        # Apply object filters
+        if autogen_context.run_object_filters(
+            metadata_mv, mvname, "materialized_view", False, conn_mv
+        ):
+            # Dispatch to compare_materialized_view for detailed comparison
+            comparators.dispatch("materialized_view")(
+                autogen_context,
+                upgrade_ops,
+                s,
+                mvname,
+                conn_mv,
+                metadata_mv,
+            )
 
 
 @comparators_dispatch_for_starrocks("materialized_view")
@@ -474,53 +865,130 @@ def compare_materialized_view(
     """
     Compare a single materialized view and generate operations if needed.
 
-    Check for changes in materialized view definition.
+    StarRocks does not support ALTER MATERIALIZED VIEW, so any change
+    requires DROP + CREATE.
     """
-    # For now, we only support drop and create for modifications.
-    # We can add more granular ALTER operations in the future.
+    # Handle MV creation and deletion scenarios (should not happen here)
+    if conn_mv is None or metadata_mv is None:
+        logger.warning(
+            "compare_materialized_view: both conn_mv and metadata_mv should not be None for %s.%s, skipping",
+            schema or autogen_context.dialect.default_schema_name,
+            mv_name
+        )
+        return
 
-    # Normalize and compare attributes
-    conn_opts = conn_mv.mv_options
-    definition_changed = TableAttributeNormalizer.normalize_sql(conn_mv.definition) != \
-                         TableAttributeNormalizer.normalize_sql(metadata_mv.definition)
+    logger.debug(f"compare_materialized_view: mv_name={mv_name}, schema={schema}")
 
-    partition_changed = TableAttributeNormalizer.normalize_partition_method(conn_opts.partition_by) != \
-                        TableAttributeNormalizer.normalize_partition_method(metadata_mv.partition_by)
+    # Extract dialect_options for comparison, similar to compare_starrocks_table
+    conn_mv_attributes = CaseInsensitiveDict(
+        {k: v for k, v in conn_mv.dialect_options[DialectName].items() if v is not None}
+    )
+    meta_mv_attributes = CaseInsensitiveDict(
+        {k: v for k, v in metadata_mv.dialect_options[DialectName].items() if v is not None}
+    )
 
-    distribution_changed = TableAttributeNormalizer.normalize_distribution_string(conn_opts.distributed_by) != \
-                           TableAttributeNormalizer.normalize_distribution_string(metadata_mv.distributed_by)
+    logger.debug(
+        "MV-specific attributes comparison for materialized view '%s': "
+        "Detected in database: %s. Found in metadata: %s.",
+        mv_name,
+        conn_mv_attributes,
+        meta_mv_attributes,
+    )
 
-    order_by_changed = TableAttributeNormalizer.normalize_order_by_string(conn_opts.order_by) != \
-                       TableAttributeNormalizer.normalize_order_by_string(metadata_mv.order_by)
+    # Compare definition
+    definition_changed = (
+        TableAttributeNormalizer.normalize_sql(conn_mv.definition) !=
+        TableAttributeNormalizer.normalize_sql(metadata_mv.definition)
+    )
 
-    refresh_moment_changed = conn_opts.refresh_moment != metadata_mv.refresh_moment
+    # Compare physical table attributes
+    partition_changed = (
+        TableAttributeNormalizer.normalize_partition_method(
+            conn_mv_attributes.get(TableInfoKey.PARTITION_BY)
+        ) !=
+        TableAttributeNormalizer.normalize_partition_method(
+            meta_mv_attributes.get(TableInfoKey.PARTITION_BY)
+        )
+    )
 
-    refresh_type_changed = conn_opts.refresh_type != metadata_mv.refresh_type
+    distribution_changed = (
+        TableAttributeNormalizer.normalize_distribution_string(
+            conn_mv_attributes.get(TableInfoKey.DISTRIBUTED_BY)
+        ) !=
+        TableAttributeNormalizer.normalize_distribution_string(
+            meta_mv_attributes.get(TableInfoKey.DISTRIBUTED_BY)
+        )
+    )
 
-    comment_changed = (conn_mv.comment or '') != (metadata_mv.comment or '')
+    order_by_changed = (
+        TableAttributeNormalizer.normalize_order_by_string(
+            conn_mv_attributes.get(TableInfoKey.ORDER_BY)
+        ) !=
+        TableAttributeNormalizer.normalize_order_by_string(
+            meta_mv_attributes.get(TableInfoKey.ORDER_BY)
+        )
+    )
 
-    properties_changed = conn_opts.properties != metadata_mv.properties
+    # Compare refresh attributes
+    refresh_moment_changed = (
+        conn_mv_attributes.get(TableInfoKey.REFRESH_MOMENT) !=
+        meta_mv_attributes.get(TableInfoKey.REFRESH_MOMENT)
+    )
 
-    if any([definition_changed, partition_changed, distribution_changed,
-             order_by_changed, refresh_moment_changed, refresh_type_changed,
-             comment_changed, properties_changed]):
+    refresh_type_changed = (
+        conn_mv_attributes.get(TableInfoKey.REFRESH_TYPE) !=
+        meta_mv_attributes.get(TableInfoKey.REFRESH_TYPE)
+    )
+
+    # Compare properties
+    properties_changed = (
+        conn_mv_attributes.get(TableInfoKey.PROPERTIES) !=
+        meta_mv_attributes.get(TableInfoKey.PROPERTIES)
+    )
+
+    # Compare comment (MVs don't use Alembic's built-in _compare_table_comment)
+    conn_comment = (conn_mv.comment or "").strip()
+    meta_comment = (metadata_mv.comment or "").strip()
+    comment_changed = conn_comment != meta_comment
+
+    logger.debug(
+        "compare_materialized_view: %s.%s definition_changed=%s partition_changed=%s "
+        "distribution_changed=%s order_by_changed=%s refresh_moment_changed=%s "
+        "refresh_type_changed=%s properties_changed=%s comment_changed=%s",
+        schema or autogen_context.dialect.default_schema_name,
+        mv_name,
+        definition_changed,
+        partition_changed,
+        distribution_changed,
+        order_by_changed,
+        refresh_moment_changed,
+        refresh_type_changed,
+        properties_changed,
+        comment_changed,
+    )
+
+    # If any attribute changed, generate DROP + CREATE operations
+    # StarRocks does not support ALTER MATERIALIZED VIEW
+    if any([
+        definition_changed,
+        partition_changed,
+        distribution_changed,
+        order_by_changed,
+        refresh_moment_changed,
+        refresh_type_changed,
+        properties_changed,
+        comment_changed,
+    ]):
         upgrade_ops.ops.append(
             (
-                DropMaterializedViewOp(mv_name, schema=schema),
-                CreateMaterializedViewOp(
-                    metadata_mv.name,
-                    metadata_mv.definition,
-                    schema=schema,
-                    # Pass all attributes to the create op
-                    comment=metadata_mv.comment,
-                    partition_by=metadata_mv.partition_by,
-                    distributed_by=metadata_mv.distributed_by,
-                    order_by=metadata_mv.order_by,
-                    refresh_moment=metadata_mv.refresh_moment,
-                    refresh_type=metadata_mv.refresh_type,
-                    properties=metadata_mv.properties,
-                ),
+                DropMaterializedViewOp.from_materialized_view(conn_mv),
+                CreateMaterializedViewOp.from_materialized_view(metadata_mv),
             )
+        )
+        logger.info(
+            "Detected materialized view change for %s.%s, will DROP and CREATE",
+            schema or autogen_context.dialect.default_schema_name,
+            mv_name,
         )
 
 

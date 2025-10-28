@@ -157,7 +157,7 @@ In `alembic/env.py`, import your models' metadata and assign it to `target_metad
 # alembic/env.py
 # Add these imports
 from myapp.models import Base  # Adjust to your models' location
-from starrocks.alembic import render
+from starrocks.alembic import render_column_type, include_object_for_view_mv
 
 # ...
 # And set the target_metadata
@@ -167,10 +167,13 @@ def run_migrations_online() -> None:
     # ... inside this function
     context.configure(
         # ...
-        render_item=render.render_column_type # Add this line
+        render_item=render_column_type,            # Add this line (required for column comparison)
+        include_object=include_object_for_view_mv  # Add this line (required for View/MV support)
     )
     # ...
 ```
+
+> **Note**: For advanced filtering options (e.g., excluding temporary tables), see the [Alembic Integration Guide](./docs/usage_guide/alembic.md#Advanced-Custom-Object-Filtering).
 
 #### 4. Generate and Apply Your First Migration
 

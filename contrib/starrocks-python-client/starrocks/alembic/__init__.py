@@ -13,7 +13,14 @@
 # limitations under the License.
 
 from . import compare, ops, render, toimpl  # noqa: F401
+from .compare import include_object_for_view_mv
+from .render import render_column_type
 from .starrocks import StarRocksImpl
 
 
-__all__ = ["StarRocksImpl", "render"]
+__all__ = [
+    "StarRocksImpl",
+    "render",
+    "render_column_type",
+    "include_object_for_view_mv",
+]

@@ -25,7 +25,20 @@ from alembic.ddl.mysql import (
 )
 from alembic.operations.ops import AlterColumnOp
 from alembic.util.sqla_compat import compiles
-from sqlalchemy import Column, Connection, Row, Table, exc, log, schema as sa_schema, text, util
+from sqlalchemy import (
+    Column,
+    Connection,
+    Delete,
+    Row,
+    Select,
+    Table,
+    exc,
+    log,
+    schema as sa_schema,
+    text,
+    types as sqltypes,
+    util,
+)
 from sqlalchemy.dialects.mysql.base import (
     MySQLCompiler,
     MySQLDDLCompiler,
@@ -36,21 +49,21 @@ from sqlalchemy.dialects.mysql.base import (
 from sqlalchemy.dialects.mysql.pymysql import MySQLDialect_pymysql
 from sqlalchemy.engine import reflection
 from sqlalchemy.engine.interfaces import ReflectedTableComment
-from sqlalchemy.sql import sqltypes
-from sqlalchemy.sql.expression import Delete, Select
 
-from starrocks.common.defaults import ReflectionTableDefaults, ReflectionViewDefaults
+from starrocks.common.defaults import ReflectionMVDefaults, ReflectionTableDefaults, ReflectionViewDefaults
 from starrocks.common.params import (
     ColumnAggInfoKey,
     ColumnAggInfoKeyWithPrefix,
-    ColumnSROptionsKey,
     DialectName,
     SRKwargsPrefix,
     TableInfoKey,
     TableInfoKeyWithPrefix,
+    TableKind,
+    TableObjectInfoKey,
 )
 from starrocks.common.types import ColumnAggType, SystemRunMode, TableType
 from starrocks.common.utils import TableAttributeNormalizer
+from starrocks.sql.schema import View
 
 from . import reflection as _reflection
 from .datatype import (
@@ -78,7 +91,7 @@ from .datatype import (
     VARBINARY,
     VARCHAR,
 )
-from .engine.interfaces import ReflectedMVOptions, ReflectedMVState, ReflectedState, ReflectedViewState
+from .engine.interfaces import ReflectedMVState, ReflectedState, ReflectedViewState
 from .reflection import StarRocksInspector, StarRocksTableDefinitionParser
 from .sql.ddl import (
     AlterMaterializedView,
@@ -94,7 +107,6 @@ from .sql.ddl import (
     DropMaterializedView,
     DropView,
 )
-from .sql.schema import View
 
 
 # Register the compiler methods
@@ -285,7 +297,21 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
         return super().visit_alter_column(alter, **kw)
 
     def visit_create_table(self, create: sa_schema.CreateTable, **kw: Any) -> str:
-        table = create.element
+        table: sa_schema.Table = create.element
+        table_kind: str = table.info.get(TableObjectInfoKey.TABLE_KIND, TableKind.TABLE).upper()
+
+        if table_kind == TableKind.VIEW:
+            return self._compile_create_view_from_table(table, create, **kw)
+        elif table_kind == TableKind.MATERIALIZED_VIEW:
+            return self._compile_create_mv_from_table(table, create, **kw)
+        else:
+            return self._compile_create_table_original(table, create, **kw)
+
+    def _compile_create_table_original(
+            self,
+            table: sa_schema.Table,
+            create: sa_schema.CreateTable,
+            **kw: Any) -> str:
         preparer = self.preparer
 
         text = "\nCREATE "
@@ -567,12 +593,12 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
         # Key / Table Type (Primary key, Duplicate key, Aggregate key, Unique key)
         key_type = None
         key_desc = None
-        for tbl_type_key_str, table_type in TableInfoKey.KEY_KWARG_MAP.items():
-            kwarg_upper = tbl_type_key_str.upper()
+        for tbl_kind_key_str, table_kind in TableInfoKey.KEY_KWARG_MAP.items():
+            kwarg_upper = tbl_kind_key_str.upper()
             if kwarg_upper in opts:
                 if key_type:
-                    raise exc.CompileError(f"Multiple key types found: {tbl_type_key_str}, first_key_type: {key_type}")
-                key_type = table_type
+                    raise exc.CompileError(f"Multiple key types found: {tbl_kind_key_str}, first_key_type: {key_type}")
+                key_type = table_kind
                 key_columns_str: str = TableAttributeNormalizer.remove_outer_parentheses(opts[kwarg_upper])
                 logger.debug(f"get table key info: key_type: {key_type}, key_columns: {key_columns_str}")
                 # check if the key columns are valid
@@ -852,49 +878,66 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
         return text
 
     def _get_view_column_clauses(self, view: View) -> str:
-        """Helper method to format the column clauses for a CREATE VIEW statement."""
+        """
+        Helper method to format column clauses for a CREATE VIEW statement.
+
+        StarRocks VIEW columns only support name and comment.
+
+        Args:
+            view: View object with columns
+
+        Returns:
+            Formatted column clauses string, e.g., " (\n    id,\n    name COMMENT 'User name'\n)"
+        """
         column_clauses: List[str] = []
-        for c in view.columns:
-            if isinstance(c, dict):
-                col_name: str = self.preparer.quote(c['name'])
-                if 'comment' in c:
-                    comment: str = self.sql_compiler.render_literal_value(
-                        c['comment'], sqltypes.String()
-                    )
-                    column_clauses.append(f'{self.indent}{col_name} COMMENT {comment}')
-                else:
-                    column_clauses.append(f'{self.indent}{col_name}')
+        for col in view.columns:
+            col_name = self.preparer.quote(col.name)
+            if col.comment:
+                comment = self.sql_compiler.render_literal_value(
+                    col.comment, sqltypes.String()
+                )
+                column_clauses.append(f'{self.indent}{col_name} COMMENT {comment}')
             else:
-                column_clauses.append(f'{self.indent}{self.preparer.quote(c)}')
+                column_clauses.append(f'{self.indent}{col_name}')
         return " (\n%s\n)" % ",\n".join(column_clauses)
 
-    def visit_create_view(self, create: CreateView, **kw: Any) -> str:
-        view = create.element
-        text = "CREATE "
-        if create.or_replace:
-            text += "OR REPLACE "
-        text += "VIEW "
-        if create.if_not_exists:
-            text += "IF NOT EXISTS "
+    def _compile_create_view_from_table(self, create: CreateView, **kw):
+        """Helper to compile CREATE VIEW from a CreateView object."""
+        table = create.element
+        preparer = self.preparer
 
-        text += self.preparer.format_table(view) + "\n"
+        view_name = preparer.format_table(table)
+        definition = table.info.get(TableObjectInfoKey.DEFINITION)
+        if not definition:
+            raise exc.CompileError("View definition is required")
+        dialect_options = table.dialect_options.get(DialectName, {})
+        security = dialect_options.get("security")
 
-        if view.columns:
-            text += self._get_view_column_clauses(view)
+        or_replace_clause = "OR REPLACE " if create.or_replace else ""
+        if_not_exists_clause = "IF NOT EXISTS " if create.if_not_exists else ""
 
-        if view.comment:
-            comment = self.sql_compiler.render_literal_value(
-                view.comment, sqltypes.String()
-            )
-            text += f"COMMENT {comment}\n"
+        text = f"CREATE {or_replace_clause}VIEW {if_not_exists_clause}{view_name}"
 
-        if create.security:
-            text += f"SECURITY {create.security.upper()}\n"
+        # Add column definitions if present (only name and comment are supported)
+        if table.columns:
+            text += self._get_view_column_clauses(table)
 
-        text += f"AS\n{view.definition}"
+        if table.comment:
+            text += f"\nCOMMENT '{table.comment}'"
+        if security:
+            text += f"\nSECURITY {security}"
+        text += f"\nAS\n{definition}"
 
         logger.debug("Compiled SQL for CreateView: \n%s", text)
         return text
+
+    def visit_create_view(self, create: CreateView, **kw: Any) -> str:
+        """
+        CREATE VIEW is handled by `visit_create_table` dispatcher
+        based on `table.info['table_type']`.
+        But, this is still needed for alembic's `CreateViewOp`.
+        """
+        return self._compile_create_view_from_table(create, **kw)
 
     def visit_drop_view(self, drop: DropView, **kw: Any) -> str:
         view = drop.element
@@ -908,59 +951,53 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
         mv = alter.element
         return f"ALTER MATERIALIZED VIEW {self.preparer.format_table(mv)} {alter.alter_type} {alter.alter_by}"
 
-    def visit_create_materialized_view(self, create: CreateMaterializedView, **kw: Any) -> str:
-        mv = create.element
+    def _compile_create_mv_from_table(self, create: CreateMaterializedView, **kw):
+        """Helper to compile CREATE MV from a CreateMaterializedView object."""
+        table = create.element
         preparer = self.preparer
 
-        # Start of statement
-        text = "CREATE MATERIALIZED VIEW "
-        if create.if_not_exists:
-            text += "IF NOT EXISTS "
-        text += f"{preparer.format_table(mv)}\n"
+        mv_name = preparer.format_table(table)
+        definition = table.info.get(TableObjectInfoKey.DEFINITION)
+        if not definition:
+            raise exc.CompileError("Materialized view definition is required")
 
-        clauses = []
+        if_not_exists_clause = "IF NOT EXISTS " if create.if_not_exists else ""
 
-        # Comment
-        if mv.comment:
-            comment_str = self.sql_compiler.render_literal_value(mv.comment, sqltypes.String())
-            clauses.append(f"COMMENT {comment_str}")
+        text = f"CREATE MATERIALIZED VIEW {if_not_exists_clause}{mv_name}"
 
-        # Refresh Scheme
-        if mv.refresh_moment or mv.refresh_type:
-            refresh_parts = ["REFRESH"]
-            if mv.refresh_moment:
-                refresh_parts.append(mv.refresh_moment.upper())
-            if mv.refresh_type:
-                refresh_parts.append(mv.refresh_type)
-            clauses.append(" ".join(refresh_parts))
+        if table.comment:
+            text += f"\nCOMMENT '{table.comment}'"
+        dialect_options = table.dialect_options.get(DialectName, {})
+        # Append clauses from dialect_options
+        if partition_by := dialect_options.get(TableInfoKey.PARTITION_BY):
+            text += f"\nPARTITION BY {partition_by}"
+        if distributed_by := dialect_options.get(TableInfoKey.DISTRIBUTED_BY):
+            text += f"\nDISTRIBUTED BY {distributed_by}"
+        if refresh := dialect_options.get(TableInfoKey.REFRESH):
+            text += f"\nREFRESH {refresh}"
+        if order_by := dialect_options.get(TableInfoKey.ORDER_BY):
+            text += f"\nORDER BY {order_by}"
+        if properties := dialect_options.get(TableInfoKey.PROPERTIES):
+            if isinstance(properties, dict):
+                props_str = ", ".join([f'"{k}"="{v}"' for k, v in properties.items()])
+            elif isinstance(properties, str):
+                props_str = properties
+            else:
+                raise exc.CompileError("Properties must be a dictionary or string")
+            text += f"\nPROPERTIES ({props_str})"
 
-        # Partition By
-        if mv.partition_by:
-            clauses.append(f"PARTITION BY {mv.partition_by}")
-
-        # Distributed By
-        if mv.distributed_by:
-            clauses.append(f"DISTRIBUTED BY {mv.distributed_by}")
-
-        # Order By
-        if mv.order_by:
-            order_by = TableAttributeNormalizer.remove_outer_parentheses(mv.order_by)
-            clauses.append(f"ORDER BY ({order_by})")
-
-        # Properties
-        if mv.properties:
-            prop_clauses: List[str] = [f'"{k}" = "{v}"' for k, v in mv.properties.items()]
-            clauses.append(f"PROPERTIES ({', '.join(prop_clauses)})")
-
-        # Join clauses and add to main text
-        if clauses:
-            text += "\n".join(clauses) + "\n"
-
-        # AS Definition
-        text += f"AS\n{mv.definition}"
+        text += f"\nAS\n{definition}"
 
         logger.debug("Compiled SQL for CreateMaterializedView: \n%s", text)
         return text
+
+    def visit_create_materialized_view(self, create, **kw):
+        """
+        CREATE MATERIALIZED VIEW is handled by `visit_create_table` dispatcher
+        based on `table.info['table_type']`.
+        But, this is still needed for alembic's `CreateMaterializedViewOp`.
+        """
+        return self._compile_create_mv_from_table(create, **kw)
 
     def visit_drop_materialized_view(self, drop: DropMaterializedView, **kw: Any) -> str:
         mv = drop.element
@@ -1191,19 +1228,22 @@ class StarRocksDialect(MySQLDialect_pymysql):
         def escape_single_quote(s: str) -> str:
             return s.replace("'", "\\'")
 
+        # Only columns table has ORDINAL_POSITION
+        order_by_clause = "ORDER BY ORDINAL_POSITION ASC" if inf_sch_table == "columns" else ""
+
         st: str = dedent(f"""
             SELECT *
             FROM information_schema.{inf_sch_table}
             WHERE {" AND ".join([f"{k} = '{escape_single_quote(v)}'"
                                  for k, v in kwargs.items()
                                  if k and v])}
+            {order_by_clause}
         """)
         # logger.debug(f"query for information_schema.{inf_sch_table}: {st}")
-        rp: Any = None
+        rows: list[_DecodingRow] = []
         try:
-            rp = connection.execution_options(
-                skip_user_error_events=False
-            ).exec_driver_sql(st)
+            rp = connection.exec_driver_sql(st)
+            rows = [_DecodingRow(row, charset) for row in rp.mappings().fetchall()]
         except exc.DBAPIError as e:
             if self._extract_error_code(e.orig) == 1146:
                 raise exc.NoSuchTableError(
@@ -1211,8 +1251,6 @@ class StarRocksDialect(MySQLDialect_pymysql):
                 ) from e
             else:
                 raise
-        rows: list[_DecodingRow] = [_DecodingRow(
-            row, charset) for row in rp.mappings().fetchall()]
         # logger.debug(f"fetched row from information_schema.{inf_sch_table}, row number: {len(rows)}")
         return rows
 
@@ -1221,9 +1259,57 @@ class StarRocksDialect(MySQLDialect_pymysql):
         self, connection: Connection, table_name: str, schema: Optional[str] = None, **kwargs: Any
     ) -> ReflectedState:
         """
-        Get info from database, and parse it to a ReflectedState object by using the StarRocks parser.
+        Override to return different ReflectedState subclasses based on object type.
+
+        Key: Query table_kind only once here, leveraging @reflection.cache.
         """
-        return self._setup_table_parser(connection, table_name, schema, **kwargs)
+        # 1. Query object type (only once)
+        table_kind = self._get_table_kind_from_db(connection, table_name, schema)
+
+        # 2. Dispatch based on type
+        if table_kind == TableKind.VIEW:
+            return self._setup_view_parser(connection, table_name, schema, **kwargs)
+        elif table_kind == TableKind.MATERIALIZED_VIEW:
+            return self._setup_mv_parser(connection, table_name, schema, **kwargs)
+        else:
+            return self._setup_table_parser(connection, table_name, schema, **kwargs)
+
+    def _get_table_kind_from_db(self, connection: Connection, table_name: str, schema: Optional[str]) -> str:
+        """
+        Query object type from the database (without cache).
+        Only called once in _setup_parser.
+        """
+        # 1. Query information_schema.tables
+        table_rows = self._read_from_information_schema(
+            connection, "tables", table_schema=schema, table_name=table_name
+        )
+        if not table_rows:
+            raise exc.NoSuchTableError(table_name)
+
+        table_type = table_rows[0].TABLE_TYPE
+
+        # 2. BASE TABLE → "TABLE"
+        if table_type == 'BASE TABLE':
+            return TableKind.TABLE
+
+        # 3. VIEW → Further Distinguish
+        if table_type == 'VIEW':
+            mv_rows = self._read_from_information_schema(
+                connection, "materialized_views",
+                table_schema=schema, table_name=table_name
+            )
+            return TableKind.MATERIALIZED_VIEW if mv_rows else TableKind.VIEW
+
+        return TableKind.TABLE  # Default fallback
+
+    @reflection.cache
+    def get_table_kind(self, connection: Connection, table_name: str, schema: Optional[str] = None) -> str:
+        """
+        Get the object's table_kind (from cache).
+        Reuse _setup_parser's cache via _parsed_state_or_create.
+        """
+        parsed_state = self._parsed_state_or_create(connection, table_name, schema)
+        return parsed_state.table_kind
 
     @reflection.cache
     def _setup_table_parser(
@@ -1257,11 +1343,14 @@ class StarRocksDialect(MySQLDialect_pymysql):
             table_schema=schema,
             table_name=table_name,
         )
-        if len(table_config_rows) > 1:
-            raise exc.InvalidRequestError(
-                f"Multiple tables found with name {table_name} in schema {schema}"
-            )
-        table_config_row = table_config_rows[0]
+        if table_config_rows:
+            if len(table_config_rows) > 1:
+                raise exc.InvalidRequestError(
+                    f"Multiple tables found with name {table_name} in schema {schema}"
+                )
+            table_config_row = table_config_rows[0]
+        else:
+            table_config_row = {}
         # logger.debug(f"reflected table config for table: {table_name}, table_config: {dict(table_config_row)}")
 
         column_rows: List[_DecodingRow] = self._read_from_information_schema(
@@ -1454,7 +1543,7 @@ class StarRocksDialect(MySQLDialect_pymysql):
                 index_d["type"] = flavor
 
             if dialect_options:
-                index_d[ColumnSROptionsKey] = dialect_options
+                index_d["dialect_options"] = dialect_options
 
             indexes.append(index_d)
         return indexes
@@ -1483,76 +1572,52 @@ class StarRocksDialect(MySQLDialect_pymysql):
         except Exception:
             return []
 
-    def get_views(
-        self, connection: Connection, schema: Optional[str] = None, **kwargs: Any
-    ) -> Dict[Tuple[Union[str, None], str], "ReflectedViewState"]:
-        """Batch reflection: return all views mapping to ReflectedViewState by (schema, name).
-
-        Prototype: not used by autogenerate yet, provided for potential optimization.
-        """
-        if schema is None:
-            schema = self.default_schema_name
-        results: Dict[tuple[str | None, str], ReflectedViewState] = {}
-        try:
-            rows = self._read_from_information_schema(
-                connection,
-                "views",
-                table_schema=schema,
-            )
-            for row in rows:
-                rv = ReflectionViewDefaults.apply(
-                    name=row.TABLE_NAME,
-                    definition=row.VIEW_DEFINITION,
-                    comment="",
-                    security=row.SECURITY_TYPE,
-                )
-                results[(schema, rv.name)] = rv
-            return results
-        except Exception:
-            return results
-
     @reflection.cache
     def _setup_view_parser(
         self, connection: Connection, view_name: str, schema: Optional[str] = None, **kwargs: Any
-    ) -> Optional[ReflectedViewState]:
+    ) -> ReflectedViewState:
         """
         Fetches raw data for a view and passes it to the parser.
         """
         if schema is None:
             schema = self.default_schema_name
 
+        view_rows = self._read_from_information_schema(
+            connection, "views", table_schema=schema, table_name=view_name
+        )
+        if not view_rows:
+            raise exc.NoSuchTableError(view_name)
+        view_row = view_rows[0]
+
+        table_row = None
         try:
-            view_rows = self._read_from_information_schema(
-                connection, "views", table_schema=schema, table_name=view_name
+            table_rows = self._read_from_information_schema(
+                connection, "tables", table_schema=schema, table_name=view_name
             )
-            if not view_rows:
-                return None
-            view_row = view_rows[0]
-
-            table_row = None
-            try:
-                table_rows = self._read_from_information_schema(
-                    connection, "tables", table_schema=schema, table_name=view_name
-                )
-                if table_rows:
-                    table_row = table_rows[0]
-            except Exception as e:
-                self.logger.info(f"Could not retrieve comment for View '{schema}.{view_name}': {e}")
-
-            parser = self._tabledef_parser
-            return parser.parse_view(view_row, table_row)
-
+            if table_rows:
+                table_row = table_rows[0]
         except Exception as e:
-            self.logger.warning(f"Failed to get view info for '{schema}.{view_name}': {e}")
-            return None
+            self.logger.info(f"Could not retrieve comment for View '{schema}.{view_name}': {e}")
 
-    def get_view(
-        self, connection: Connection, view_name: str, schema: Optional[str] = None, **kwargs: Any
-    ) -> Optional[ReflectedViewState]:
-        """Return all information about a view."""
+        # Reflect columns for view (only name and comment are meaningful for views)
+        column_rows: List[_DecodingRow] = self._read_from_information_schema(
+            connection=connection,
+            inf_sch_table="columns",
+            table_schema=schema,
+            table_name=view_name,
+        )
+
+        parser = self._tabledef_parser
+        return parser.parse_view(view_row, table_row, column_rows)
+
+    def get_view(self, connection: Connection, view_name: str, schema: Optional[str] = None, **kwargs: Any
+    ) -> ReflectedViewState:
+        """
+        Return a ReflectedViewState object for a single view.
+
+        Raises NoSuchTableError if the view does not exist.
+        """
         view_info = self._setup_view_parser(connection, view_name, schema=schema, **kwargs)
-        if not view_info:
-            return None
         logger.debug(
             "get_view normalized: schema=%s, name=%s, security=%s, definition=(%s)",
             schema, view_info.name, view_info.security, view_info.definition
@@ -1562,23 +1627,9 @@ class StarRocksDialect(MySQLDialect_pymysql):
     def get_view_definition(
         self, connection: Connection, view_name: str, schema: Optional[str] = None, **kwargs: Any
     ) -> Optional[str]:
-        """Return the definition of a view (delegates to get_view)."""
-        rv = self.get_view(connection, view_name, schema=schema, **kwargs)
-        return rv.definition if rv else None
-
-    def get_view_comment(
-        self, connection: Connection, view_name: str, schema: Optional[str] = None, **kwargs: Any
-    ) -> Optional[str]:
-        """Return the comment of a view (delegates to get_view)."""
-        rv = self.get_view(connection, view_name, schema=schema, **kwargs)
-        return rv.comment if rv else None
-
-    def get_view_security(
-        self, connection: Connection, view_name: str, schema: Optional[str] = None, **kwargs: Any
-    ) -> Optional[str]:
-        """Return the security type of a view (delegates to get_view)."""
-        rv = self.get_view(connection, view_name, schema=schema, **kwargs)
-        return rv.security if rv else None
+        """Return the definition of a view."""
+        view_state = self._setup_view_parser(connection, view_name, schema=schema, **kwargs)
+        return view_state.definition if view_state else None
 
     def get_materialized_view_names(
         self, connection: Connection, schema: Optional[str] = None, **kwargs: Any
@@ -1599,7 +1650,7 @@ class StarRocksDialect(MySQLDialect_pymysql):
     @reflection.cache
     def _setup_mv_parser(
         self, connection: Connection, view_name: str, schema: Optional[str] = None, **kwargs: Any
-    ) -> Optional[ReflectedMVState]:
+    ) -> ReflectedMVState:
         """
         Fetches all raw data for a Materialized View and passes it to the parser.
         """
@@ -1612,7 +1663,7 @@ class StarRocksDialect(MySQLDialect_pymysql):
                 connection, "materialized_views", table_schema=schema, table_name=view_name
             )
             if not mv_rows:
-                return None
+                raise exc.NoSuchTableError(view_name)
             mv_row = mv_rows[0]
 
             # 2. Get table row (for comment) from information_schema.tables
@@ -1643,24 +1694,23 @@ class StarRocksDialect(MySQLDialect_pymysql):
 
         except Exception as e:
             self.logger.warning(f"Failed to get materialized view info for '{schema}.{view_name}': {e}")
-            return None
+            raise
 
     def get_materialized_view(
         self, connection: Connection, view_name: str, schema: Optional[str] = None, **kwargs: Any
-    ) -> Optional[ReflectedMVState]:
+    ) -> ReflectedMVState:
         """Return all information about a materialized view."""
         mv_info = self._setup_mv_parser(connection, view_name, schema=schema, **kwargs)
-        if not mv_info:
-            return None
-        # TODO: apply defaults if needed, similar to ReflectionViewDefaults
-        return mv_info
+        logger.debug("get_materialized_view normalized: schema=%s, name=%s, definition=(%s)",
+                     schema, view_name, mv_info.definition)
+        return ReflectionMVDefaults.apply_info(mv_info)
 
     def get_materialized_view_options(
         self, connection: Connection, view_name: str, schema: Optional[str] = None, **kwargs: Any
-    ) -> Optional[ReflectedMVOptions]:
+    ) -> Dict[str, str]:
         """Return the physical properties of a materialized view."""
-        mv_info = self.get_materialized_view(connection, view_name, schema=schema, **kwargs)
-        return mv_info.mv_options
+        mv_info = self._setup_mv_parser(connection, view_name, schema=schema, **kwargs)
+        return mv_info.table_options
 
 
 # --- Alembic alter column compilers for StarRocks ---
@@ -1693,6 +1743,7 @@ def _starrocks_change_column(element: MySQLChangeColumn, compiler: StarRocksDDLC
     """
     It's a must for RENAMEing a column, because MODIFY COLUMN does not support changing the name.
     And in StarRocks, there should be two alter clauses if both RENAME and MODIFY
+
     NOTE: Currently, MySQL will pass column_type even for RENAME COLUMN. SO, it will also generate
     an MODIFY COLUMN clause, because we don't know whether the column_type is changed, and StarRocks
     doesn't support CHANGE COLUMN.
@@ -1715,7 +1766,7 @@ def _starrocks_change_column(element: MySQLChangeColumn, compiler: StarRocksDDLC
     ) if (element.nullable is not None
             or element.type_ is not None
             or element.autoincrement is not None
-            or element.comment is not False
+            or element.comment is not None
     ) else None
 
     alter_claus_header: str = alter_table(compiler, element.table_name, element.schema)

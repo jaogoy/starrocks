@@ -104,6 +104,9 @@ def _alter_view(autogen_context: AutogenContext, op: AlterViewOp) -> str:
     args = [f"{op.view_name!r}", f"\n{op_param_indent}{op.definition!r}\n"]
     if op.schema:
         args.append(f"schema={_quote_schema(op.schema)}")
+    if op.columns:
+        # Render columns as a list of dicts
+        args.append(f"columns={op.columns!r}")
     if op.comment:
         args.append(f"comment={op.comment!r}")
     if op.security:
@@ -115,6 +118,7 @@ def _alter_view(autogen_context: AutogenContext, op: AlterViewOp) -> str:
 
 @renderers.dispatch_for(CreateViewOp)
 def _create_view(autogen_context: AutogenContext, op: CreateViewOp) -> str:
+    """Render a CreateViewOp as Python code for migration script."""
     args = [
         f"{op.view_name!r}",
         f"{op.definition!r}"
@@ -125,6 +129,10 @@ def _create_view(autogen_context: AutogenContext, op: CreateViewOp) -> str:
         args.append(f"security={op.security!r}")
     if op.comment:
         args.append(f"comment={op.comment!r}")
+    if op.columns:
+        # Render columns as a list of dicts
+        # Use repr() for clean formatting
+        args.append(f"columns={op.columns!r}")
 
     call = f"op.create_view({', '.join(args)})"
     logger.debug("render create_view: %s", call)

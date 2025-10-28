@@ -160,13 +160,9 @@ class ReflectionViewDefaults:
     @classmethod
     def apply_info(cls, reflection_view_info: ReflectedViewState) -> ReflectedViewState:
         """Apply defaults and normalization to reflected view values.
+        Recently, there is nothing to change.
         """
-        return ReflectedViewState(
-            name=reflection_view_info.name,
-            definition=reflection_view_info.definition,
-            comment=(reflection_view_info.comment or cls.comment()),
-            security=(reflection_view_info.security or cls.security()).upper(),
-        )
+        return reflection_view_info
 
 
 class ReflectionMVDefaults:
@@ -190,3 +186,10 @@ class ReflectionMVDefaults:
             comment=(comment or cls.comment()),
             security=(security or cls.security()).upper(),
         )
+
+    @classmethod
+    def apply_info(cls, reflection_mv_info: ReflectedMVState) -> ReflectedMVState:
+        """Apply defaults and normalization to reflected materialized view values.
+        Recently, there is nothing to change.
+        """
+        return reflection_mv_info

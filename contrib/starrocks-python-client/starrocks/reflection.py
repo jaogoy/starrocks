@@ -18,19 +18,23 @@ from __future__ import annotations
 import json
 import logging
 import re
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Collection, Dict, List, Optional, Set, Union
 
 from sqlalchemy import log, types as sqltypes, util
 from sqlalchemy.dialects.mysql.base import _DecodingRow
 from sqlalchemy.dialects.mysql.reflection import _re_compile
 from sqlalchemy.engine.reflection import Inspector
+from sqlalchemy.schema import Table
 
 from starrocks.common.consts import TableConfigKey
 from starrocks.common.params import (
     ColumnAggInfoKeyWithPrefix,
+    DialectName,
     SRKwargsPrefix,
     TableInfoKey,
     TableInfoKeyWithPrefix,
+    TableKind,
+    TableObjectInfoKey,
 )
 from starrocks.common.types import PartitionType
 from starrocks.common.utils import SQLParseError
@@ -40,9 +44,9 @@ from .drivers.parsers import parse_data_type, parse_mv_refresh_clause
 from .engine.interfaces import (
     MySQLKeyType,
     ReflectedDistributionInfo,
-    ReflectedMVOptions,
     ReflectedMVState,
     ReflectedPartitionInfo,
+    ReflectedRefreshInfo,
     ReflectedState,
     ReflectedTableKeyInfo,
     ReflectedViewState,
@@ -60,25 +64,17 @@ class StarRocksInspector(Inspector):
     def __init__(self, bind):
         super().__init__(bind)
 
-    def get_view(self, view_name: str, schema: Optional[str] = None, **kwargs: Any) -> Optional[ReflectedViewState]:
+    def get_view(self, view_name: str, schema: Optional[str] = None, **kwargs: Any) -> ReflectedViewState:
         """
         Retrieves information about a specific view.
 
         :param view_name: The name of the view to inspect.
         :param schema: The schema of the view; defaults to the default schema name if None.
         :param kwargs: Additional arguments passed to the dialect's get_view method.
-        :return: A ReflectedViewState object, or None if the view does not exist.
+        :return: A ReflectedViewState object.
+        :raises: NoSuchTableError if the view does not exist.
         """
         return self.dialect.get_view(self.bind, view_name, schema=schema, **kwargs)
-
-    def get_views(self, schema: Union[str, None] = None) -> Dict[Tuple[Union[str, None], str], ReflectedViewState]:
-        """
-        Retrieves a dictionary of all views in a given schema.
-
-        :param schema: The schema to inspect; defaults to the default schema name if None.
-        :return: A dictionary mapping (schema, view_name) to ReflectedViewState objects.
-        """
-        return self.dialect.get_views(self.bind, schema=schema)
 
     def get_materialized_view(self, view_name: str, schema: Optional[str] = None, **kwargs: Any) -> Optional[ReflectedMVState]:
         """
@@ -103,16 +99,51 @@ class StarRocksInspector(Inspector):
         mv_state = self.get_materialized_view(view_name, schema=schema, **kwargs)
         return mv_state.definition if mv_state else None
 
-    def get_materialized_view_options(self, view_name: str, schema: Optional[str] = None, **kwargs: Any) -> Optional[ReflectedMVState]:
+    def reflect_table(
+        self,
+        table: Table,
+        include_columns: Optional[Collection[str]] = None,
+        exclude_columns: Collection[str] = (),
+        resolve_fks: bool = True,
+        _extend_on: Optional[Set[Table]] = None,
+        _reflect_info: Optional[Any] = None
+    ) -> None:
         """
-        Retrieves the physical properties of a specific materialized view.
+        Override to set VIEW/MV specific attributes.
+        """
+        # 1. Call parent class (will call get_pk_constraints, etc., which will trigger _setup_parser)
+        super().reflect_table(table, include_columns, exclude_columns, resolve_fks, _extend_on, _reflect_info)
 
-        :param view_name: The name of the materialized view to inspect.
-        :param schema: The schema of the materialized view; defaults to the default schema name if None.
-        :param kwargs: Additional arguments.
-        :return: A ReflectedMVState object, or None if the view does not exist.
+        # 2. Get table_kind and parsed_state (from cache)
+        table_name = table.name
+        schema = table.schema
+        parsed_state = self.dialect._parsed_state_or_create(self.bind, table_name, schema)
+        table_kind = parsed_state.table_kind
+
+        # 3. Set info['table_kind']
+        table.info[TableObjectInfoKey.TABLE_KIND] = table_kind
+
+        # 4. Set specific attributes based on type
+        if table_kind == TableKind.VIEW:
+            self._reflect_view_attributes(table, parsed_state)
+        elif table_kind == TableKind.MATERIALIZED_VIEW:
+            self._reflect_mv_attributes(table, parsed_state)
+
+    def _reflect_view_attributes(self, table: Table, view_state: ReflectedViewState) -> None:
+        """Set View specific attributes from ReflectedViewState.
+
+        Note: Column information (including comments) is already handled by
+        SQLAlchemy's standard reflection flow via get_columns(), which returns
+        ReflectedColumn dictionaries from view_state.columns.
         """
-        return self.dialect.get_materialized_view_options(self.bind, view_name, schema=schema, **kwargs)
+        table.info[TableObjectInfoKey.DEFINITION] = view_state.definition
+        if view_state.security:
+            table.dialect_options.setdefault(DialectName, {})['security'] = view_state.security
+
+    def _reflect_mv_attributes(self, table, mv_state: ReflectedMVState):
+        """Set MV specific attributes from ReflectedMVState"""
+        table.info[TableInfoKey.DEFINITION] = mv_state.definition
+        table.dialect_options.setdefault(DialectName, {}).update(mv_state.table_options)
 
 
 @log.class_logger
@@ -393,12 +424,53 @@ class StarRocksTableDefinitionParser(object):
             buckets=table_config.get(TableConfigKey.DISTRIBUTE_BUCKET),
         )
 
+    def _parse_common_table_options(self, table_row: Optional[_DecodingRow]) -> Dict[str, Any]:
+        """
+        Parses common options from an information_schema.tables row.
+        """
+        opts = {}
+        if not table_row:
+            return opts
+        if table_row.TABLE_COMMENT:
+            logger.debug(f"table.TABLE_COMMENT: {table_row.TABLE_COMMENT}")
+            opts[TableInfoKeyWithPrefix.COMMENT] = table_row.TABLE_COMMENT
+        return opts
+
+    def _parse_physical_table_options(self, table_config: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Parses common physical table options from a `tables_config` dict (not the original _DecodingRow object).
+        This logic is shared between table and materialized view reflection.
+        """
+        opts = {}
+        if partition_clause := table_config.get(TableConfigKey.PARTITION_CLAUSE):
+            logger.debug(f"table_config.{TableConfigKey.PARTITION_CLAUSE}: {partition_clause}")
+            opts[TableInfoKeyWithPrefix.PARTITION_BY] = self.parse_partition_clause(partition_clause)
+
+        if distribute_key := table_config.get(TableConfigKey.DISTRIBUTE_KEY):
+            logger.debug(f"table_config.{TableConfigKey.DISTRIBUTE_KEY}: {distribute_key}")
+            opts[TableInfoKeyWithPrefix.DISTRIBUTED_BY] = str(self._get_distribution_info(table_config))
+
+        if sort_key := table_config.get(TableConfigKey.SORT_KEY):
+            logger.debug(f"table_config.{TableConfigKey.SORT_KEY}: {sort_key}")
+            opts[TableInfoKeyWithPrefix.ORDER_BY] = sort_key
+
+        if properties := table_config.get(TableConfigKey.PROPERTIES):
+            logger.debug(f"table_config.{TableConfigKey.PROPERTIES}: {properties}")
+            try:
+                opts[TableInfoKeyWithPrefix.PROPERTIES] = dict(json.loads(properties or "{}").items())
+            except json.JSONDecodeError:
+                logger.info(f"properties are not valid JSON: {properties}")
+        return opts
+
     def _parse_table_options(self, table: _DecodingRow, table_config: Dict[str, Any], columns: List[_DecodingRow]) -> Dict:
         """
         Parse table options from `information_schema` views,
         and generate the table options with `starrocks_` prefix, which will be used to reflect a Table().
         Then, these options will be exactly the same as the options of a sqlalchemy.Table()
         which is created by users manually, for both sqlalchemy.Table() or ORM styles.
+
+        NOTE: partition info is extracted from SHOW CREATE TABLE rather than directly from information_schema.tables_config.
+            But, here we can directly use table_config, bucause they are already filled into the table_config dict.
 
         Args:
             table: A row from `information_schema.tables`.
@@ -409,17 +481,15 @@ class StarRocksTableDefinitionParser(object):
         Returns:
             A dictionary of StarRocks-specific table options with the 'starrocks_' prefix.
         """
-        opts = {}
+        opts = self._parse_common_table_options(table)
+        # Set partition, distribution, sort key, properties
+        opts.update(self._parse_physical_table_options(table_config))
 
         if table_engine := table_config.get(TableConfigKey.TABLE_ENGINE):
             logger.debug(f"table_config.{TableConfigKey.TABLE_ENGINE}: {table_engine}")
             # if table_engine.upper() != TableEngine.OLAP:
             #     raise NotImplementedError(f"Table engine {table_engine} is not supported now.")
             opts[TableInfoKeyWithPrefix.ENGINE] = table_engine.upper()
-
-        if table.TABLE_COMMENT:
-            logger.debug(f"table.TABLE_COMMENT: {table.TABLE_COMMENT}")
-            opts[TableInfoKeyWithPrefix.COMMENT] = table.TABLE_COMMENT
 
         # Get key type from information_schema.tables_config.TABLE_MODEL,
         # and key columns from information_schema.columns.COLUMN_KEY
@@ -432,51 +502,43 @@ class StarRocksTableDefinitionParser(object):
                 prefixed_key = f"{SRKwargsPrefix}{key_str}"
                 opts[prefixed_key] = key_columns_str
 
-        if partition_clause := table_config.get(TableConfigKey.PARTITION_CLAUSE):
-            logger.debug(f"table_config.{TableConfigKey.PARTITION_CLAUSE}: {partition_clause}")
-            opts[TableInfoKeyWithPrefix.PARTITION_BY] = self.parse_partition_clause(partition_clause)
-
-        if distribute_key := table_config.get(TableConfigKey.DISTRIBUTE_KEY):
-            logger.debug(f"table_config.{TableConfigKey.DISTRIBUTE_KEY}: {distribute_key}")
-            opts[TableInfoKeyWithPrefix.DISTRIBUTED_BY] = str(self._get_distribution_info(table_config))
-
-        if sort_key := table_config.get(TableConfigKey.SORT_KEY):
-            logger.debug(f"table_config.{TableConfigKey.SORT_KEY}: {sort_key}")
-            # columns = [c.strip() for c in table_config.get('SORT_KEY').split(",")]
-            opts[TableInfoKeyWithPrefix.ORDER_BY] = sort_key
-
-        if properties := table_config.get(TableConfigKey.PROPERTIES):
-            logger.debug(f"table_config.{TableConfigKey.PROPERTIES}: {properties}")
-            try:
-                opts[TableInfoKeyWithPrefix.PROPERTIES] = dict(
-                    json.loads(properties or "{}").items()
-                )
-            except json.JSONDecodeError:
-                logger.info(f"properties are not valid JSON: {properties}")
-
         return opts
 
-    def parse_view(self, view_row: _DecodingRow, table_row: Optional[_DecodingRow]) -> ReflectedViewState:
+    def parse_view(
+        self,
+        view_row: _DecodingRow,
+        table_row: Optional[_DecodingRow],
+        column_rows: List[_DecodingRow]
+    ) -> ReflectedViewState:
         """
         Parses raw reflection data into a structured ReflectedViewState object.
 
-        `comment`: The comment is in information_schema.tables, but it's better to fetch it from
-        information_schema.views, if it's supported in the future.
-
-        `security`: It may be not 100% extractable from information_schema.views now.
-
         Args:
-            view_row: A row from `information_schema.views`.
-            table_row: An optional row from `information_schema.tables` for the same view
+            view_row: Row from information_schema.views
+            table_row: Optional row from information_schema.tables (for comment)
+            column_rows: Rows from information_schema.columns (for column names, types, and comments)
+
         Returns:
-            A ReflectedViewState object.
+            ReflectedViewState with parsed view information
         """
-        return ReflectedViewState(
-            name=view_row.TABLE_NAME,
+        state = ReflectedViewState(
+            table_name=view_row.TABLE_NAME,
             definition=view_row.VIEW_DEFINITION,
-            comment=table_row.TABLE_COMMENT if table_row else None,
-            security=view_row.SECURITY_TYPE.upper(),
         )
+
+        # Parse columns using standard _parse_column method
+        # For views, we care about name, type, and comment
+        # Type and nullable are inferred from the SELECT statement
+        if column_rows:
+            state.columns = [
+                self._parse_column(col)
+                for col in column_rows
+            ]
+
+        table_options = self._parse_common_table_options(table_row)
+        table_options[TableInfoKeyWithPrefix.SECURITY] = view_row.SECURITY_TYPE.upper()
+        state.table_options = table_options
+        return state
 
     def parse_mv(
         self,
@@ -499,33 +561,21 @@ class StarRocksTableDefinitionParser(object):
         logger.debug(f"mv create ddl for {mv_row.TABLE_SCHEMA}.{mv_row.TABLE_NAME}: {ddl}")
 
         # 1. Parse the DDL to get properties that are only available there.
-        # We create a temporary state object from the DDL parsing.
+        #   Includes partition, refresh, and properties.
         try:
             parsed_state = self._parse_mv_ddl(mv_row.TABLE_NAME, ddl, mv_row.TABLE_SCHEMA)
         except Exception as e:
             self.logger.warning(f"Failed to parse DDL for MV '{mv_row.TABLE_SCHEMA}.{mv_row.TABLE_NAME}', reflection may be incomplete: {e}")
-            parsed_state = ReflectedMVState(name=mv_row.TABLE_NAME, schema=mv_row.TABLE_SCHEMA, definition=ddl)
+            parsed_state = ReflectedMVState(mv_name=mv_row.TABLE_NAME, definition=ddl)
 
-        # 2. Create the final state using the parsed definition and other reliable sources.
-        final_state = ReflectedMVState(
-            name=mv_row.TABLE_NAME,
-            schema=mv_row.TABLE_SCHEMA,
-            definition=parsed_state.definition,
-            comment=table_row.TABLE_COMMENT if table_row else None,
-            mv_options=parsed_state.mv_options # Start with options parsed from DDL
-        )
+        # 2. Augment/overwrite with more reliable info from other sources.
+        parsed_state.table_options.update(self._parse_common_table_options(table_row))
 
-        # 3. Augment/overwrite with more reliable info from information_schema.tables_config
         if config_row:
-            final_state.mv_options.order_by = config_row.SORT_KEY
-            final_state.mv_options.distributed_by = ReflectedDistributionInfo(
-                type=config_row.DISTRIBUTE_TYPE,
-                columns=config_row.DISTRIBUTE_KEY,
-                buckets=config_row.DISTRIBUTE_BUCKET,
-                distribution_method=None
-            )
+            physical_options = self._parse_physical_table_options(config_row)
+            parsed_state.table_options.update(physical_options)
 
-        return final_state
+        return parsed_state
 
     def _parse_mv_ddl(
         self,
@@ -546,11 +596,14 @@ class StarRocksTableDefinitionParser(object):
         else:
             raise SQLParseError(f"Could not find 'AS SELECT' in CREATE MATERIALIZED VIEW statement for {mv_name}", create_mv_ddl)
 
-        state = ReflectedMVState(name=mv_name, definition=mv_definition, schema=schema)
+        state = ReflectedMVState(
+            mv_name=mv_name,
+            definition=mv_definition,
+        )
 
         partition_match = self._PARTITION_BY_PATTERN.search(clauses_str)
         if partition_match:
-            state.mv_options.partition_by = self.parse_partition_clause(partition_match.group(1).strip())
+            state.table_options[TableInfoKeyWithPrefix.PARTITION_BY] = self.parse_partition_clause(partition_match.group(1).strip())
 
         # Use Lark parser for the refresh clause
         try:
@@ -559,8 +612,10 @@ class StarRocksTableDefinitionParser(object):
                 refresh_clause_str = refresh_text_match.group(0).strip()
                 logger.debug(f"refresh_clause_str: {refresh_clause_str}")
                 parsed_refresh = parse_mv_refresh_clause(refresh_clause_str)
-                state.mv_options.refresh_moment = parsed_refresh.get("refresh_moment")
-                state.mv_options.refresh_type = parsed_refresh.get("refresh_type")
+                state.table_options[TableInfoKeyWithPrefix.REFRESH] = ReflectedRefreshInfo(
+                    moment=parsed_refresh.get("refresh_moment"),
+                    type=parsed_refresh.get("refresh_type")
+                )
         except Exception as e:
             logger.warning(f"Failed to parse refresh clause for MV {mv_name}, falling back to regex: {e}")
             # Fallback to simple regex if lark parsing fails
@@ -570,7 +625,7 @@ class StarRocksTableDefinitionParser(object):
         if properties_match:
             # Use string instead of dictionary now.
             # state.mv_options.properties = self._parse_properties(properties_match.group(1))
-            state.mv_options.properties = properties_match.group(1).strip()
+            state.table_options[TableInfoKeyWithPrefix.PROPERTIES] = properties_match.group(1).strip()
 
         return state
 
@@ -578,16 +633,15 @@ class StarRocksTableDefinitionParser(object):
         """Fallback refresh clause parser using regex."""
         refresh_match = re.search(r"REFRESH\s+(.+?)(?=\s*(?:PROPERTIES|AS))", ddl_part, re.IGNORECASE | re.DOTALL)
         if refresh_match:
-            mv_options: ReflectedMVOptions = state.mv_options
             refresh_text = refresh_match.group(1).strip().upper()
-            if refresh_text.startswith("IMMEDIATE"):
-                mv_options.refresh_moment = "IMMEDIATE"
-                mv_options.refresh_type = refresh_text[len("IMMEDIATE"):].strip()
-            elif refresh_text.startswith("DEFERRED"):
-                mv_options.refresh_moment = "DEFERRED"
-                mv_options.refresh_type = refresh_text[len("DEFERRED"):].strip()
-            else:
-                mv_options.refresh_type = refresh_text
+            moment, type = None, None
+            parts = refresh_text.split()
+            if len(parts) > 0:
+                if parts[0] in ("IMMEDIATE", "DEFERRED"):
+                    moment = parts.pop(0)
+                if parts:
+                    type = " ".join(parts)
+            state.table_options[TableInfoKeyWithPrefix.REFRESH] = ReflectedRefreshInfo(moment=moment, type=type)
 
     def _parse_properties(self, props_str: str) -> Dict[str, str]:
         """

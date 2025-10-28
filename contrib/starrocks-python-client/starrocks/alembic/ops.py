@@ -18,6 +18,10 @@ import logging
 from typing import Dict, List, Optional, Union
 
 from alembic.operations import Operations, ops
+from sqlalchemy import Table
+
+from starrocks.common.params import DialectName, TableObjectInfoKey
+from starrocks.sql.schema import extract_view_columns
 
 
 logger = logging.getLogger(__name__)
@@ -29,20 +33,24 @@ class AlterViewOp(ops.MigrateOperation):
     def __init__(
         self,
         view_name: str,
-        definition: str,
+        definition: Optional[str] = None,
         schema: Optional[str] = None,
+        columns: Union[List[Dict], None] = None,
         comment: Optional[str] = None,
         security: Optional[str] = None,
         reverse_view_definition: Optional[str] = None,
+        reverse_view_columns: Union[List[Dict], None] = None,
         reverse_view_comment: Optional[str] = None,
         reverse_view_security: Optional[str] = None,
     ):
         self.view_name = view_name
         self.definition = definition
         self.schema = schema
+        self.columns = columns
         self.comment = comment
         self.security = security
         self.reverse_view_definition = reverse_view_definition
+        self.reverse_view_columns = reverse_view_columns
         self.reverse_view_comment = reverse_view_comment
         self.reverse_view_security = reverse_view_security
 
@@ -53,9 +61,11 @@ class AlterViewOp(ops.MigrateOperation):
         view_name: str,
         definition: str,
         schema: Optional[str] = None,
+        columns: Union[List[Dict], None] = None,
         comment: Optional[str] = None,
         security: Optional[str] = None,
         reverse_view_definition: Optional[str] = None,
+        reverse_view_columns: Union[List[Dict], None] = None,
         reverse_view_comment: Optional[str] = None,
         reverse_view_security: Optional[str] = None,
     ):
@@ -64,9 +74,11 @@ class AlterViewOp(ops.MigrateOperation):
             view_name,
             definition,
             schema=schema,
+            columns=columns,
             comment=comment,
             security=security,
             reverse_view_definition=reverse_view_definition,
+            reverse_view_columns=reverse_view_columns,
             reverse_view_comment=reverse_view_comment,
             reverse_view_security=reverse_view_security,
         )
@@ -79,9 +91,11 @@ class AlterViewOp(ops.MigrateOperation):
             self.view_name,
             self.reverse_view_definition,
             schema=self.schema,
+            columns=self.reverse_view_columns,
             comment=self.reverse_view_comment,
             security=self.reverse_view_security,
             reverse_view_definition=self.definition,
+            reverse_view_columns=self.columns,
             reverse_view_comment=self.comment,
             reverse_view_security=self.security,
         )
@@ -94,18 +108,37 @@ class CreateViewOp(ops.MigrateOperation):
         view_name: str,
         definition: str,
         schema: Union[str, None] = None,
-        security: Union[str, None] = None,
         comment: Union[str, None] = None,
+        security: Union[str, None] = None,
+        columns: Union[List[Dict], None] = None,
         or_replace: bool = False,
         if_not_exists: bool = False,
+        **kw,
     ) -> None:
         self.view_name = view_name
         self.definition = definition
         self.schema = schema
-        self.security = security
         self.comment = comment
+        self.security = security
+        self.columns = columns
         self.or_replace = or_replace
         self.if_not_exists = if_not_exists
+        self.kw = kw
+
+    @classmethod
+    def from_view(cls, view: Table) -> "CreateViewOp":
+        """Create Op from a View object (which is a Table)."""
+        opts = view.dialect_options.get(DialectName, {})
+
+        return cls(
+            view.name,
+            view.info.get(TableObjectInfoKey.DEFINITION),
+            schema=view.schema,
+            comment=view.comment,
+            security=opts.get('security'),
+            columns=extract_view_columns(view),
+            **view.kwargs,
+        )
 
     @classmethod
     def create_view(
@@ -114,19 +147,23 @@ class CreateViewOp(ops.MigrateOperation):
         view_name: str,
         definition: str,
         schema: Union[str, None] = None,
-        security: Union[str, None] = None,
         comment: Union[str, None] = None,
+        security: Union[str, None] = None,
+        columns: Union[List[Dict], None] = None,
         or_replace: bool = False,
         if_not_exists: bool = False,
+        **kw,
     ):
         op = cls(
             view_name,
             definition,
             schema=schema,
-            security=security,
             comment=comment,
+            security=security,
+            columns=columns,
             or_replace=or_replace,
             if_not_exists=if_not_exists,
+            **kw,
         )
         return operations.invoke(op)
 
@@ -138,6 +175,7 @@ class CreateViewOp(ops.MigrateOperation):
             _reverse_view_definition=self.definition,
             _reverse_view_comment=self.comment,
             _reverse_view_security=self.security,
+            _reverse_view_columns=self.columns,
         )
 
 
@@ -151,6 +189,7 @@ class DropViewOp(ops.MigrateOperation):
         _reverse_view_definition: Optional[str] = None,
         _reverse_view_comment: Optional[str] = None,
         _reverse_view_security: Optional[str] = None,
+        _reverse_view_columns: Optional[List[Dict]] = None,
     ):
         self.view_name = view_name
         self.schema = schema
@@ -158,6 +197,20 @@ class DropViewOp(ops.MigrateOperation):
         self._reverse_view_definition = _reverse_view_definition
         self._reverse_view_comment = _reverse_view_comment
         self._reverse_view_security = _reverse_view_security
+        self._reverse_view_columns = _reverse_view_columns
+
+    @classmethod
+    def from_view(cls, view: Table) -> "DropViewOp":
+        """Create DropViewOp from a View object (which is a Table)."""
+        opts = view.dialect_options.get(DialectName, {})
+        return cls(
+            view.name,
+            schema=view.schema,
+            _reverse_view_definition=view.info.get(TableObjectInfoKey.DEFINITION),
+            _reverse_view_comment=view.comment,
+            _reverse_view_security=opts.get('security'),
+            _reverse_view_columns=extract_view_columns(view),
+        )
 
     @classmethod
     def drop_view(cls, operations: Operations, view_name: str, schema: Optional[str] = None, if_exists: bool = False):
@@ -174,6 +227,7 @@ class DropViewOp(ops.MigrateOperation):
             schema=self.schema,
             comment=self._reverse_view_comment,
             security=self._reverse_view_security,
+            columns=self._reverse_view_columns,
         )
 
 
@@ -212,19 +266,36 @@ class AlterMaterializedViewOp(ops.MigrateOperation):
 
 @Operations.register_operation("create_materialized_view")
 class CreateMaterializedViewOp(ops.MigrateOperation):
-    def __init__(self, view_name: str, definition: str, properties: Union[dict, None] = None,
-                 schema: Union[str, None] = None,
-                 if_not_exists: bool = False) -> None:
+    def __init__(
+        self,
+        view_name: str,
+        definition: str,
+        schema: Union[str, None] = None,
+        comment: Union[str, None] = None,
+        if_not_exists: bool = False,
+        **kw,
+    ) -> None:
         self.view_name = view_name
         self.definition = definition
-        self.properties = properties
         self.schema = schema
+        self.comment = comment
         self.if_not_exists = if_not_exists
+        self.kw = kw
 
     @classmethod
-    def create_materialized_view(cls, operations, view_name: str, definition: str, properties: Union[dict, None] = None, schema: Union[str, None] = None, if_not_exists: bool = False):
-        op = cls(view_name, definition, properties=properties,
-                 schema=schema, if_not_exists=if_not_exists)
+    def from_materialized_view(cls, mv: Table) -> "CreateMaterializedViewOp":
+        """Create Op from a MaterializedView object (which is a Table)."""
+        return cls(
+            mv.name,
+            mv.info.get(TableObjectInfoKey.DEFINITION),
+            schema=mv.schema,
+            comment=mv.comment,
+            **mv.kwargs,
+        )
+
+    @classmethod
+    def create_materialized_view(cls, operations, view_name: str, definition: str, schema: Union[str, None] = None, if_not_exists: bool = False, **kw):
+        op = cls(view_name, definition, schema=schema, if_not_exists=if_not_exists, **kw)
         return operations.invoke(op)
 
     def reverse(self) -> ops.MigrateOperation:
