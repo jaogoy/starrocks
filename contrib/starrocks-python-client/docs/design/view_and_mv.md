@@ -94,7 +94,7 @@ View(
     schema: Optional[str] = None,
     comment: Optional[str] = None,
     columns: Optional[List[str | dict]] = None,  # Alternative column specification
-    starrocks_security: Optional[str] = None,  # INVOKER or DEFINER
+    starrocks_security: Optional[str] = None,  # INVOKER or NONE (DEFINER not supported)
     **kwargs
 )
 

@@ -197,9 +197,11 @@ class TestReflectionViewsIntegration:
                 assert 'count' in normalized_def
                 assert 'users' in normalized_def
 
-                # Note: StarRocks may not reliably preserve SECURITY attribute in reflection
-                logger.info("Reflected view with security: table_kind=%s, has_definition=%s",
-                           view_table.info.get('table_kind'), 'definition' in view_table.info)
+                # Verify security attribute is correctly reflected from SHOW CREATE VIEW
+                security = view_table.dialect_options.get('starrocks', {}).get('security')
+                assert security == 'INVOKER', f"Expected security='INVOKER', got '{security}'"
+                logger.info("Reflected view with security: table_kind=%s, security=%s",
+                           view_table.info.get('table_kind'), security)
 
             finally:
                 connection.execute(text(f"DROP VIEW IF EXISTS {view_name}"))
@@ -596,10 +598,9 @@ class TestReflectionViewsIntegration:
                     view_table.info.get("definition"), remove_qualifiers=True
                 ) == TableAttributeNormalizer.normalize_sql(expected_def)
 
-                # 3. Verify dialect-specific options
-                # NOTE: The SECURITY property is not reliably reflected by StarRocks yet.
-                # This assertion is commented out but can be enabled when support is confirmed.
-                # assert view_table.dialect_options["starrocks"]["security"] == "DEFINER"
+                # 3. Verify dialect-specific options (security is now correctly reflected from SHOW CREATE VIEW)
+                security = view_table.dialect_options.get('starrocks', {}).get('security')
+                assert security == "INVOKER", f"Expected security='INVOKER', got '{security}'"
 
                 # 4. Verify reflected columns (name and comment)
                 assert len(view_table.c) == 2
@@ -729,9 +730,9 @@ class TestReflectionViewsIntegration:
                 # 2. Verify comment
                 assert view_table.comment == "Comprehensive view with all attributes for testing"
 
-                # 3. Verify security (if supported by StarRocks)
-                # Note: StarRocks may not reliably reflect SECURITY attribute
-                security = view_table.dialect_options.get('starrocks', {}).get('security', '')
+                # 3. Verify security attribute is correctly reflected from SHOW CREATE VIEW
+                security = view_table.dialect_options.get('starrocks', {}).get('security')
+                assert security == 'INVOKER', f"Expected security='INVOKER', got '{security}'"
                 logger.info(f"Security attribute: {security}")
 
                 # 4. Verify definition contains all complex elements

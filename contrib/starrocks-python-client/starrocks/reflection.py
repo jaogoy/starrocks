@@ -172,6 +172,8 @@ class StarRocksTableDefinitionParser(object):
     _BUCKETS_REPLACE_PATTERN = re.compile(r'\s+BUCKETS\s+\d+', re.IGNORECASE)
     _PARTITION_BY_PATTERN = re.compile(r"PARTITION BY\s*(.+?)(?=\s*(?:DISTRIBUTED BY|ORDER BY|REFRESH|PROPERTIES|AS|\Z))", re.IGNORECASE | re.DOTALL)
 
+    _VIEW_SECURITY_PATTERN = re.compile(r'\s+SECURITY\s+(INVOKER|DEFINER|NONE)\b', re.IGNORECASE)
+
     # Patterns to parse CREATE MATERIALIZED VIEW statement
     _MV_REFRESH_PATTERN = re.compile(r"\s*REFRESH\s+(.+?)(?=\s*(?:PARTITION BY|DISTRIBUTED BY|ORDER BY|PROPERTIES|AS|\Z))", re.IGNORECASE | re.DOTALL)
     _MV_PROPERTIES_PATTERN = re.compile(r"\s*PROPERTIES\s*\((.+?)\)(?=\s*(?:PARTITION BY|DISTRIBUTED BY|ORDER BY|REFRESH|AS|\Z))", re.IGNORECASE | re.DOTALL)
@@ -508,7 +510,8 @@ class StarRocksTableDefinitionParser(object):
         self,
         view_row: _DecodingRow,
         table_row: Optional[_DecodingRow],
-        column_rows: List[_DecodingRow]
+        column_rows: List[_DecodingRow],
+        create_view_sql: Optional[str] = None
     ) -> ReflectedViewState:
         """
         Parses raw reflection data into a structured ReflectedViewState object.
@@ -517,9 +520,10 @@ class StarRocksTableDefinitionParser(object):
             view_row: Row from information_schema.views
             table_row: Optional row from information_schema.tables (for comment)
             column_rows: Rows from information_schema.columns (for column names, types, and comments)
+            create_view_sql: Optional CREATE VIEW statement from SHOW CREATE VIEW (to parse SECURITY)
 
         Returns:
-            ReflectedViewState with parsed view information
+            A ReflectedViewState object with parsed view information
         """
         state = ReflectedViewState(
             table_name=view_row.TABLE_NAME,
@@ -536,9 +540,43 @@ class StarRocksTableDefinitionParser(object):
             ]
 
         table_options = self._parse_common_table_options(table_row)
-        table_options[TableInfoKeyWithPrefix.SECURITY] = view_row.SECURITY_TYPE.upper()
+
+        # table_options[TableInfoKeyWithPrefix.SECURITY] = view_row.SECURITY_TYPE.upper()
+        # Parse SECURITY from SHOW CREATE VIEW output
+        # Note: information_schema.views.SECURITY_TYPE is always empty in StarRocks (v3.5)
+        security = self._parse_sql_security_from_create_view(create_view_sql)
+        if security:
+            table_options[TableInfoKeyWithPrefix.SECURITY] = security
+
         state.table_options = table_options
         return state
+
+    def _parse_sql_security_from_create_view(self, create_view_sql: Optional[str]) -> Optional[str]:
+        """
+        Parse SECURITY clause from CREATE VIEW statement.
+
+        Args:
+            create_view_sql: CREATE VIEW statement from SHOW CREATE VIEW
+
+        Returns:
+            'INVOKER' or 'DEFINER' if found, None otherwise
+
+        Example:
+            CREATE VIEW v1 SECURITY INVOKER AS SELECT ...
+            -> Returns 'INVOKER'
+        """
+        if not create_view_sql:
+            return None
+
+        # Match: SECURITY {INVOKER|DEFINER|NONE}
+        match = self._VIEW_SECURITY_PATTERN.search(create_view_sql)
+
+        if match:
+            security_type = match.group(1).upper()
+            # logger.debug(f"Parsed SECURITY: {security_type}")
+            return security_type
+
+        return None
 
     def parse_mv(
         self,

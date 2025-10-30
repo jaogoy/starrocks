@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
 from typing import Any, Dict, List, Optional, Union
 
 from sqlalchemy import Column, Table
@@ -20,6 +21,9 @@ from sqlalchemy.sql.selectable import Selectable
 
 from starrocks.common.params import TableKind, TableObjectInfoKey
 from starrocks.datatype import STRING
+
+
+logger = logging.getLogger(__name__)
 
 
 DefinitionType = Union[str, "Selectable"]
@@ -78,6 +82,9 @@ class View(Table):
         schema: Optional[str] = None,
         comment: Optional[str] = None,
         columns: Optional[List[ColumnDefinition]] = None,
+        keep_existing: bool = False,
+        extend_existing: bool = False,
+        _no_init: bool = True,
         **kwargs: Any,
     ) -> None:
         """
@@ -93,9 +100,15 @@ class View(Table):
             schema: Schema name (optional)
             comment: View comment (optional)
             columns: List of column definitions (optional). Can be:
-                - Column objects: Column('id', Integer)
+                - Column objects: Column('id', Integer) as standard SQLAlchemy Column objects
                 - Strings: 'id' (just column name)
                 - Dicts: {'name': 'id', 'comment': 'User ID'}
+            keep_existing: When True, if the view already exists in the MetaData,
+                ignore further arguments and return the existing View object.
+                This allows defining a view that may already be defined elsewhere.
+            extend_existing: When True, if the view already exists in the MetaData,
+                apply further arguments to update the existing View object.
+                This allows modifying an existing view definition.
             **kwargs: Additional keyword arguments, including:
                 - starrocks_security: Security mode (INVOKER or NONE). Note: DEFINER is not supported by StarRocks.
                 - Other dialect-specific parameters with starrocks_ prefix for future use
@@ -125,45 +138,115 @@ class View(Table):
                  comment='User view',
                  starrocks_security='INVOKER')
 
+            # Update existing view definition
+            View('v1', metadata,
+                 definition='SELECT id, name FROM users',
+                 comment='Updated view',
+                 extend_existing=True)
+
+            # Get existing view reference (or create if not exists)
+            View('v1', metadata,
+                 definition='SELECT * FROM users',
+                 keep_existing=True)
+
         Notes:
             - StarRocks VIEW columns only support name and comment (not type/nullable)
             - Column types are automatically inferred from the SELECT statement, but useless now
             - Type parameter in Column() is a placeholder for SQLAlchemy compatibility
         """
+        # Follow Table's pattern: skip initialization if _no_init=True
+        # This happens when:
+        # 1. Python automatically calls __init__ after __new__ returns (for existing tables)
+        # 2. Getting an existing view without extend_existing
+        if _no_init:
+            return
+
         # Validate definition is provided
         if definition is None:
             raise ValueError("View definition is required. Use definition='SELECT ...' parameter.")
 
-        # Set up info dict with view-specific metadata
-        info = kwargs.setdefault("info", {})
-        info[TableObjectInfoKey.TABLE_KIND] = TableKind.VIEW
+        # Prepare view-specific info
+        view_info = {TableObjectInfoKey.TABLE_KIND: TableKind.VIEW}
+        # Process definition (handles both str and Selectable)
+        view_info.update(self._process_definition(definition))
 
-        # Handle both str and Selectable definitions
-        if isinstance(definition, str):
-            info[TableObjectInfoKey.DEFINITION] = definition
-        else:
-            # Compile Selectable to SQL string
-            from sqlalchemy.sql import ClauseElement
-
-            if isinstance(definition, ClauseElement):
-                # TODO: Figure out how to get the dialect from the metadata
-                compiled = definition.compile(compile_kwargs={"literal_binds": True})
-                info[TableObjectInfoKey.DEFINITION] = str(compiled)
-                info[TableObjectInfoKey.SELECTABLE] = definition  # Keep original for reference
-            else:
-                raise TypeError(f"definition must be str or Selectable, got {type(definition)}")
+        # Prepare view info for Table.__init__
+        kwargs.setdefault("info", {}).update(view_info)
 
         # Convert simplified column definitions to Column objects
         normalized_columns = []
         if columns:
             normalized_columns.extend(self._normalize_columns(columns))
-
         # Merge with *args columns
-        all_columns = list(args) + normalized_columns
+        args = list(args) + normalized_columns
 
-        # Call Table.__init__, which automatically handles comment, columns, and starrocks_* parameters
-        # The all_columns will be passed to Table as Column objects
-        super().__init__(name, metadata, *all_columns, schema=schema, comment=comment, **kwargs)
+        # Let Table to handle comment, columns, and starrocks_* parameters
+        # Pass keep_existing and extend_existing to Table for proper singleton behavior
+        logger.debug(f"View.__init__('{name}'): view_info={view_info}, kwargs['info'] id={id(kwargs.get('info'))}")
+        super().__init__(name, metadata, *args, schema=schema, comment=comment,
+                        keep_existing=keep_existing, extend_existing=extend_existing,
+                        _no_init=False, **kwargs)
+        logger.debug(f"  After Table.__init__: self.info id={id(self.info)}, self.info={self.info}")
+
+        # set info again to make sure Table.__init__() won't discard them.
+        # self.info.update(view_info)
+
+    def _init_existing(self, *args, **kwargs):
+        """
+        Override Table._init_existing to handle View-specific parameters.
+
+        This is called when extend_existing=True and the view already exists in metadata.
+        We need to extract View-specific parameters before passing to Table._init_existing.
+        """
+        # Extract View-specific parameters
+        definition = kwargs.pop('definition', None)
+        columns = kwargs.pop('columns', None)
+
+        # Update view definition if provided
+        if definition is not None:
+            view_info = self._process_definition(definition)
+            self.info.update(view_info)
+
+        # Handle columns parameter (View-specific simplified syntax)
+        # Convert to Column objects and prepend to args so Table._init_existing can process them
+        if columns:
+            normalized_columns = self._normalize_columns(columns)
+            args = args + tuple(normalized_columns)
+
+        super()._init_existing(*args, **kwargs)
+
+    @staticmethod
+    def _process_definition(definition: DefinitionType) -> Dict[str, Any]:
+        """
+        Process view definition and return view_info dict.
+
+        This is a helper method to avoid code duplication between __init__ and _init_existing.
+
+        Args:
+            definition: SQL string or SQLAlchemy Selectable object
+
+        Returns:
+            Dict containing DEFINITION and optionally SELECTABLE keys
+
+        Raises:
+            TypeError: If definition is not str or Selectable
+        """
+        view_info = {}
+
+        if isinstance(definition, str):
+            view_info[TableObjectInfoKey.DEFINITION] = definition
+        else:
+            # Compile Selectable to SQL string
+            from sqlalchemy.sql import ClauseElement
+
+            if isinstance(definition, ClauseElement):
+                compiled = definition.compile(compile_kwargs={"literal_binds": True})
+                view_info[TableObjectInfoKey.DEFINITION] = str(compiled)
+                view_info[TableObjectInfoKey.SELECTABLE] = definition
+            else:
+                raise TypeError(f"definition must be str or Selectable, got {type(definition)}")
+
+        return view_info
 
     @staticmethod
     def _normalize_columns(columns: List[ColumnDefinition]) -> List[Column]:
@@ -229,6 +312,9 @@ class MaterializedView(View):
         schema: Optional[str] = None,
         comment: Optional[str] = None,
         columns: Optional[List[ColumnDefinition]] = None,
+        keep_existing: bool = False,
+        extend_existing: bool = False,
+        _no_init: bool = True,
         **kwargs: Any,
     ) -> None:
         """
@@ -242,6 +328,10 @@ class MaterializedView(View):
             schema: Schema name (optional)
             comment: Materialized view comment (optional)
             columns: List of column definitions (optional), same format as View
+            keep_existing: When True, if the materialized view already exists, ignore further
+                arguments and return the existing object.
+            extend_existing: When True, if the materialized view already exists, apply further
+                arguments to update the existing object.
             **kwargs: Additional keyword arguments, including:
                 - starrocks_partition_by: Partition expression
                 - starrocks_refresh: Refresh mode (ASYNC or MANUAL)
@@ -268,10 +358,14 @@ class MaterializedView(View):
         # First, call the parent View's __init__ to handle the definition
         # and other common parameters.
         super().__init__(name, metadata, *args, definition=definition, schema=schema,
-                        comment=comment, columns=columns, **kwargs)
+                        comment=comment, columns=columns,
+                        keep_existing=keep_existing, extend_existing=extend_existing,
+                        _no_init=_no_init, **kwargs)
 
         # Then, override the table_kind to be specific to MaterializedView.
-        self.info[TableObjectInfoKey.TABLE_KIND] = TableKind.MATERIALIZED_VIEW
+        # Only do this if we're actually initializing (not skipping due to _no_init)
+        if not _no_init:
+            self.info[TableObjectInfoKey.TABLE_KIND] = TableKind.MATERIALIZED_VIEW
 
     @property
     def partition_by(self) -> Optional[str]:

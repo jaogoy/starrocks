@@ -35,13 +35,27 @@ logger = logging.getLogger("starrocks.alembic.render")
 
 
 op_param_indent: Final[str] = " " * 4
+op_param_indent_with_line: Final[str] = "\n" + op_param_indent
+op_param_separator: Final[str] = "," + op_param_indent_with_line
+op_close_paren_indent: Final[str] = "\n"
 
 
 def render_column_type(type_: str, obj: Any, autogen_context: AutogenContext):
     """
-    Custom rendering function. To reander ARRAY, MAP, STRUCT, etc.
+    Custom rendering function. To render ARRAY, MAP, STRUCT, etc.
     Currently, it's only used to import the starrocks.datatype module.
     We will use __repr__ to render the type, without the prefix "sr."
+
+    NOTE: StarRocksImpl.compare_type() will do real comparison logic, so we don't need to do it here.
+    Such as compasion VARCHAR(65533) and STRING.
+
+    Args:
+        type_: The type of the column.
+        obj: The object to render.
+        autogen_context: The autogen context.
+
+    Returns:
+        The string representation of the type.
     """
     # only care about the column type
     if type_ != "type":
@@ -101,18 +115,23 @@ def _quote_schema(schema: str) -> str:
 @renderers.dispatch_for(AlterViewOp)
 def _alter_view(autogen_context: AutogenContext, op: AlterViewOp) -> str:
     """Render an AlterViewOp for autogenerate."""
-    args = [f"{op.view_name!r}", f"\n{op_param_indent}{op.definition!r}\n"]
+    args = [f"{op.view_name!r}"]
+
+    # Only include definition if it's not None
+    if op.definition is not None:
+        args.append(f"{op.definition!r}")
+
     if op.schema:
         args.append(f"schema={_quote_schema(op.schema)}")
     if op.columns:
         # Render columns as a list of dicts
         args.append(f"columns={op.columns!r}")
-    if op.comment:
+    if op.comment is not None:
         args.append(f"comment={op.comment!r}")
-    if op.security:
+    if op.security is not None:
         args.append(f"security={op.security!r}")
 
-    call = f"op.alter_view({', '.join(args)})"
+    call = f"op.alter_view({(op_param_separator).join(args)}{op_close_paren_indent})"
     logger.debug("render alter_view: %s", call)
     return call
 
@@ -125,16 +144,16 @@ def _create_view(autogen_context: AutogenContext, op: CreateViewOp) -> str:
     ]
     if op.schema:
         args.append(f"schema={_quote_schema(op.schema)}")
-    if op.security:
-        args.append(f"security={op.security!r}")
     if op.comment:
         args.append(f"comment={op.comment!r}")
+    if op.security:
+        args.append(f"security={op.security!r}")
     if op.columns:
         # Render columns as a list of dicts
         # Use repr() for clean formatting
         args.append(f"columns={op.columns!r}")
 
-    call = f"op.create_view({', '.join(args)})"
+    call = f"op.create_view({(op_param_separator).join(args)}{op_close_paren_indent})"
     logger.debug("render create_view: %s", call)
     return call
 
@@ -144,6 +163,8 @@ def _drop_view(autogen_context: AutogenContext, op: DropViewOp) -> str:
     args = [f"{op.view_name!r}"]
     if op.schema:
         args.append(f"schema={_quote_schema(op.schema)}")
+    if op.if_exists:
+        args.append(f"if_exists={op.if_exists!r}")
 
     call = f"op.drop_view({', '.join(args)})"
     logger.debug("render drop_view: %s", call)
@@ -156,8 +177,10 @@ def _create_materialized_view(autogen_context: AutogenContext, op: CreateMateria
         f"{op.view_name!r}",
         f"{op.definition!r}",
     ]
-    if op.properties:
-        args.append(f"properties={op.properties!r}")
+    # Check for properties in kw (as CreateMaterializedViewOp uses **kw)
+    properties = op.kw.get('properties') if hasattr(op, 'kw') else None
+    if properties:
+        args.append(f"properties={properties!r}")
     if op.schema:
         args.append(f"schema={_quote_schema(op.schema)}")
 

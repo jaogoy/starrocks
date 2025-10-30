@@ -100,6 +100,17 @@ class AlterViewOp(ops.MigrateOperation):
             reverse_view_security=self.security,
         )
 
+    def __str__(self) -> str:
+        """String representation for debugging."""
+        return (
+            f"AlterViewOp(view_name={self.view_name!r}, schema={self.schema!r}, "
+            f"definition=({self.definition!r}), columns={self.columns!r}, comment={self.comment!r}, "
+            f"security={self.security}, reverse_view_definition=({self.reverse_view_definition}), "
+            f"reverse_view_columns={self.reverse_view_columns!r}, "
+            f"reverse_view_comment={self.reverse_view_comment!r}, "
+            f"reverse_view_security={self.reverse_view_security})"
+        )
+
 
 @Operations.register_operation("create_view")
 class CreateViewOp(ops.MigrateOperation):
@@ -178,6 +189,15 @@ class CreateViewOp(ops.MigrateOperation):
             _reverse_view_columns=self.columns,
         )
 
+    def __str__(self) -> str:
+        """String representation for debugging."""
+        return (
+            f"CreateViewOp(view_name={self.view_name!r}, schema={self.schema!r}, "
+            f"definition=({self.definition!r}), columns={self.columns!r}, comment={self.comment!r}, "
+            f"security={self.security}, or_replace={self.or_replace}, "
+            f"if_not_exists={self.if_not_exists}, kw=({self.kw!r})"
+        )
+
 
 @Operations.register_operation("drop_view")
 class DropViewOp(ops.MigrateOperation):
@@ -230,6 +250,16 @@ class DropViewOp(ops.MigrateOperation):
             columns=self._reverse_view_columns,
         )
 
+    def __str__(self) -> str:
+        """String representation for debugging."""
+        return (
+            f"DropViewOp(view_name={self.view_name!r}, schema={self.schema!r}, "
+            f"if_exists={self.if_exists}, _reverse_view_definition=({self._reverse_view_definition!r}), "
+            f"_reverse_view_comment=({self._reverse_view_comment!r}), "
+            f"_reverse_view_security={self._reverse_view_security}, "
+            f"_reverse_view_columns={self._reverse_view_columns!r})"
+        )
+
 
 @Operations.register_operation("alter_materialized_view")
 class AlterMaterializedViewOp(ops.MigrateOperation):
@@ -261,6 +291,15 @@ class AlterMaterializedViewOp(ops.MigrateOperation):
             schema=self.schema,
             reverse_definition=self.definition,
             reverse_properties=self.properties
+        )
+
+    def __str__(self) -> str:
+        """String representation for debugging."""
+        return (
+            f"AlterMaterializedViewOp(view_name={self.view_name!r}, schema={self.schema!r}, "
+            f"definition=({self.definition}), properties={self.properties!r}, "
+            f"reverse_definition=({self.reverse_definition!r}), "
+            f"reverse_properties={self.reverse_properties!r})"
         )
 
 
@@ -306,6 +345,14 @@ class CreateMaterializedViewOp(ops.MigrateOperation):
             _reverse_properties=self.properties,
         )
 
+    def __str__(self) -> str:
+        """String representation for debugging."""
+        return (
+            f"CreateMaterializedViewOp(view_name={self.view_name!r}, schema={self.schema!r}, "
+            f"definition=({self.definition}), comment={self.comment!r}, "
+            f"if_not_exists={self.if_not_exists}, kw=({self.kw!r})"
+        )
+
 
 @Operations.register_operation("drop_materialized_view")
 class DropMaterializedViewOp(ops.MigrateOperation):
@@ -336,6 +383,14 @@ class DropMaterializedViewOp(ops.MigrateOperation):
             definition=self._reverse_definition,
             properties=self._reverse_properties,
             schema=self.schema,
+        )
+
+    def __str__(self) -> str:
+        """String representation for debugging."""
+        return (
+            f"DropMaterializedViewOp(view_name={self.view_name!r}, schema={self.schema!r}, "
+            f"if_exists={self.if_exists}, _reverse_definition=({self._reverse_definition}), "
+            f"_reverse_properties=({self._reverse_properties!r})"
         )
 
 

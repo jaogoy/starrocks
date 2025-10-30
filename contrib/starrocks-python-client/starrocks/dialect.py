@@ -1607,8 +1607,22 @@ class StarRocksDialect(MySQLDialect_pymysql):
             table_name=view_name,
         )
 
+        # Get SECURITY from SHOW CREATE VIEW
+        # Note: information_schema.views.SECURITY_TYPE is always empty in StarRocks
+        create_view_sql = None
+        try:
+            # Execute SHOW CREATE VIEW to get the full CREATE VIEW statement
+            qualified_name = f"`{schema}`.`{view_name}`" if schema else f"`{view_name}`"
+            result = connection.execute(text(f"SHOW CREATE VIEW {qualified_name}"))
+            rows = result.fetchone()
+            if rows:
+                # SHOW CREATE VIEW returns: (View, Create View, character_set_client, collation_connection)
+                create_view_sql = rows[1] if len(rows) > 1 else None
+        except Exception as e:
+            self.logger.warning(f"Could not retrieve CREATE VIEW statement for '{schema}.{view_name}': {e}")
+
         parser = self._tabledef_parser
-        return parser.parse_view(view_row, table_row, column_rows)
+        return parser.parse_view(view_row, table_row, column_rows, create_view_sql)
 
     def get_view(self, connection: Connection, view_name: str, schema: Optional[str] = None, **kwargs: Any
     ) -> ReflectedViewState:
