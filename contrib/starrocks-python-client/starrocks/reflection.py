@@ -138,7 +138,7 @@ class StarRocksInspector(Inspector):
         """
         table.info[TableObjectInfoKey.DEFINITION] = view_state.definition
         if view_state.security:
-            table.dialect_options.setdefault(DialectName, {})['security'] = view_state.security
+            table.dialect_options.setdefault(DialectName, {})[TableInfoKey.SECURITY] = view_state.security
 
     def _reflect_mv_attributes(self, table, mv_state: ReflectedMVState):
         """Set MV specific attributes from ReflectedMVState"""
@@ -573,8 +573,10 @@ class StarRocksTableDefinitionParser(object):
 
         if match:
             security_type = match.group(1).upper()
-            # logger.debug(f"Parsed SECURITY: {security_type}")
+            # logger.debug(f"Parsed SECURITY: {security_type} from CREATE VIEW: {create_view_sql[:200]}")
             return security_type
+        else:
+            logger.debug(f"No SECURITY match in CREATE VIEW: {create_view_sql[:200] if create_view_sql else 'None'}")
 
         return None
 

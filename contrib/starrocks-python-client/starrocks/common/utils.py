@@ -17,6 +17,7 @@ from typing import Any, Dict, Iterator, List, Mapping, Optional, Tuple, Union
 
 from sqlalchemy.exc import StatementError
 
+from starrocks.common.params import DialectName
 from starrocks.engine.interfaces import ReflectedDistributionInfo, ReflectedPartitionInfo, ReflectedTableKeyInfo
 
 
@@ -70,6 +71,56 @@ class CaseInsensitiveDict(dict):
                 self[key] = value
 
 
+def extract_dialect_options_as_case_insensitive(
+    dialect_options: Dict[str, Any],
+) -> CaseInsensitiveDict:
+    """
+    Extract StarRocks dialect-specific options and return as a CaseInsensitiveDict.
+
+    This function is useful when extracting options from Table.dialect_options or similar,
+    filtering out None values and enabling case-insensitive key lookups.
+
+    Args:
+        dialect_options: The dialect_options dict (e.g., Table.dialect_options)
+
+    Returns:
+        CaseInsensitiveDict with non-None values
+
+    Example:
+        >>> opts = extract_dialect_options_as_case_insensitive(table.dialect_options)
+        >>> security = opts.get('SECURITY')  # Works with any case
+    """
+    raw_opts = dialect_options.get(DialectName, {})
+    return CaseInsensitiveDict({k: v for k, v in raw_opts.items() if v is not None})
+
+
+def get_dialect_option(
+    dialect_options: Dict[str, Any],
+    key: str,
+    default: Optional[Any] = None,
+) -> Any:
+    """
+    Get a StarRocks dialect-specific option value with case-insensitive key lookup.
+
+    This is a convenience function that combines extraction and lookup in one call.
+    Useful when you only need to retrieve a single option value.
+
+    Args:
+        dialect_options: The dialect_options dict (e.g., Table.dialect_options)
+        key: The option key to retrieve (case-insensitive)
+        default: Default value if key not found
+
+    Returns:
+        The option value, or default if not found
+
+    Example:
+        >>> from starrocks.common.params import TableInfoKey
+        >>> security = get_dialect_option(table.dialect_options, TableInfoKey.SECURITY)
+    """
+    opts = extract_dialect_options_as_case_insensitive(dialect_options)
+    return opts.get(key, default)
+
+
 class TableAttributeNormalizer:
     """A class to normalize StarRocks attributes for comparison."""
 
@@ -84,36 +135,51 @@ class TableAttributeNormalizer:
     _OUTER_PAREN_PATTERN = re.compile(r'^\s*\(\s*(.*?)\s*\)\s*$')
 
     @staticmethod
-    def strip_identifier_backticks(sql_text: str) -> str:
+    def strip_identifier_backticks(sql: str) -> str:
         """Remove MySQL-style identifier quotes (`) while preserving string literals."""
-        in_quote = False
+        result = []
+        in_string = False
+        in_backtick = False
         quote_char = None
-        escaped = False
-        out: List[str] = []
 
-        for ch in sql_text:
-            if in_quote:
-                out.append(ch)
-                if escaped:
-                    escaped = False
-                elif ch == "\\":
-                    escaped = True
-                elif ch == quote_char:
-                    in_quote = False
-                    quote_char = None
-                continue
+        i = 0
+        while i < len(sql):
+            ch = sql[i]
 
-            if ch in ("'", '"'):
-                in_quote = True
-                quote_char = ch
-                out.append(ch)
-            elif ch == "`":
-                # Drop identifier quote when not in string literal
-                continue
+            if in_string:
+                result.append(ch)
+                if ch == quote_char:
+                    # ignore quote with escape character
+                    if i == 0 or sql[i - 1] != '\\':
+                        in_string = False
+
+            elif in_backtick:
+                if ch == '\\' and i + 1 < len(sql):
+                    # support MySQL-style backtick escape in backtick, e.g., `col\`name`
+                    next_ch = sql[i + 1]
+                    if next_ch == '`' or next_ch == '\\':
+                        result.append(next_ch)
+                        i += 1
+                    else:
+                        result.append(ch)
+                elif ch == '`':
+                    in_backtick = False
+                else:
+                    result.append(ch)
+
             else:
-                out.append(ch)
+                if ch == '`':
+                    in_backtick = True
+                elif ch in ("'", '"'):
+                    in_string = True
+                    quote_char = ch
+                    result.append(ch)
+                else:
+                    result.append(ch)
 
-        return "".join(out)
+            i += 1
+
+        return ''.join(result)
 
     @staticmethod
     def normalize_sql(sql: Optional[str], lowercase: bool = True, remove_qualifiers: bool = False) -> Optional[str]:
@@ -132,6 +198,12 @@ class TableAttributeNormalizer:
         """
         if sql is None:
             return None
+        # string with \ in SQL statement
+        sql = sql.replace('\\n', '\n').replace('\\t', '\t')
+        # This is for MySQL-like escaping of single quotes in string literals
+        # e.g., 'O\'Brien' becomes 'O''Brien' for standard SQL
+        sql = sql.replace("\\'", "''")
+
         sql = re.sub(r"--.*?(?:\n|$)", " ", sql)
         if lowercase:
             sql = sql.lower().strip()
@@ -139,7 +211,7 @@ class TableAttributeNormalizer:
         # Removes qualifiers like `schema`. from `schema`.`table`.`column`
         # It handles multiple qualifiers.
         if remove_qualifiers:
-            sql = re.sub(r"(?:`[^`]+`|\w+)\.", "", sql)
+            sql = re.sub(r"((?:`[^`]+`|\w+)\.)+", "", sql)
 
         # Removes backticks
         sql = TableAttributeNormalizer.strip_identifier_backticks(sql)

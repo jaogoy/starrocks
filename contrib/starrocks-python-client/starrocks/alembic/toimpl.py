@@ -17,6 +17,7 @@
 import logging
 
 from alembic.operations import Operations
+from sqlalchemy import MetaData, inspect
 
 from starrocks.alembic.ops import (
     AlterTableDistributionOp,
@@ -42,15 +43,7 @@ logger = logging.getLogger(__name__)
 def alter_view(operations: Operations, op: AlterViewOp):
     """Execute an ALTER VIEW statement."""
     logger.debug("implementation alter_view: %s", op.view_name)
-    view = View(
-        op.view_name,
-        operations.get_context().opts['target_metadata'],
-        definition=op.definition,
-        schema=op.schema,
-        columns=op.columns,
-        comment=op.comment,
-        starrocks_security=op.security,
-    )
+    view = op.to_view()
     operations.execute(AlterView(view))
 
 
@@ -58,17 +51,7 @@ def alter_view(operations: Operations, op: AlterViewOp):
 def create_view(operations: Operations, op: CreateViewOp):
     """Execute a CREATE VIEW statement."""
     logger.debug("implementation create_view: %s", op.view_name)
-
-    # Use View's built-in column normalization via columns= parameter
-    view = View(
-        op.view_name,
-        operations.get_context().opts['target_metadata'],
-        definition=op.definition,
-        schema=op.schema,
-        comment=op.comment,
-        columns=op.columns,  # Pass dict format, View will convert to Column objects
-        starrocks_security=op.security,
-    )
+    view = op.to_view()
     operations.execute(CreateView(view, or_replace=op.or_replace, if_not_exists=op.if_not_exists))
 
 
@@ -76,26 +59,16 @@ def create_view(operations: Operations, op: CreateViewOp):
 def drop_view(operations: Operations, op: DropViewOp) -> None:
     """Implementation for the 'drop_view' operation."""
     logger.debug("implementation drop_view: %s", op.view_name)
-    # For DROP VIEW, we only need name and schema, definition is not required
-    view = View(
-        op.view_name,
-        operations.get_context().opts['target_metadata'],
-        definition='',  # Empty definition for DROP
-        schema=op.schema
-    )
+    # For DROP VIEW, we only need name and schema
+    view = op.to_view()
     operations.execute(DropView(view, if_exists=op.if_exists))
 
 
 @Operations.implementation_for(CreateMaterializedViewOp)
 def create_materialized_view(operations: Operations, op: CreateMaterializedViewOp) -> None:
-    """Implementation for the 'create_materialized_view' operation."""
-    mv = MaterializedView(
-        op.view_name,
-        operations.get_context().opts['target_metadata'],
-        definition=op.definition,
-        schema=op.schema,
-        starrocks_properties=op.properties
-    )
+    """Execute a CREATE MATERIALIZED VIEW statement."""
+    logger.debug("implementation create_materialized_view: %s", op.view_name)
+    mv = op.to_materialized_view()
     operations.execute(CreateMaterializedView(mv, if_not_exists=op.if_not_exists))
 
 
@@ -103,12 +76,7 @@ def create_materialized_view(operations: Operations, op: CreateMaterializedViewO
 def drop_materialized_view(operations: Operations, op: DropMaterializedViewOp) -> None:
     """Implementation for the 'drop_materialized_view' operation."""
     # For DROP MATERIALIZED VIEW, we only need name and schema, definition is not required
-    mv = MaterializedView(
-        op.view_name,
-        operations.get_context().opts['target_metadata'],
-        definition='',  # Empty definition for DROP
-        schema=op.schema
-    )
+    mv = op.to_materialized_view()
     operations.execute(DropMaterializedView(mv, if_exists=op.if_exists))
 
 

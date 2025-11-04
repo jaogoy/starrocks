@@ -269,7 +269,7 @@ class TestCompareView:
         eq_(op.definition, 'SELECT 2')
 
         # Validate reverse (existing/database) values for downgrade
-        eq_(op.reverse_view_definition, 'SELECT 1')
+        eq_(op.reverse_definition, 'SELECT 1')
 
     # ========================================================================
     # ALTER VIEW - Comment (StarRocks limitation - not supported via ALTER)
@@ -315,9 +315,9 @@ class TestCompareView:
             eq_(op.security, None)  # Not changed
 
             # Validate reverse (existing/database) values for downgrade
-            eq_(op.reverse_view_comment, None)  # Changed (was None)
-            eq_(op.reverse_view_definition, None)  # Not changed
-            eq_(op.reverse_view_security, None)  # Not changed
+            eq_(op.reverse_comment, None)  # Changed (was None)
+            eq_(op.reverse_definition, None)  # Not changed
+            eq_(op.reverse_security, None)  # Not changed
 
             # Should have warning about comment not supported
             assert len(w) == 1
@@ -360,9 +360,9 @@ class TestCompareView:
             eq_(op.security, None)  # Not changed
 
             # Validate reverse (existing/database) values for downgrade
-            eq_(op.reverse_view_definition, None)  # Not changed
-            eq_(op.reverse_view_comment, 'Old comment')  # Changed (was 'Old comment')
-            eq_(op.reverse_view_security, None)  # Not changed
+            eq_(op.reverse_definition, None)  # Not changed
+            eq_(op.reverse_comment, 'Old comment')  # Changed (was 'Old comment')
+            eq_(op.reverse_security, None)  # Not changed
 
             assert len(w) == 1
             assert "does not support altering view comments" in str(w[0].message)
@@ -404,9 +404,9 @@ class TestCompareView:
             eq_(op.security, None)  # Not changed
 
             # Validate reverse (existing/database) values for downgrade
-            eq_(op.reverse_view_definition, None)  # Not changed
-            eq_(op.reverse_view_comment, 'Old comment')  # Changed
-            eq_(op.reverse_view_security, None)  # Not changed
+            eq_(op.reverse_definition, None)  # Not changed
+            eq_(op.reverse_comment, 'Old comment')  # Changed
+            eq_(op.reverse_security, None)  # Not changed
 
             assert len(w) == 1
             assert "does not support altering view comments" in str(w[0].message)
@@ -472,9 +472,9 @@ class TestCompareView:
             eq_(op.comment, None)  # Not changed
 
             # Validate reverse (existing/database) values for downgrade
-            eq_(op.reverse_view_security, None)  # Changed (was None)
-            eq_(op.reverse_view_definition, None)  # Not changed
-            eq_(op.reverse_view_comment, None)  # Not changed
+            eq_(op.reverse_security, None)  # Changed (was None)
+            eq_(op.reverse_definition, None)  # Not changed
+            eq_(op.reverse_comment, None)  # Not changed
 
             assert len(w) == 1
             assert "does not support altering view security" in str(w[0].message)
@@ -516,9 +516,9 @@ class TestCompareView:
             eq_(op.security, None)  # Changed (removed)
 
             # Validate reverse (existing/database) values for downgrade
-            eq_(op.reverse_view_definition, None)  # Not changed
-            eq_(op.reverse_view_comment, None)  # Not changed
-            eq_(op.reverse_view_security, 'INVOKER')  # Changed (was INVOKER)
+            eq_(op.reverse_definition, None)  # Not changed
+            eq_(op.reverse_comment, None)  # Not changed
+            eq_(op.reverse_security, 'INVOKER')  # Changed (was INVOKER)
 
             assert len(w) == 1
             assert "does not support altering view security" in str(w[0].message)
@@ -561,9 +561,9 @@ class TestCompareView:
             eq_(op.security, 'NONE')  # Changed
 
             # Validate reverse (existing/database) values for downgrade
-            eq_(op.reverse_view_definition, None)  # Not changed
-            eq_(op.reverse_view_comment, None)  # Not changed
-            eq_(op.reverse_view_security, 'INVOKER')  # Changed (was INVOKER)
+            eq_(op.reverse_definition, None)  # Not changed
+            eq_(op.reverse_comment, None)  # Not changed
+            eq_(op.reverse_security, 'INVOKER')  # Changed (was INVOKER)
 
             assert len(w) == 1
             assert "does not support altering view security" in str(w[0].message)

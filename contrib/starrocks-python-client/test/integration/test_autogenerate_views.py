@@ -350,7 +350,7 @@ class TestCreateView(TestAutogenerateBase):
                 reflected_view = reflected_metadata.tables[view_name]
                 assert_view_definition(reflected_view, "SELECT 1 AS id, 'test' AS name")
                 assert reflected_view.comment == "Comprehensive test view"
-                assert reflected_view.dialect_options['starrocks']['security'] == "INVOKER"
+                assert reflected_view.dialect_options['starrocks'][TableInfoKey.SECURITY] == "INVOKER"
                 assert len(reflected_view.columns) == 2
 
                 # Test downgrade (DROP) - verify all attributes are preserved
@@ -490,7 +490,7 @@ class TestDropView(TestAutogenerateBase):
                 recreated_view = reflected_after_recreate.tables[view_name]
                 assert 'definition' in recreated_view.info
                 assert recreated_view.comment == "View to drop"
-                assert recreated_view.dialect_options['starrocks']['security'] == "INVOKER"
+                assert recreated_view.dialect_options['starrocks'][TableInfoKey.SECURITY] == "INVOKER"
             finally:
                 conn.execute(text(f"DROP VIEW IF EXISTS {view_name}"))
 

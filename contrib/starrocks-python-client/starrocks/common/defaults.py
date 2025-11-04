@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from typing import List, Optional, Union
 
+from starrocks.common.params import TableInfoKeyWithPrefix
 from starrocks.common.types import SystemRunMode, TableDistribution, TableEngine, TableType, ViewSecurityType
 from starrocks.common.utils import TableAttributeNormalizer
 from starrocks.engine.interfaces import ReflectedMVState, ReflectedTableKeyInfo, ReflectedViewState
@@ -132,7 +133,7 @@ class ReflectionViewDefaults:
 
     @classmethod
     def security(cls) -> str:
-        return ViewSecurityType.EMPTY
+        return ViewSecurityType.NONE
 
     @classmethod
     def apply(
@@ -150,12 +151,13 @@ class ReflectionViewDefaults:
         """
         normalized_comment = (comment or cls.comment())
         normalized_security = (security or cls.security()).upper()
-        return ReflectedViewState(
-            name=name,
+        state = ReflectedViewState(
+            table_name=name,
             definition=definition,
-            comment=normalized_comment,
-            security=normalized_security,
         )
+        state.table_options[TableInfoKeyWithPrefix.COMMENT] = normalized_comment
+        state.table_options[TableInfoKeyWithPrefix.SECURITY] = normalized_security
+        return state
 
     @classmethod
     def apply_info(cls, reflection_view_info: ReflectedViewState) -> ReflectedViewState:

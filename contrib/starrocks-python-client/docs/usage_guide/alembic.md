@@ -214,14 +214,15 @@ class MyTable(Base):
 
 **Note**: Usage mirrors SQLAlchemy’s patterns (e.g., MySQL), but always import and use uppercase types from `starrocks`.
 
-### Defining Views and Materialized Views (Invalid for the moment)
+### Defining Views and Materialized Views
 
-Define Views and Materialized Views using the provided `View` and `MaterializedView` classes. These objects should be associated with your `MetaData` object.
+Define Views and Materialized Views using the provided `View` and `MaterializedView` classes. These objects are automatically registered with your `MetaData` object.
 
 ```python
 # models_view.py
-from sqlalchemy import Column, Integer, String, MetaData
-from starrocks.schema import View, MaterializedView
+from sqlalchemy import Column, MetaData
+from starrocks.sql.schema import View, MaterializedView
+from starrocks.datatype import INTEGER, VARCHAR
 
 from . import models
 
@@ -233,20 +234,33 @@ metadata = models.Base.metadata
 # Define a View with all supported clauses
 my_view = View(
     'my_view',
-    "SELECT id, name FROM my_table WHERE id > 50",
     metadata,
+    Column('user_id', INTEGER),
+    Column('user_name', VARCHAR(50)),
+    definition="SELECT id, name FROM my_table WHERE id > 50",
     schema='my_schema',
     comment='A sample view with all options.',
+    starrocks_security='INVOKER',
+)
+
+# Define a View with simplified column aliases
+simple_view = View(
+    'simple_view',
+    metadata,
+    definition="SELECT id, name FROM my_table",
     columns=['user_id', 'user_name'],
-    security='INVOKER',
+    schema='my_schema',
+    properties={'replication_num': '1'},
 )
 
 # Define a Materialized View
 my_mv = MaterializedView(
     'my_mv',
-    "SELECT name, count(1) FROM my_table GROUP BY name",
     metadata,
-    properties={'replication_num': '1'},
+    definition="SELECT name, count(*) as cnt FROM my_table GROUP BY name",
+    schema='my_schema',
+    starrocks_refresh='ASYNC',
+    starrocks_properties={'replication_num': '1'},
 )
 ```
 

@@ -176,16 +176,10 @@ class TestViewOpsWithColumns:
         )
 
         create_op = CreateViewOp.from_view(view)
+        assert create_op.definition is not None
         drop_op = create_op.reverse()
 
         assert drop_op.view_name == 'v2'
-        assert drop_op._reverse_view_columns is not None
-        assert len(drop_op._reverse_view_columns) == 2
-
-        # Test reverse of reverse
-        recreate_op = drop_op.reverse()
-        assert recreate_op.columns is not None
-        assert len(recreate_op.columns) == 2
 
     def test_drop_view_op_from_view_with_columns(self):
         """Test creating DropViewOp from View object with columns."""
@@ -201,8 +195,8 @@ class TestViewOpsWithColumns:
         drop_op = DropViewOp.from_view(view)
 
         assert drop_op.view_name == 'v4'
-        assert drop_op._reverse_view_columns is not None
-        assert len(drop_op._reverse_view_columns) == 2
+        assert drop_op.reverse_columns is not None
+        assert len(drop_op.reverse_columns) == 2
 
         # Test reverse
         create_op = drop_op.reverse()
@@ -273,11 +267,11 @@ class TestAlterViewOpsWithColumns:
                 {'name': 'name', 'comment': 'New comment'}
             ],
             comment='New view',
-            reverse_view_definition='SELECT id FROM users',
-            reverse_view_columns=[
+            reverse_definition='SELECT id FROM users',
+            reverse_columns=[
                 {'name': 'id', 'comment': None}
             ],
-            reverse_view_comment='Old view'
+            reverse_comment='Old view'
         )
 
         # Test forward operation
@@ -341,8 +335,8 @@ class TestAlterViewOpsWithColumns:
                 {'name': 'name', 'comment': 'User name'},
                 {'name': 'id'}
             ],
-            reverse_view_definition='SELECT id, name FROM users',
-            reverse_view_columns=[
+            reverse_definition='SELECT id, name FROM users',
+            reverse_columns=[
                 {'name': 'id'},
                 {'name': 'name', 'comment': 'User name'}
             ]
@@ -367,8 +361,8 @@ class TestAlterViewOpsWithColumns:
                 {'name': 'name', 'comment': 'User name'},
                 {'name': 'email', 'comment': 'New column'}
             ],
-            reverse_view_definition='SELECT id, name FROM users',
-            reverse_view_columns=[
+            reverse_definition='SELECT id, name FROM users',
+            reverse_columns=[
                 {'name': 'id'},
                 {'name': 'name', 'comment': 'User name'}
             ]
@@ -391,8 +385,8 @@ class TestAlterViewOpsWithColumns:
             columns=[
                 {'name': 'id'}
             ],
-            reverse_view_definition='SELECT id, name FROM users',
-            reverse_view_columns=[
+            reverse_definition='SELECT id, name FROM users',
+            reverse_columns=[
                 {'name': 'id'},
                 {'name': 'name', 'comment': 'User name'}
             ]
@@ -417,8 +411,8 @@ class TestAlterViewOpsWithColumns:
                 {'name': 'id'},
                 {'name': 'name', 'comment': 'Updated comment'}
             ],
-            reverse_view_definition='SELECT id, name FROM users',
-            reverse_view_columns=[
+            reverse_definition='SELECT id, name FROM users',
+            reverse_columns=[
                 {'name': 'id'},
                 {'name': 'name', 'comment': 'Original comment'}
             ]

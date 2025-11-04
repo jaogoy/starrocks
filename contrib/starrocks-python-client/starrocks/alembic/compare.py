@@ -15,6 +15,7 @@
 from functools import wraps
 import logging
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
+import warnings
 
 from alembic.autogenerate import comparators
 from alembic.autogenerate.api import AutogenContext
@@ -34,7 +35,7 @@ from starrocks.alembic.ops import (
     DropMaterializedViewOp,
     DropViewOp,
 )
-from starrocks.common.defaults import ReflectionTableDefaults
+from starrocks.common.defaults import ReflectionTableDefaults, ReflectionViewDefaults
 from starrocks.common.params import (
     AlterTableEnablement,
     ColumnAggInfoKey,
@@ -46,9 +47,14 @@ from starrocks.common.params import (
     TableObjectInfoKey,
     TablePropertyForFuturePartitions,
 )
-from starrocks.common.utils import CaseInsensitiveDict, TableAttributeNormalizer
+from starrocks.common.types import ViewSecurityType
+from starrocks.common.utils import (
+    CaseInsensitiveDict,
+    TableAttributeNormalizer,
+    extract_dialect_options_as_case_insensitive,
+)
 from starrocks.datatype import ARRAY, BOOLEAN, MAP, STRING, STRUCT, TINYINT, VARCHAR
-from starrocks.engine.interfaces import ReflectedPartitionInfo, ReflectedTableKeyInfo
+from starrocks.engine.interfaces import ReflectedPartitionInfo, ReflectedTableKeyInfo, ReflectedViewState
 from starrocks.reflection import StarRocksTableDefinitionParser
 from starrocks.sql.schema import MaterializedView, View
 
@@ -339,7 +345,7 @@ def _compare_views(
         name = sa_schema._get_table_key(vname, s)
         exists = name in removal_metadata.tables
         # Create a View object (not Table) since we know it's a view
-        # Use empty definition - it will be populated by reflect_table
+        # Use empty definition (a placeholder only) - it will be populated by reflect_table
         t = View(vname, removal_metadata, definition='', schema=s)
 
         if not exists:
@@ -415,13 +421,9 @@ def compare_view(
 
     logger.debug(f"compare_view: view_name={view_name}, schema={schema}")
 
-    # Extract dialect_options for comparison, similar to compare_starrocks_table
-    conn_view_attributes = CaseInsensitiveDict(
-        {k: v for k, v in conn_view.dialect_options[DialectName].items() if v is not None}
-    )
-    meta_view_attributes = CaseInsensitiveDict(
-        {k: v for k, v in metadata_view.dialect_options[DialectName].items() if v is not None}
-    )
+    # Extract dialect_options for comparison
+    conn_view_attributes = extract_dialect_options_as_case_insensitive(conn_view.dialect_options)
+    meta_view_attributes = extract_dialect_options_as_case_insensitive(metadata_view.dialect_options)
 
     logger.debug(
         "View-specific attributes comparison for view '%s': "
@@ -441,30 +443,28 @@ def compare_view(
 
     # Compare each view attribute using dedicated functions
     # Order: definition+columns -> comment -> security
-    _compare_view_definition_and_columns(
+    definition_changed = _compare_view_definition_and_columns(
         alter_view_op, view_fqn, conn_view, metadata_view
     )
-    _compare_view_comment(
+    comment_changed = _compare_view_comment(
         alter_view_op, view_fqn, conn_view, metadata_view
     )
-    _compare_view_security(
+    security_changed = _compare_view_security(
         alter_view_op, view_fqn, conn_view, metadata_view,
         conn_view_attributes, meta_view_attributes
     )
 
-    # If any attribute has been set, append the operation
-    if (alter_view_op.definition is not None or
-        alter_view_op.comment is not None or
-        alter_view_op.security is not None):
+    # If any attribute has changed, append the operation
+    if definition_changed or comment_changed or security_changed:
         upgrade_ops.ops.append(alter_view_op)
 
         # Log which attributes changed
         changed_attrs = []
-        if alter_view_op.definition is not None:
+        if definition_changed:
             changed_attrs.append("definition")
-        if alter_view_op.comment is not None:
+        if comment_changed:
             changed_attrs.append("comment")
-        if alter_view_op.security is not None:
+        if security_changed:
             changed_attrs.append("security")
 
         logger.info(
@@ -479,7 +479,7 @@ def _compare_view_definition_and_columns(
     view_fqn: str,
     conn_view: View,
     metadata_view: View,
-) -> None:
+) -> bool:
     """
     Compare view definition and columns, and update AlterViewOp if changed.
 
@@ -491,6 +491,9 @@ def _compare_view_definition_and_columns(
         view_fqn: Fully qualified view name for logging
         conn_view: View reflected from database
         metadata_view: View defined in metadata
+
+    Returns:
+        True if definition changed, False otherwise
     """
     from starrocks.sql.schema import extract_view_columns
 
@@ -498,8 +501,8 @@ def _compare_view_definition_and_columns(
     # Definition is stored in table.info (not in dialect_options)
     conn_definition = conn_view.info.get(TableObjectInfoKey.DEFINITION, "")
     meta_definition = metadata_view.info.get(TableObjectInfoKey.DEFINITION, "")
-    conn_def_norm = TableAttributeNormalizer.normalize_sql(conn_definition)
-    meta_def_norm = TableAttributeNormalizer.normalize_sql(meta_definition)
+    conn_def_norm = TableAttributeNormalizer.normalize_sql(conn_definition, remove_qualifiers=True)
+    meta_def_norm = TableAttributeNormalizer.normalize_sql(meta_definition, remove_qualifiers=True)
     definition_changed = conn_def_norm != meta_def_norm
 
     # Compare columns (if metadata specifies columns explicitly)
@@ -552,8 +555,10 @@ def _compare_view_definition_and_columns(
     if definition_changed:
         alter_view_op.definition = meta_definition
         alter_view_op.columns = extract_view_columns(metadata_view)
-        alter_view_op.reverse_view_definition = conn_definition
-        alter_view_op.reverse_view_columns = extract_view_columns(conn_view)
+        alter_view_op.reverse_definition = conn_definition
+        alter_view_op.reverse_columns = extract_view_columns(conn_view)
+
+    return definition_changed
 
 
 def _compare_view_comment(
@@ -561,7 +566,7 @@ def _compare_view_comment(
     view_fqn: str,
     conn_view: View,
     metadata_view: View,
-) -> None:
+) -> bool:
     """
     Compare view comment and update AlterViewOp if changed.
 
@@ -570,9 +575,10 @@ def _compare_view_comment(
         view_fqn: Fully qualified view name for logging
         conn_view: View reflected from database
         metadata_view: View defined in metadata
-    """
-    import warnings
 
+    Returns:
+        True if comment changed, False otherwise
+    """
     # Compare comment (views don't use Alembic's built-in _compare_table_comment)
     conn_comment = (conn_view.comment or "").strip()
     meta_comment = (metadata_view.comment or "").strip()
@@ -583,12 +589,11 @@ def _compare_view_comment(
         view_fqn,
         comment_changed,
     )
-
     if comment_changed:
         logger.debug(
             "  Comment change for %s:\n"
-            "    Database: '%s'\n"
-            "    Metadata: '%s'",
+            "    Database: %r\n"
+            "    Metadata: %r",
             view_fqn,
             conn_comment,
             meta_comment,
@@ -606,7 +611,9 @@ def _compare_view_comment(
 
         # Set comment in AlterViewOp for future compatibility
         alter_view_op.comment = metadata_view.comment
-        alter_view_op.reverse_view_comment = conn_view.comment
+        alter_view_op.reverse_comment = conn_view.comment
+
+    return comment_changed
 
 
 def _compare_view_security(
@@ -616,7 +623,7 @@ def _compare_view_security(
     metadata_view: View,
     conn_view_attributes: CaseInsensitiveDict,
     meta_view_attributes: CaseInsensitiveDict,
-) -> None:
+) -> bool:
     """
     Compare view security attribute and update AlterViewOp if changed.
 
@@ -627,9 +634,10 @@ def _compare_view_security(
         metadata_view: View defined in metadata
         conn_view_attributes: View attributes reflected from database
         meta_view_attributes: View attributes defined in metadata
-    """
-    import warnings
 
+    Returns:
+        True if security changed, False otherwise
+    """
     # Compare security attribute
     conn_security = TableAttributeNormalizer._simple_normalize(
         conn_view_attributes.get(TableInfoKey.SECURITY)
@@ -637,6 +645,8 @@ def _compare_view_security(
     meta_security = TableAttributeNormalizer._simple_normalize(
         meta_view_attributes.get(TableInfoKey.SECURITY)
     )
+    conn_security = (conn_security or ReflectionViewDefaults.security())
+    meta_security = (meta_security or ReflectionViewDefaults.security())
     security_changed = conn_security != meta_security
 
     logger.debug(
@@ -648,8 +658,8 @@ def _compare_view_security(
     if security_changed:
         logger.debug(
             "  Security change for %s:\n"
-            "    Database: '%s'\n"
-            "    Metadata: '%s'",
+            "    Database: %r\n"
+            "    Metadata: %r",
             view_fqn,
             conn_security,
             meta_security,
@@ -667,7 +677,9 @@ def _compare_view_security(
 
         # Set security in AlterViewOp for future compatibility
         alter_view_op.security = meta_view_attributes.get(TableInfoKey.SECURITY)
-        alter_view_op.reverse_view_security = conn_view_attributes.get(TableInfoKey.SECURITY)
+        alter_view_op.reverse_security = conn_view_attributes.get(TableInfoKey.SECURITY)
+
+    return security_changed
 
 
 def _compare_view_columns(conn_view: View, metadata_view: View) -> bool:
@@ -887,13 +899,9 @@ def compare_materialized_view(
 
     logger.debug(f"compare_materialized_view: mv_name={mv_name}, schema={schema}")
 
-    # Extract dialect_options for comparison, similar to compare_starrocks_table
-    conn_mv_attributes = CaseInsensitiveDict(
-        {k: v for k, v in conn_mv.dialect_options[DialectName].items() if v is not None}
-    )
-    meta_mv_attributes = CaseInsensitiveDict(
-        {k: v for k, v in metadata_mv.dialect_options[DialectName].items() if v is not None}
-    )
+    # Extract dialect_options for comparison using case-insensitive helper
+    conn_mv_attributes = extract_dialect_options_as_case_insensitive(conn_mv.dialect_options)
+    meta_mv_attributes = extract_dialect_options_as_case_insensitive(metadata_mv.dialect_options)
 
     logger.debug(
         "MV-specific attributes comparison for materialized view '%s': "
@@ -999,6 +1007,49 @@ def compare_materialized_view(
             mv_name,
         )
 
+@comparators_dispatch_for_starrocks("table")
+def compare_starrocks_table(
+    autogen_context: AutogenContext,
+    upgrade_ops: UpgradeOps,
+    schema: Optional[str],
+    table_name: str,
+    conn_table: Optional[Table],
+    metadata_table: Optional[Table],
+) -> None:
+    """It's not a real comparison of table, it's a checker to check whether users have
+    properly set the `include_object_for_view_mv` when there are views or MVs.
+    """
+    # Check if we're comparing View/MaterializedView objects
+    # This comparator is only for TABLE objects
+    conn_table_kind = (
+        conn_table.info.get(TableObjectInfoKey.TABLE_KIND, TableKind.TABLE)
+        if conn_table is not None
+        else TableKind.TABLE
+    )
+    meta_table_kind = (
+        metadata_table.info.get(TableObjectInfoKey.TABLE_KIND, TableKind.TABLE)
+        if metadata_table is not None
+        else TableKind.TABLE
+    )
+
+    if conn_table_kind != TableKind.TABLE or meta_table_kind != TableKind.TABLE:
+        error_msg = (
+            f"You need to properly set the `include_object_for_view_mv` callback when there are views or MVs.\n"
+            f"Please configure your env.py:\n\n"
+            f"    from starrocks.alembic import include_object_for_view_mv\n"
+            f"    context.configure(\n"
+            f"        ...,\n"
+            f"        include_object=include_object_for_view_mv,\n"
+            f"    )\n\n"
+            f"Or if you have a custom include_object:\n\n"
+            f"    from starrocks.alembic import combine_include_object\n"
+            f"    context.configure(\n"
+            f"        ...,\n"
+            f"        include_object=combine_include_object(my_custom_filter),\n"
+            f"    )\n"
+        )
+        raise ValueError(error_msg)
+
 
 # ==============================================================================
 # Table Comparison
@@ -1027,6 +1078,7 @@ def compare_starrocks_table(
 
     Raises:
         NotImplementedError: If a change is detected that is not supported in StarRocks.
+        ValueError: If comparing View/MaterializedView objects (should use include_object_for_view_mv).
     """
     # Handle table creation and deletion scenarios
     if conn_table is None:
@@ -1045,8 +1097,9 @@ def compare_starrocks_table(
     run_mode = autogen_context.dialect.run_mode
     logger.info(f"compare starrocks table. table: {table_name}, schema:{schema}, run_mode: {run_mode}")
 
-    conn_table_attributes = CaseInsensitiveDict({k: v for k, v in conn_table.dialect_options[DialectName].items() if v is not None})
-    meta_table_attributes = CaseInsensitiveDict({k: v for k, v in metadata_table.dialect_options[DialectName].items() if v is not None})
+    # Extract dialect_options for comparison using case-insensitive helper
+    conn_table_attributes = extract_dialect_options_as_case_insensitive(conn_table.dialect_options)
+    meta_table_attributes = extract_dialect_options_as_case_insensitive(metadata_table.dialect_options)
 
     logger.debug(
         "StarRocks-specific attributes comparison for table '%s': "
@@ -1720,12 +1773,9 @@ def compare_starrocks_column_agg_type(
     if conn_col is None or metadata_col is None:
         raise ArgumentError("Both conn column and meta column should not be None.")
 
-    conn_opts = CaseInsensitiveDict(
-        {k: v for k, v in conn_col.dialect_options[DialectName].items() if v is not None}
-    )
-    meta_opts = CaseInsensitiveDict(
-        {k: v for k, v in metadata_col.dialect_options[DialectName].items() if v is not None}
-    )
+    # Extract dialect_options for comparison using case-insensitive helper
+    conn_opts = extract_dialect_options_as_case_insensitive(conn_col.dialect_options)
+    meta_opts = extract_dialect_options_as_case_insensitive(metadata_col.dialect_options)
     conn_agg_type: Union[str, None] = conn_opts.get(ColumnAggInfoKey.AGG_TYPE)
     meta_agg_type: Union[str, None] = meta_opts.get(ColumnAggInfoKey.AGG_TYPE)
     # logger.debug(f"AGG_TYPE. conn_agg_type: {conn_agg_type}, meta_agg_type: {meta_agg_type}")

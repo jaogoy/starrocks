@@ -133,6 +133,7 @@ Views support three ways to define columns (names and optional comments):
    ```
 
 3. **List of dicts** via `columns` parameter (names with optional comments)
+
    ```python
    View('v', metadata, definition='...',
         columns=[
@@ -269,6 +270,54 @@ class View(Table):
     def security(self):
         return self.dialect_options.get('starrocks', {}).get('security')
 
+    # New: Column handling and existing table initialization
+    def _process_definition(self, definition: DefinitionType) -> dict:
+        """Process the definition parameter, supporting string and Selectable."""
+        if isinstance(definition, str):
+            return {'definition': definition}
+        elif isinstance(definition, ClauseElement):
+            compiled = definition.compile(compile_kwargs={"literal_binds": True})
+            return {'definition': str(compiled), '_selectable': definition}
+        else:
+            raise TypeError(f"definition must be str or Selectable, got {type(definition)}")
+
+    def _normalize_columns(self, columns: Optional[List[Union[Column, str, Dict]]] = None) -> List[Column]:
+        """Normalize column definitions from various input formats."""
+        normalized_cols = []
+        if columns:
+            for col in columns:
+                if isinstance(col, Column):
+                    normalized_cols.append(col)
+                elif isinstance(col, str):
+                    normalized_cols.append(Column(col, _always_force_type=True))
+                elif isinstance(col, dict):
+                    name = col.get("name")
+                    comment = col.get("comment")
+                    if not name:
+                        raise ValueError("Column dictionary must contain a 'name' key.")
+                    normalized_cols.append(Column(name, comment=comment, _always_force_type=True))
+                else:
+                    raise TypeError(f"Column must be Column object, string, or dict, got {type(col)}")
+        return normalized_cols
+
+    def _init_existing(self, *args, **kwargs):
+        """Handle extend_existing=True case for View."""
+        definition = kwargs.pop('definition', None)
+        columns = kwargs.pop('columns', None)
+
+        if definition is not None:
+            view_info = self._process_definition(definition)
+            self.info.update(view_info)
+
+        if columns is not None:
+            normalized_cols = self._normalize_columns(columns)
+            # Clear existing columns and add new ones (this mimics how Table handles it)
+            self.columns.clear()
+            for col in normalized_cols:
+                self.append_column(col)
+
+        super()._init_existing(*args, **kwargs)
+
 
 class MaterializedView(Table):
     def __init__(
@@ -299,7 +348,7 @@ class MaterializedView(Table):
     def definition(self) -> str:
         return self.info.get('definition', '')
 
-@property
+    @property
     def partition_by(self):
         return self.dialect_options.get('starrocks', {}).get('partition_by')
 
@@ -322,6 +371,266 @@ class MaterializedView(Table):
 
 - Requires understanding Table's parameter handling mechanism.
 - Parameter names need to be prefixed with `starrocks_` (but this is standard SQLAlchemy practice).
+
+#### Critical: Understanding Table's `__new__` and `__init__` Mechanism
+
+**Why This Matters**: View/MaterializedView inherit from Table, so they must follow Table's special initialization protocol.
+
+##### Table's Singleton Pattern
+
+SQLAlchemy's Table implements a **singleton pattern** - the same table name in the same MetaData returns the same instance:
+
+```python
+metadata = MetaData()
+table1 = Table('users', metadata, Column('id', Integer))
+table2 = Table('users', metadata)  # Returns table1, not a new instance
+assert table1 is table2  # True
+```
+
+##### The Double-Initialization Problem
+
+Python's object creation has two steps:
+
+1. `__new__` creates the instance
+2. `__init__` initializes the instance
+
+**Problem**: Python automatically calls `__init__` after `__new__` returns, which would cause double initialization!
+
+```python
+# User calls
+table = Table('users', metadata, Column('id', Integer))
+
+# What happens:
+1. Table.__new__() is called
+   └─> Returns an instance (new or existing)
+2. Python automatically calls table.__init__()  # ← Can't be prevented!
+```
+
+##### Table's Solution: The `_no_init` Guard
+
+Table uses a clever `_no_init` parameter to control initialization:
+
+```python
+class Table:
+    def __new__(cls, *args, **kw):
+        return cls._new(*args, **kw)
+
+    @classmethod
+    def _new(cls, *args, **kw):
+        key = _get_table_key(name, schema)
+
+        if key in metadata.tables:
+            # Table already exists
+            table = metadata.tables[key]
+            if extend_existing:
+                table._init_existing(*args, **kw)  # Update via special method
+            return table  # Python will call __init__, but _no_init=True will skip it
+        else:
+            # New table
+            table = object.__new__(cls)
+            metadata._add_table(name, schema, table)
+
+            # Explicitly call __init__ with _no_init=False
+            table.__init__(name, metadata, *args, _no_init=False, **kw)
+
+            return table  # Python will call __init__ again, but _no_init=True will skip it
+
+    def __init__(self, ..., _no_init: bool = True, **kw):
+        if _no_init:
+            return  # Skip initialization
+
+        # Real initialization logic...
+```
+
+##### Call Flow Analysis
+
+**Scenario 1: Creating New Table**
+
+```
+table = Table('users', metadata, Column('id', Integer))
+    ↓
+Table.__new__()
+    ↓
+Table._new()
+    ↓
+table = object.__new__(Table)
+metadata._add_table('users', None, table)
+    ↓
+table.__init__(..., _no_init=False)  # 1st call: Explicit, does initialization
+    ↓
+return table
+    ↓
+table.__init__(...)  # 2nd call: Python automatic, _no_init=True (default), skips
+    ↓
+Done
+```
+
+**Scenario 2: Getting Existing Table**
+
+```
+table = Table('users', metadata)
+    ↓
+Table._new()
+    ↓
+table = metadata.tables['users']  # Already exists
+return table  # No explicit __init__ call
+    ↓
+table.__init__(...)  # Python automatic call, _no_init=True (default), skips
+    ↓
+Done
+```
+
+**Scenario 3: Updating Existing Table (extend_existing=True)**
+
+```
+table = Table('users', metadata, Column('name', Integer), extend_existing=True)
+    ↓
+Table._new()
+    ↓
+table = metadata.tables['users']  # Already exists
+table._init_existing(Column('name', Integer), ...)  # Update via special method
+return table
+    ↓
+table.__init__(...)  # Python automatic call, _no_init=True, skips
+    ↓
+Done
+```
+
+##### View/MaterializedView Implementation Requirements
+
+**Key Requirements**:
+
+1. **Must accept `_no_init` parameter** in `__init__` signature
+2. **Must check `_no_init` at the start** of `__init__` and return early if True
+3. **Must pass `_no_init=False`** when calling `super().__init__()`
+4. **Must override `_init_existing`** to handle View-specific parameters (definition, columns)
+5. **Must explicitly declare `keep_existing` and `extend_existing`** parameters for API clarity
+
+**Correct Implementation Pattern**:
+
+```python
+class View(Table):
+    def __init__(
+        ...
+        keep_existing: bool = False,      # Explicit declaration
+        extend_existing: bool = False,    # Explicit declaration
+        _no_init: bool = True,            # Required!
+        **kwargs: Any,
+    ) -> None:
+        # 1. Check _no_init first (like Table does)
+        if _no_init:
+            return
+
+        # 2. View-specific initialization
+        if definition is None:
+            raise ValueError("View definition is required")
+        view_info = {TableObjectInfoKey.TABLE_KIND: TableKind.VIEW}
+        view_info.update(self._process_definition(definition))
+        kwargs.setdefault("info", {}).update(view_info)
+
+        # 3. Call parent with _no_init=False (not _no_init=_no_init!)
+        super().__init__(name, metadata, *all_columns,
+                        schema=schema, comment=comment,
+                        keep_existing=keep_existing,
+                        extend_existing=extend_existing,
+                        _no_init=False,  # Always False here!
+                        **kwargs)
+
+    def _init_existing(self, *args, **kwargs):
+        """Handle extend_existing=True case"""
+        # Extract View-specific parameters
+        definition = kwargs.pop('definition', None)
+        columns = kwargs.pop('columns', None)
+
+        # Update definition
+        if definition is not None:
+            view_info = self._process_definition(definition)
+            self.info.update(view_info)
+        # ... other attributes
+
+        # Call parent (Table will handle Column objects in args)
+        super()._init_existing(*args, **kwargs)
+```
+
+**Common Mistakes to Avoid**:
+
+❌ **Wrong**: Not checking `_no_init` at the start
+
+```python
+def __init__(self, ..., _no_init: bool = True, **kwargs):
+    # Doing work before checking _no_init
+    view_info = {...}  # This will run on every automatic call!
+
+    if _no_init:
+        return
+```
+
+❌ **Wrong**: Not declaring `keep_existing`/`extend_existing`
+
+```python
+def __init__(self, ..., **kwargs):  # They're hidden in kwargs
+    # Users won't see these parameters in IDE autocomplete
+    super().__init__(..., **kwargs)
+```
+
+✅ **Correct**: Follow the pattern above
+
+##### Why `keep_existing` and `extend_existing` Must Be Explicit
+
+**Problem**: These parameters control singleton behavior but were hidden in `**kwargs`.
+
+**Solution**: Explicitly declare them in the signature.
+
+**Benefits**:
+
+- ✅ IDE autocomplete shows these parameters
+- ✅ Type checkers can validate them
+- ✅ Documentation is clearer
+- ✅ API is consistent with Table
+
+**Behavior**:
+
+| Mode                                                         | Behavior                                                                                 | Use Case                                        |
+| ------------------------------------------------------------ | ---------------------------------------------------------------------------------------- | ----------------------------------------------- |
+| **Default** (`extend_existing=False`, `keep_existing=False`) | Return existing instance, don't update parameters. If Column args provided, raise error. | Normal usage: get reference to existing view    |
+| **`keep_existing=True`**                                     | Return existing instance, ignore all new parameters (even Column args)                   | Optional view definition (create if not exists) |
+| **`extend_existing=True`**                                   | Return existing instance, update parameters via `_init_existing`                         | Update existing view definition                 |
+
+**Example**:
+
+```python
+# First creation
+view1 = View('v1', metadata, definition='SELECT 1', comment='First')
+
+# Default: returns same instance, doesn't update
+view2 = View('v1', metadata, definition='SELECT 2', comment='Second')
+assert view1 is view2
+assert view2.definition == 'SELECT 1'  # Not updated
+assert view2.comment == 'First'  # Not updated
+
+# extend_existing: updates parameters
+view3 = View('v1', metadata, definition='SELECT 3', comment='Third', extend_existing=True)
+assert view1 is view3
+assert view3.definition == 'SELECT 3'  # Updated!
+assert view3.comment == 'Third'  # Updated!
+```
+
+##### Summary: Key Takeaways
+
+1. **Table uses singleton pattern** - same name returns same instance
+2. **`_no_init` parameter** controls whether initialization runs
+3. **`__init__` is called twice** for new objects:
+   - First: explicit call with `_no_init=False` (does initialization)
+   - Second: Python automatic call with `_no_init=True` (skips)
+4. **`__init__` is called once** for existing objects:
+   - Only: Python automatic call with `_no_init=True` (skips)
+5. **View/MaterializedView must**:
+   - Check `_no_init` at start of `__init__`
+   - Pass `_no_init=False` to `super().__init__()`
+   - Override `_init_existing` for `extend_existing` support
+   - Explicitly declare `keep_existing` and `extend_existing`
+6. **`_init_existing`** is the proper way to update existing instances
+7. **Code reuse**: Extract `_process_definition` to avoid duplication
 
 #### Approach B: `View`/`MaterializedView` Inherits from `SchemaItem` ❌ **Not Adopted**
 
@@ -461,11 +770,28 @@ class StarRocksDialect(MySQLDialect_pymysql):
         """
         Query object type from the database (without cache).
         Only called once in _setup_parser.
+
+        StarRocks: VIEW and MV both show as 'VIEW' in information_schema.tables.
+        A secondary check against information_schema.materialized_views is needed to distinguish.
         """
         # 1. Query information_schema.tables
-        # 2. If it's a VIEW, further query materialized_views to distinguish
-        # 3. Return "TABLE" / "VIEW" / "MATERIALIZED_VIEW"
-        # ...
+        table_rows = self._read_from_information_schema(
+            connection, "tables", table_schema=schema, table_name=table_name
+        )
+
+        table_type = table_rows[0].TABLE_TYPE
+
+        # 2. BASE TABLE → "TABLE"
+        if table_type == 'BASE TABLE':
+            return "TABLE"
+
+        # 3. VIEW → Further Distinguish
+        if table_type == 'VIEW':
+            mv_rows = self._read_from_information_schema(
+                connection, "materialized_views",
+                table_schema=schema, table_name=table_name
+            )
+            return "MATERIALIZED_VIEW" if mv_rows else "VIEW"
 ```
 
 **Step 3: Provide `get_table_kind` Method**
@@ -524,18 +850,23 @@ class StarRocksInspector(Inspector):
         if view_state.security:
             table.dialect_options.setdefault('starrocks', {})['security'] = view_state.security
 
-    def _reflect_mv_attributes(self, table, mv_state):
+    def _reflect_mv_attributes(self, table, mv_state: ReflectedMVState):
         """Set MV specific attributes from ReflectedMVState"""
-        table.info['definition'] = mv_state.definition
+        # Set definition
+        table.info[DEFINITION] = mv_state.definition
 
-        opts = table.dialect_options.setdefault('starrocks', {})
+        # Set dialect-specific MV attributes explicitly
+        dialect_opts = table.dialect_options.setdefault(DialectName, {})
         if mv_state.partition_info:
-            opts['partition_by'] = ...  # Extract from partition_info
+            dialect_opts[PARTITION_BY] = str(mv_state.partition_info)
         if mv_state.distribution_info:
-            opts['distributed_by'] = ...
+            dialect_opts[DISTRIBUTED_BY] = str(mv_state.distribution_info)
         if mv_state.refresh_info:
-            opts['refresh'] = mv_state.refresh_info
-        # ... Other attributes
+            dialect_opts[REFRESH] = str(mv_state.refresh_info)
+        if mv_state.order_by:
+            dialect_opts[ORDER_BY] = mv_state.order_by
+        if mv_state.properties:
+            dialect_opts[PROPERTIES] = mv_state.properties
 ```
 
 **Pros**:
@@ -578,6 +909,12 @@ class StarRocksInspector(Inspector):
 
 - **Cannot be Integrated with `Table.autoload_with=engine`** (Fatal Flaw)
 - Users need to call different methods based on type.
+
+#### Special Handling: SECURITY Reflection
+
+**Problem**: StarRocks' `information_schema.views.security_type` is always empty (or `NONE` only).
+
+**Solution**: Parse `SECURITY` clause from `SHOW CREATE VIEW` output using regex pattern `_VIEW_SECURITY_PATTERN`.
 
 #### How to Distinguish VIEW and MV
 
@@ -698,6 +1035,31 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
 3. Need separate entry points to trigger their respective comparisons.
 
 **Critical**: Use `include_object` callback to filter View/MV from Alembic's built-in `_autogen_for_tables`.
+
+#### Key Implementation Details
+
+**1. Use View/MaterializedView Objects for Reflection**
+
+When reflecting views/MVs in comparison functions, create View/MaterializedView objects (not plain Table objects):
+
+- Provides semantic clarity and type consistency
+- Example: `t = View(vname, removal_metadata, definition='', schema=s)`
+
+**2. Column Extraction Function**
+
+`extract_view_columns()` is a module-level function (not View member method):
+
+- Works with both View objects and Table objects representing views
+- Reflected views are Table objects, so module-level function is more flexible
+- Used by Alembic operations to serialize view columns for migration scripts
+
+**3. Warning Strategy**
+
+Use `warnings.warn(UserWarning)` instead of `logger.warning` for unsupported operations:
+
+- More visible to users (appears in console by default)
+- Can be controlled by Python's warning filters
+- Applies to: comment changes, security changes, column-only changes, and all MV changes
 
 **Pre-defined Function**: StarRocks dialect provides `starrocks.alembic.include_object_for_view_mv` for convenience.
 
@@ -822,6 +1184,21 @@ class CreateViewOp(ops.MigrateOperation):
 
 - Need to maintain multiple Op classes.
 
+#### Key Implementation Details
+
+**1. AlterViewOp Column Support**
+
+`AlterViewOp` includes `columns` and `reverse_view_columns` parameters:
+
+- Columns can only change together with definition in StarRocks
+- Needed for rendering complete view information and supporting reverse operations
+- Future compatibility if StarRocks adds column-only ALTER support
+
+**3. Metadata Handling in Operations**
+
+- Use temporary `MetaData()` (via `op.to_view()`) instead of using `operations.get_context().opts['target_metadata']`
+- Note: Operations create Views in new MetaData, avoiding singleton/re-initialization issues
+
 #### Approach B: Extend `CreateTableOp` ❌ **Not Adopted**
 
 **Cons**:
@@ -857,6 +1234,7 @@ op.create_table('my_view',
 1. **Parameter Passing**: All `starrocks_*` parameters are passed to `Table.__init__` via `kwargs`.
 2. **Info Setting**: Set `info` before calling `super().__init__`.
 3. **@property Access**: Provide convenient properties to get values from Table.
+4. **Column Extraction**: `extract_view_columns()` is a module-level function that works with both View objects and Table objects representing views. This design choice accommodates reflected views which are Table objects.
 
 **Example**:
 
@@ -922,7 +1300,9 @@ my_view = Table('v1', metadata,
         Set table.info['table_kind']
    ```
 
-4. **Column Information Acquisition**: TODO - Not Implemented Yet (Can be implemented in `_setup_view_parser` and `_setup_mv_parser`)
+4. **Column Information**: Column details (including comments) are handled by SQLAlchemy's standard reflection via `get_columns()`, which returns `ReflectedColumn` dictionaries from `view_state.columns`.
+
+5. **SECURITY Reflection**: Since `information_schema.views.security_type` is empty in StarRocks, security mode is extracted from `SHOW CREATE VIEW` output using regex pattern in `_setup_view_parser()`.
 
 ### 5.3 Compiler Layer Key Points
 
@@ -968,6 +1348,8 @@ def _compile_create_view_from_table(self, table, create, **kw):
 5. **Shared Comparison Logic**: Extract common functions for comparison.
 6. **Default Value Handling**: Use different default values for different object types.
 7. **Attribute Normalization**: Normalize attributes before comparison (e.g., SQL formatting).
+8. **Reflection Object Type**: When reflecting views/MVs for comparison, create View/MaterializedView objects (not plain Table objects) for semantic clarity and type consistency.
+9. **Warning Strategy**: Use `warnings.warn(UserWarning)` for unsupported ALTER operations (more visible than `logger.warning`).
 
 **Key Logic**:
 
@@ -1020,17 +1402,19 @@ def my_filter(object, name, type_, reflected, compare_to):
 context.configure(include_object=combine_include_object(my_filter))
 ```
 
-### 5.5 Operations Layer Key Points
+#### MV-Specific Attribute Comparison Logic
 
-**Design Points**:
+Detailed comparison for Materialized View (MV)-specific attributes is crucial for accurate autogeneration. The comparison logic should handle the following attributes:
 
-1. **Maintain Independent Ops**: Do not modify `CreateTableOp`.
-2. **from_table() Method**: Construct Op from Table object.
-3. **Double Construction**: Support traditional parameters and table parameters.
-4. **Attribute Extraction**: Extract from `table.info` and `table.dialect_options`.
-5. **Validation**: Check if `table_kind` matches.
+1. **`partition_by`**: This is a complex type (`ReflectedPartitionInfo`). The comparison needs to convert both the reflected `ReflectedPartitionInfo` object from the database and the `dialect_options['starrocks']['partition_by']` string from metadata into a canonical form for comparison.
+2. **`distributed_by`**: This is also a complex type (`ReflectedDistributionInfo`) and includes `BUCKETS` information. The comparison must normalize variations like `HASH(id)` vs `HASH(id) BUCKETS 10` by extracting and normalizing the `BUCKETS` value.
+3. **`refresh`**: This attribute (`ReflectedRefreshInfo`) requires careful comparison, handling different modes like `IMMEDIATE ASYNC` vs `ASYNC`, or `MANUAL` vs `None`.
+4. **`order_by`**: This is a string attribute, and its comparison should be straightforward after normalization (e.g., removing extra whitespace, consistent casing).
+5. **`properties`**: This is a dictionary of key-value pairs. The comparison should normalize the dictionary (e.g., consistent key/value quoting) and identify differences in individual properties.
 
-### 5.6 Metadata Management Key Points
+The comparison functions should also consider default values and potential immutability of certain MV attributes in StarRocks (i.e., whether a change requires an `ALTER` or `DROP + CREATE` operation). For mutable properties, the comparison should generate an `AlterMaterializedViewOp` that includes both current and reverse values for bidirectional migrations.
+
+### 5.5 Metadata Management Key Points
 
 **Design Points**:
 

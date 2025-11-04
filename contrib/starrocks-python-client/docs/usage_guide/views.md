@@ -10,37 +10,83 @@ To define a view, you use the `starrocks.sql.schema.View` object. This object ca
 
 ```python
 from starrocks.sql.schema import View
-from sqlalchemy import MetaData
+from sqlalchemy import MetaData, Column, select
+from starrocks.datatype import INTEGER, VARCHAR
 
 metadata = MetaData()
 
+# Basic view
 my_view = View(
     "my_view",
-    "SELECT id, name, salary FROM employees WHERE department = 'Sales'",
+    metadata,
+    definition="SELECT id, name, salary FROM employees WHERE department = 'Sales'",
     schema="my_schema",
-    # other optional options
-    comment="A view to aggregate sales data by product.",
-    columns=["product", "amount", "date"],
-    security="INVOKER",
-    metadata=metadata  # Associate the view with the metadata object
+    comment="A view for sales employees"
 )
 
-# You can associate the view with the metadata object manually, if you don't set it in View()
-# metadata.info.setdefault('views', {})[('my_schema', 'my_view')] = my_view
+# View with column definitions (SQLAlchemy style)
+detailed_view = View(
+    "detailed_view",
+    metadata,
+    Column('product', VARCHAR(100)),
+    Column('amount', INTEGER),
+    Column('date', VARCHAR(50)),
+    definition="SELECT product, SUM(amount), date FROM sales GROUP BY product, date",
+    schema="my_schema",
+    comment="A view to aggregate sales data by product.",
+    security="INVOKER",
+)
+
+# View with column aliases (simplified styles)
+# Style 1: List of column name strings
+simple_view = View(
+    "simple_view",
+    metadata,
+    definition="SELECT id, name FROM employees",
+    columns=["employee_id", "employee_name"]  # Just column names
+)
+
+# Style 2: List of dicts with name and optional comment
+detailed_alias_view = View(
+    "detailed_alias_view",
+    metadata,
+    definition="SELECT id, name FROM employees",
+    columns=[
+        {"name": "employee_id", "comment": "Employee ID"},
+        {"name": "employee_name", "comment": "Employee full name"}
+    ]
+)
+
+# View with security context
+secure_view = View(
+    "secure_view",
+    metadata,
+    definition="SELECT * FROM sensitive_data",
+    starrocks_security="INVOKER"
+)
+
+# View from SQLAlchemy Selectable
+users = Table('users', metadata, Column('id', INTEGER), Column('name', VARCHAR(50)))
+stmt = select(users.c.id, users.c.name).where(users.c.id > 100)
+active_users_view = View("active_users", metadata, definition=stmt)
 ```
 
-The `View` object is the primary way to define a database view in your Python code.
+The `View` object is the primary way to define a database view in your Python code. Once defined, the view is automatically registered with the `metadata.tables` collection.
 
 ### `View` Parameters
 
 - **`name`** (`str`): The name of the view.
-- **`definition`** (`str`): The `SELECT` statement that forms the view. This is the core logic of your view.
-  > **Note:** This must be a raw string, not a SQLAlchemy `Selectable` object.
+- **`metadata`** (`MetaData`): The SQLAlchemy MetaData object to associate with.
+- **`*args`** (`Column`): Optional Column objects for explicit column definitions (SQLAlchemy style).
+- **`definition`** (`str | Selectable`): **Required.** The `SELECT` statement that forms the view. Can be a raw SQL string or a SQLAlchemy `Selectable` object (e.g., `select()`).
 - **`schema`** (`Optional[str]`): The database schema where the view will be created. If not provided, the default schema is used.
 - **`comment`** (`Optional[str]`): An optional comment to describe the view's purpose. This comment will be stored in the database.
-- **`columns`** (`Optional[List[str]]`): You can explicitly specify the column names for the view. If omitted, the column names are inferred from the `SELECT` statement.
-- **`security`** (`Optional[str]`): Defines the SQL security context. Can be set to `'NONE'` or `'INVOKER'`.
-  > **Note**: `'DEFINER'` is not implemented in StarRocks as of v3.5.
+- **`columns`** (`Optional[List[str | dict]]`): Alternative way to specify column aliases. Three formats supported:
+  - List of strings: `['col1', 'col2']` - column names only
+  - List of dicts: `[{'name': 'col1', 'comment': 'Comment'}, ...]` - column names with optional comments
+  - Not specified: column names inferred from SELECT statement
+- **`starrocks_security`** (`Optional[str]`): Defines the SQL security context. Can be set to `'INVOKER'` or `'NONE'`.
+  > **Note**: StarRocks does **not** support `'DEFINER'`. Only `'INVOKER'` and `'NONE'` are supported.
 
 ## Alembic Integration
 

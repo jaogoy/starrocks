@@ -18,7 +18,7 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
-from starrocks.alembic import render
+from starrocks.alembic import include_object_for_view_mv, render_column_type
 
 
 # this is the Alembic Config object, which provides
@@ -88,6 +88,10 @@ def run_migrations_online() -> None:
         poolclass=pool.NullPool,
     )
 
+    # Allow custom include_object to be passed via config attributes
+    custom_include_object = context.config.attributes.get("include_object", None)
+    include_object_func = custom_include_object if custom_include_object else include_object_for_view_mv
+
     with connectable.connect() as connection:
         context.configure(
             connection=connection,
@@ -95,7 +99,8 @@ def run_migrations_online() -> None:
             version_table_kwargs=version_table_kwargs,
             # user_module_prefix={'starrocks.datatype.': 'sr.'},
             # user_module_prefix='sr.',
-            render_item=render.render_column_type,
+            render_item=render_column_type,
+            include_object=include_object_func,
         )
 
         with context.begin_transaction():

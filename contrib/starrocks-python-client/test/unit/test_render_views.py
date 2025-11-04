@@ -215,11 +215,63 @@ class TestViewRendering:
             schema="s'1"
         )
         rendered = _create_view(self.ctx, op)
-        # Verify key elements are present (exact escaping handled by Python's repr())
-        assert "op.create_view('v_complex'" in rendered
-        assert "SELECT" in rendered
-        assert "user-id" in rendered
-        assert "schema=" in rendered
+        logger.debug(f"rendered={rendered}")
+        expected_list = [
+            f"op.create_view('v_complex', ",
+            f"{repr(op.definition)}, ",
+            f"schema={repr(op.schema)})"
+        ]
+        expected = "".join(expected_list)
+        assert normalize_whitespace(rendered) == normalize_whitespace(expected)
+
+    def test_render_view_with_single_quotes(self):
+        """Coverage: View definition with single quotes."""
+        op = CreateViewOp(
+            "view_quotes",
+            "SELECT id, 'O''Brien' AS name FROM users"
+        )
+        rendered = _create_view(self.ctx, op)
+        expected = f"op.create_view('view_quotes', {repr(op.definition)})"
+        assert normalize_whitespace(rendered) == normalize_whitespace(expected)
+
+    def test_render_view_with_backslashes(self):
+        """Coverage: View definition with backslashes."""
+        op = CreateViewOp(
+            "view_backslash",
+            r"SELECT id, 'C:\\Users\\path' AS file_path FROM users"
+        )
+        rendered = _create_view(self.ctx, op)
+        expected = f"op.create_view('view_backslash', {repr(op.definition)})"
+        assert normalize_whitespace(rendered) == normalize_whitespace(expected)
+
+    def test_render_view_multiline_definition(self):
+        """Coverage: View definition with newlines (multi-line SQL)."""
+        op = CreateViewOp(
+            "view_multiline",
+            """SELECT
+    id,
+    name
+FROM users
+WHERE id > 0"""
+        )
+        rendered = _create_view(self.ctx, op)
+        expected = f"op.create_view('view_multiline', {repr(op.definition)})"
+        assert normalize_whitespace(rendered) == normalize_whitespace(expected)
+
+    def test_render_view_with_mixed_special_chars(self):
+        """Complex: View with mixed special characters (quotes, backslashes, newlines)."""
+        op = CreateViewOp(
+            "view_mixed",
+            """SELECT
+    id,
+    name AS "User's Name",
+    'Status: "Active"' AS status,
+    'Path: C:\\\\temp' AS temp_path
+FROM users"""
+        )
+        rendered = _create_view(self.ctx, op)
+        expected = f"op.create_view('view_mixed', {repr(op.definition)})"
+        assert normalize_whitespace(rendered) == normalize_whitespace(expected)
 
     def test_create_view_reverse(self):
         """Reverse: CreateViewOp reverses to DropViewOp."""
@@ -237,9 +289,9 @@ class TestViewRendering:
             schema="s1",
             comment="New Comment",
             security="DEFINER",
-            reverse_view_definition="SELECT 1",
-            reverse_view_comment="Old Comment",
-            reverse_view_security="INVOKER",
+            reverse_definition="SELECT 1",
+            reverse_comment="Old Comment",
+            reverse_security="INVOKER",
         )
         reverse_op = alter_op.reverse()
         assert isinstance(reverse_op, AlterViewOp)
@@ -250,9 +302,9 @@ class TestViewRendering:
         assert reverse_op.comment == "Old Comment"
         assert reverse_op.security == "INVOKER"
         # And the reverse attributes of the reverse op should be the new attributes of the original op
-        assert reverse_op.reverse_view_definition == "SELECT 2"
-        assert reverse_op.reverse_view_comment == "New Comment"
-        assert reverse_op.reverse_view_security == "DEFINER"
+        assert reverse_op.reverse_definition == "SELECT 2"
+        assert reverse_op.reverse_comment == "New Comment"
+        assert reverse_op.reverse_security == "DEFINER"
 
     def test_drop_view_reverse(self):
         """Reverse: DropViewOp reverses to CreateViewOp (with and without columns)."""
@@ -260,9 +312,9 @@ class TestViewRendering:
         drop_op = DropViewOp(
             "v1",
             schema=None,
-            _reverse_view_definition="SELECT 1",
-            _reverse_view_comment="Test view",
-            _reverse_view_security="INVOKER"
+            reverse_definition="SELECT 1",
+            reverse_comment="Test view",
+            reverse_security="INVOKER"
         )
         reverse_op = drop_op.reverse()
         assert isinstance(reverse_op, CreateViewOp)
@@ -275,10 +327,10 @@ class TestViewRendering:
         drop_op_with_cols = DropViewOp(
             "v2",
             schema=None,
-            _reverse_view_definition="SELECT id, name FROM users",
-            _reverse_view_comment="User view",
-            _reverse_view_security="INVOKER",
-            _reverse_view_columns=[
+            reverse_definition="SELECT id, name FROM users",
+            reverse_comment="User view",
+            reverse_security="INVOKER",
+            reverse_columns=[
                 {'name': 'id', 'comment': None},
                 {'name': 'name', 'comment': 'User name'}
             ]

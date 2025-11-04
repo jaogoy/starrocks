@@ -18,7 +18,8 @@ import pytest
 from sqlalchemy import MetaData, Table, inspect, text
 from sqlalchemy.engine import Engine
 
-from starrocks.common.utils import TableAttributeNormalizer
+from starrocks.common.params import TableInfoKey
+from starrocks.common.utils import TableAttributeNormalizer, get_dialect_option
 from starrocks.datatype import DATE, DECIMAL, INTEGER, TINYINT, VARCHAR
 from starrocks.engine.interfaces import ReflectedViewState
 
@@ -198,7 +199,7 @@ class TestReflectionViewsIntegration:
                 assert 'users' in normalized_def
 
                 # Verify security attribute is correctly reflected from SHOW CREATE VIEW
-                security = view_table.dialect_options.get('starrocks', {}).get('security')
+                security = get_dialect_option(view_table.dialect_options, TableInfoKey.SECURITY)
                 assert security == 'INVOKER', f"Expected security='INVOKER', got '{security}'"
                 logger.info("Reflected view with security: table_kind=%s, security=%s",
                            view_table.info.get('table_kind'), security)
@@ -599,7 +600,7 @@ class TestReflectionViewsIntegration:
                 ) == TableAttributeNormalizer.normalize_sql(expected_def)
 
                 # 3. Verify dialect-specific options (security is now correctly reflected from SHOW CREATE VIEW)
-                security = view_table.dialect_options.get('starrocks', {}).get('security')
+                security = get_dialect_option(view_table.dialect_options, TableInfoKey.SECURITY)
                 assert security == "INVOKER", f"Expected security='INVOKER', got '{security}'"
 
                 # 4. Verify reflected columns (name and comment)
@@ -731,7 +732,7 @@ class TestReflectionViewsIntegration:
                 assert view_table.comment == "Comprehensive view with all attributes for testing"
 
                 # 3. Verify security attribute is correctly reflected from SHOW CREATE VIEW
-                security = view_table.dialect_options.get('starrocks', {}).get('security')
+                security = get_dialect_option(view_table.dialect_options, TableInfoKey.SECURITY)
                 assert security == 'INVOKER', f"Expected security='INVOKER', got '{security}'"
                 logger.info(f"Security attribute: {security}")
 

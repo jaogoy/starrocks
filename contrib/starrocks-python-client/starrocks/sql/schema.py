@@ -182,14 +182,11 @@ class View(Table):
 
         # Let Table to handle comment, columns, and starrocks_* parameters
         # Pass keep_existing and extend_existing to Table for proper singleton behavior
-        logger.debug(f"View.__init__('{name}'): view_info={view_info}, kwargs['info'] id={id(kwargs.get('info'))}")
+        # logger.debug(f"View.__init__('{name}'): view_info={view_info}, kwargs['info'] id={id(kwargs.get('info'))}")
         super().__init__(name, metadata, *args, schema=schema, comment=comment,
                         keep_existing=keep_existing, extend_existing=extend_existing,
                         _no_init=False, **kwargs)
-        logger.debug(f"  After Table.__init__: self.info id={id(self.info)}, self.info={self.info}")
-
-        # set info again to make sure Table.__init__() won't discard them.
-        # self.info.update(view_info)
+        # logger.debug(f"  After Table.__init__: self.info id={id(self.info)}, self.info={self.info}")
 
     def _init_existing(self, *args, **kwargs):
         """

@@ -61,7 +61,7 @@ def render_column_type(type_: str, obj: Any, autogen_context: AutogenContext):
     if type_ != "type":
         return False
 
-    logger.debug(f"rendering type: {obj!r}, type: {type_}, module: {obj.__class__.__module__}")
+    # logger.debug(f"rendering type: {obj!r}, type: {type_}, module: {obj.__class__.__module__}")
     # Check if the object is a user-defined type in our custom module
     if not isinstance(obj, TypeEngine) or not obj.__class__.__module__.startswith('starrocks.datatype'):
         # For other objects, return False, let Alembic use the default rendering logic
@@ -122,7 +122,7 @@ def _alter_view(autogen_context: AutogenContext, op: AlterViewOp) -> str:
         args.append(f"{op.definition!r}")
 
     if op.schema:
-        args.append(f"schema={_quote_schema(op.schema)}")
+        args.append(f"schema={op.schema!r}")
     if op.columns:
         # Render columns as a list of dicts
         args.append(f"columns={op.columns!r}")
@@ -143,7 +143,7 @@ def _create_view(autogen_context: AutogenContext, op: CreateViewOp) -> str:
         f"{op.definition!r}"
     ]
     if op.schema:
-        args.append(f"schema={_quote_schema(op.schema)}")
+        args.append(f"schema={op.schema!r}")
     if op.comment:
         args.append(f"comment={op.comment!r}")
     if op.security:
@@ -162,7 +162,7 @@ def _create_view(autogen_context: AutogenContext, op: CreateViewOp) -> str:
 def _drop_view(autogen_context: AutogenContext, op: DropViewOp) -> str:
     args = [f"{op.view_name!r}"]
     if op.schema:
-        args.append(f"schema={_quote_schema(op.schema)}")
+        args.append(f"schema={op.schema!r}")
     if op.if_exists:
         args.append(f"if_exists={op.if_exists!r}")
 
@@ -182,7 +182,7 @@ def _create_materialized_view(autogen_context: AutogenContext, op: CreateMateria
     if properties:
         args.append(f"properties={properties!r}")
     if op.schema:
-        args.append(f"schema={_quote_schema(op.schema)}")
+        args.append(f"schema={op.schema!r}")
 
     call = f"op.create_materialized_view({', '.join(args)})"
     logger.debug("render create_materialized_view: %s", call)
@@ -193,7 +193,7 @@ def _create_materialized_view(autogen_context: AutogenContext, op: CreateMateria
 def _drop_materialized_view(autogen_context: AutogenContext, op: DropMaterializedViewOp) -> str:
     args = [f"{op.view_name!r}"]
     if op.schema:
-        args.append(f"schema={_quote_schema(op.schema)}")
+        args.append(f"schema={op.schema!r}")
 
     call = f"op.drop_materialized_view({', '.join(args)})"
     logger.debug("render drop_materialized_view: %s", call)
@@ -210,7 +210,7 @@ def _render_alter_table_distribution(autogen_context: AutogenContext, op: AlterT
     if op.buckets is not None:
         args.append(f"buckets={op.buckets}")
     if op.schema:
-        args.append(f"schema={_quote_schema(op.schema)}")
+        args.append(f"schema={op.schema!r}")
 
     return f"op.alter_table_distribution({', '.join(args)})"
 
@@ -223,7 +223,7 @@ def _render_alter_table_order(autogen_context: AutogenContext, op: AlterTableOrd
         f"{op.order_by!r}"
     ]
     if op.schema:
-        args.append(f"schema={_quote_schema(op.schema)}")
+        args.append(f"schema={op.schema!r}")
 
     return f"op.alter_table_order({', '.join(args)})"
 
@@ -236,6 +236,6 @@ def _render_alter_table_properties(autogen_context: AutogenContext, op: AlterTab
         f"{op.properties!r}"
     ]
     if op.schema:
-        args.append(f"schema={_quote_schema(op.schema)}")
+        args.append(f"schema={op.schema!r}")
 
     return f"op.alter_table_properties({', '.join(args)})"
