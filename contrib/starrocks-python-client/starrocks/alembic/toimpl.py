@@ -17,9 +17,10 @@
 import logging
 
 from alembic.operations import Operations
-from sqlalchemy import MetaData, inspect
+from sqlalchemy import MetaData
 
 from starrocks.alembic.ops import (
+    AlterMaterializedViewOp,
     AlterTableDistributionOp,
     AlterTableEngineOp,
     AlterTableKeyOp,
@@ -32,7 +33,14 @@ from starrocks.alembic.ops import (
     DropMaterializedViewOp,
     DropViewOp,
 )
-from starrocks.sql.ddl import AlterView, CreateMaterializedView, CreateView, DropMaterializedView, DropView
+from starrocks.sql.ddl import (
+    AlterMaterializedView,
+    AlterView,
+    CreateMaterializedView,
+    CreateView,
+    DropMaterializedView,
+    DropView,
+)
 from starrocks.sql.schema import MaterializedView, View
 
 
@@ -64,19 +72,42 @@ def drop_view(operations: Operations, op: DropViewOp) -> None:
     operations.execute(DropView(view, if_exists=op.if_exists))
 
 
+@Operations.implementation_for(AlterMaterializedViewOp)
+def alter_materialized_view(operations: Operations, op: AlterMaterializedViewOp) -> None:
+    """
+    Execute ALTER MATERIALIZED VIEW statement.
+
+    Only supports altering mutable attributes: refresh, properties.
+    """
+    logger.debug("implementation alter_materialized_view: %s", op.view_name)
+    operations.execute(AlterMaterializedView(
+        view_name=op.view_name,
+        schema=op.schema,
+        refresh=op.refresh,
+        properties=op.properties,
+    ))
+
+
 @Operations.implementation_for(CreateMaterializedViewOp)
 def create_materialized_view(operations: Operations, op: CreateMaterializedViewOp) -> None:
     """Execute a CREATE MATERIALIZED VIEW statement."""
     logger.debug("implementation create_materialized_view: %s", op.view_name)
-    mv = op.to_materialized_view()
-    operations.execute(CreateMaterializedView(mv, if_not_exists=op.if_not_exists))
+    mv = op.to_mv()
+    operations.execute(CreateMaterializedView(mv, or_replace=op.or_replace, if_not_exists=op.if_not_exists))
 
 
 @Operations.implementation_for(DropMaterializedViewOp)
 def drop_materialized_view(operations: Operations, op: DropMaterializedViewOp) -> None:
     """Implementation for the 'drop_materialized_view' operation."""
+    logger.debug("implementation drop_materialized_view: %s", op.view_name)
     # For DROP MATERIALIZED VIEW, we only need name and schema, definition is not required
-    mv = op.to_materialized_view()
+    # Create a minimal MaterializedView object for DROP operation
+    mv = MaterializedView(
+        op.view_name,
+        MetaData(),
+        definition='',  # Empty definition for DROP
+        schema=op.schema,
+    )
     operations.execute(DropMaterializedView(mv, if_exists=op.if_exists))
 
 

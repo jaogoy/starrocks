@@ -21,7 +21,7 @@ from alembic.autogenerate import comparators
 from alembic.autogenerate.api import AutogenContext
 from alembic.ddl import DefaultImpl
 from alembic.operations.ops import AlterColumnOp, AlterTableOp, UpgradeOps
-from sqlalchemy import Column, quoted_name
+from sqlalchemy import Column, exc, quoted_name
 from sqlalchemy.engine.reflection import Inspector
 from sqlalchemy.exc import ArgumentError, NotSupportedError
 from sqlalchemy.sql import schema as sa_schema, sqltypes
@@ -29,12 +29,14 @@ from sqlalchemy.sql.schema import Table
 
 from starrocks import datatype
 from starrocks.alembic.ops import (
+    AlterMaterializedViewOp,
     AlterViewOp,
     CreateMaterializedViewOp,
     CreateViewOp,
     DropMaterializedViewOp,
     DropViewOp,
 )
+from starrocks.common import utils
 from starrocks.common.defaults import ReflectionTableDefaults, ReflectionViewDefaults
 from starrocks.common.params import (
     AlterTableEnablement,
@@ -47,14 +49,13 @@ from starrocks.common.params import (
     TableObjectInfoKey,
     TablePropertyForFuturePartitions,
 )
-from starrocks.common.types import ViewSecurityType
 from starrocks.common.utils import (
     CaseInsensitiveDict,
     TableAttributeNormalizer,
     extract_dialect_options_as_case_insensitive,
 )
 from starrocks.datatype import ARRAY, BOOLEAN, MAP, STRING, STRUCT, TINYINT, VARCHAR
-from starrocks.engine.interfaces import ReflectedPartitionInfo, ReflectedTableKeyInfo, ReflectedViewState
+from starrocks.engine.interfaces import ReflectedPartitionInfo, ReflectedTableKeyInfo
 from starrocks.reflection import StarRocksTableDefinitionParser
 from starrocks.sql.schema import MaterializedView, View
 
@@ -328,11 +329,11 @@ def _compare_views(
     added_views = metadata_view_names.difference(conn_view_names)
     logger.debug(f"Added views (in metadata but not in DB): {added_views}")
     for s, vname in added_views:
-        name = "%s.%s" % (s, vname) if s else vname
+        qualified_view_name = "%s.%s" % (s, vname) if s else vname
         metadata_view = view_name_to_table[(s, vname)]
         if autogen_context.run_object_filters(metadata_view, vname, "view", False, None):
             upgrade_ops.ops.append(CreateViewOp.from_view(metadata_view))
-            logger.info("Detected added view %r", name)
+            logger.info(f"Detected added view {qualified_view_name!r}")
 
     # Dropped views (in database but not in metadata)
     # Use a separate MetaData to avoid polluting the user's metadata
@@ -355,7 +356,7 @@ def _compare_views(
 
         if autogen_context.run_object_filters(t, vname, "view", True, None):
             upgrade_ops.ops.append(DropViewOp.from_view(t))
-            logger.info("Detected removed view %r", name)
+            logger.info(f"Detected removed view {name!r}")
 
     # Modified views (in both database and metadata)
     # Use a separate MetaData for reflected views
@@ -379,7 +380,7 @@ def _compare_views(
     # Compare existing views in sorted order for consistent output
     for s, vname in sorted(existing_views, key=lambda x: (x[0] or "", x[1])):
         s = s or None
-        name = "%s.%s" % (s, vname) if s else vname
+        name = sa_schema._get_table_key(vname, s)
         metadata_view = view_name_to_table[(s, vname)]
         conn_view = existing_metadata.tables[name]
 
@@ -418,8 +419,8 @@ def compare_view(
             view_name
         )
         return
-
-    logger.debug(f"compare_view: view_name={view_name}, schema={schema}")
+    qualifed_view_name = utils.gen_simple_qualified_name(view_name, schema)
+    logger.debug(f"compare_view: view_name={qualifed_view_name!r}")
 
     # Extract dialect_options for comparison
     conn_view_attributes = extract_dialect_options_as_case_insensitive(conn_view.dialect_options)
@@ -428,7 +429,7 @@ def compare_view(
     logger.debug(
         "View-specific attributes comparison for view '%s': "
         "Detected in database: %s. Found in metadata: %s.",
-        view_name,
+        qualifed_view_name,
         conn_view_attributes,
         meta_view_attributes,
     )
@@ -467,12 +468,7 @@ def compare_view(
         if security_changed:
             changed_attrs.append("security")
 
-        logger.info(
-            "Detected view changes for %s: %s",
-            view_fqn,
-            ", ".join(changed_attrs),
-        )
-
+        logger.info(f"Detected view changes for {view_fqn!r}: {', '.join(changed_attrs)}")
 
 def _compare_view_definition_and_columns(
     alter_view_op: AlterViewOp,
@@ -771,10 +767,14 @@ def autogen_for_materialized_views(
             )
         )
 
+    # Get all MVs from metadata and apply name filters
     metadata_mv_names = set(
         (table.schema, table.name)
         for table in metadata.tables.values()
         if table.info.get(TableObjectInfoKey.TABLE_KIND) == TableKind.MATERIALIZED_VIEW
+        and autogen_context.run_name_filters(
+            table.name, "materialized_view", {"schema_name": table.schema}
+        )
     )
 
     _compare_mvs(
@@ -805,13 +805,13 @@ def _compare_mvs(
 
     # Added MVs (in metadata but not in database)
     for s, mvname in metadata_mv_names.difference(conn_mv_names):
-        name = "%s.%s" % (s, mvname) if s else mvname
+        qualified_mv_name = utils.gen_simple_qualified_name(mvname, s)
         metadata_mv = mv_name_to_table[(s, mvname)]
         if autogen_context.run_object_filters(
             metadata_mv, mvname, "materialized_view", False, None
         ):
             upgrade_ops.ops.append(CreateMaterializedViewOp.from_materialized_view(metadata_mv))
-            logger.info("Detected added materialized view %r", name)
+            logger.info(f"Detected added materialized view {qualified_mv_name!r}")
 
     # Dropped MVs (in database but not in metadata)
     # Use a separate MetaData to avoid polluting the user's metadata
@@ -831,7 +831,7 @@ def _compare_mvs(
 
         if autogen_context.run_object_filters(t, mvname, "materialized_view", True, None):
             upgrade_ops.ops.append(DropMaterializedViewOp.from_materialized_view(t))
-            logger.info("Detected removed materialized view %r", name)
+            logger.info(f"Detected removed materialized view {name!r}")
 
     # Modified MVs (in both database and metadata)
     # Use a separate MetaData for reflected MVs
@@ -854,7 +854,7 @@ def _compare_mvs(
     # Compare existing MVs in sorted order for consistent output
     for s, mvname in sorted(existing_mvs, key=lambda x: (x[0] or "", x[1])):
         s = s or None
-        name = "%s.%s" % (s, mvname) if s else mvname
+        name = sa_schema._get_table_key(mvname, s)
         metadata_mv = mv_name_to_table[(s, mvname)]
         conn_mv = existing_metadata.tables[name]
 
@@ -873,6 +873,230 @@ def _compare_mvs(
             )
 
 
+def _compare_mv_definition(
+    ops_list: List,
+    schema: Optional[str],
+    mv_name: str,
+    conn_mv: MaterializedView,
+    metadata_mv: MaterializedView
+) -> None:
+    """
+    Compare MV definition and raise error if changed.
+
+    Note: StarRocks does not support altering MV definition, so this will raise an error
+    if a change is detected.
+    """
+    conn_definition = TableAttributeNormalizer.normalize_sql(conn_mv.definition)
+    meta_definition = TableAttributeNormalizer.normalize_sql(metadata_mv.definition)
+
+    if conn_definition != meta_definition:
+        qualified_mv_name = utils.gen_simple_qualified_name(mv_name, schema)
+        raise exc.NotSupportedError(
+            f"Detected definition change for materialized view {qualified_mv_name!r}. "
+            f"StarRocks does not support altering MV definition. "
+            f"You need to manually DROP and CREATE the materialized view."
+        )
+
+
+def _compare_mv_partition_by(
+    ops_list: List,
+    schema: Optional[str],
+    mv_name: str,
+    conn_mv_attributes: Dict[str, Any],
+    meta_mv_attributes: Dict[str, Any]
+) -> None:
+    """
+    Compare MV partition_by and raise error if changed.
+
+    Note: StarRocks does not support altering MV partition_by, so this will raise an error
+    if a change is detected.
+    """
+    conn_partition = TableAttributeNormalizer.normalize_partition_method(
+        conn_mv_attributes.get(TableInfoKey.PARTITION_BY)
+    )
+    meta_partition = TableAttributeNormalizer.normalize_partition_method(
+        meta_mv_attributes.get(TableInfoKey.PARTITION_BY)
+    )
+
+    if conn_partition != meta_partition:
+        qualified_mv_name = utils.gen_simple_qualified_name(mv_name, schema)
+        raise exc.NotSupportedError(
+            f"Detected partition_by change for materialized view {qualified_mv_name!r}. "
+            f"StarRocks does not support altering MV partition_by. "
+            f"You need to manually DROP and CREATE the materialized view."
+        )
+
+
+def _compare_mv_distributed_by(
+    ops_list: List,
+    schema: Optional[str],
+    mv_name: str,
+    conn_mv_attributes: Dict[str, Any],
+    meta_mv_attributes: Dict[str, Any]
+) -> None:
+    """
+    Compare MV distributed_by and raise error if changed.
+
+    Note: StarRocks does not support altering MV distributed_by, so this will raise an error
+    if a change is detected.
+    """
+    conn_distribution = TableAttributeNormalizer.normalize_distribution_string(
+        conn_mv_attributes.get(TableInfoKey.DISTRIBUTED_BY)
+    )
+    meta_distribution = TableAttributeNormalizer.normalize_distribution_string(
+        meta_mv_attributes.get(TableInfoKey.DISTRIBUTED_BY)
+    )
+
+    if conn_distribution != meta_distribution:
+        qualified_mv_name = utils.gen_simple_qualified_name(mv_name, schema)
+        raise exc.NotSupportedError(
+            f"Detected distributed_by change for materialized view {qualified_mv_name!r}. "
+            f"StarRocks does not support altering MV distributed_by. "
+            f"You need to manually DROP and CREATE the materialized view."
+        )
+
+
+def _compare_mv_order_by(
+    ops_list: List,
+    schema: Optional[str],
+    mv_name: str,
+    conn_mv_attributes: Dict[str, Any],
+    meta_mv_attributes: Dict[str, Any]
+) -> None:
+    """
+    Compare MV order_by and raise error if changed.
+
+    Note: StarRocks does not support altering MV order_by, so this will raise an error
+    if a change is detected.
+    """
+    conn_order_by = TableAttributeNormalizer.normalize_order_by_string(
+        conn_mv_attributes.get(TableInfoKey.ORDER_BY)
+    )
+    meta_order_by = TableAttributeNormalizer.normalize_order_by_string(
+        meta_mv_attributes.get(TableInfoKey.ORDER_BY)
+    )
+
+    if conn_order_by != meta_order_by:
+        qualified_mv_name = utils.gen_simple_qualified_name(mv_name, schema)
+        raise exc.NotSupportedError(
+            f"Detected order_by change for materialized view {qualified_mv_name!r}. "
+            f"StarRocks does not support altering MV order_by. "
+            f"You need to manually DROP and CREATE the materialized view."
+        )
+
+
+def _compare_mv_comment(
+    ops_list: List,
+    schema: Optional[str],
+    mv_name: str,
+    conn_mv: MaterializedView,
+    metadata_mv: MaterializedView
+) -> None:
+    """
+    Compare MV comment and raise error if changed.
+
+    Note: StarRocks does not support altering MV comment, so this will raise an error
+    if a change is detected.
+    """
+    conn_comment = (conn_mv.comment or "").strip()
+    meta_comment = (metadata_mv.comment or "").strip()
+
+    if conn_comment != meta_comment:
+        qualified_mv_name = utils.gen_simple_qualified_name(mv_name, schema)
+        raise exc.NotSupportedError(
+            f"Detected comment change for materialized view {qualified_mv_name!r}. "
+            f"StarRocks does not support altering MV comment. "
+            f"You need to manually DROP and CREATE the materialized view."
+        )
+
+
+def _compare_mv_refresh(
+    ops_list: List,
+    schema: Optional[str],
+    mv_name: str,
+    conn_mv_attributes: Dict[str, Any],
+    meta_mv_attributes: Dict[str, Any]
+) -> None:
+    """
+    Compare MV refresh attributes and add AlterMaterializedViewOp if changed.
+
+    This is a mutable attribute that can be altered using ALTER MATERIALIZED VIEW.
+    """
+    refresh_moment_changed = (
+        conn_mv_attributes.get(TableInfoKey.REFRESH_MOMENT) !=
+        meta_mv_attributes.get(TableInfoKey.REFRESH_MOMENT)
+    )
+    refresh_type_changed = (
+        conn_mv_attributes.get(TableInfoKey.REFRESH_TYPE) !=
+        meta_mv_attributes.get(TableInfoKey.REFRESH_TYPE)
+    )
+
+    if refresh_moment_changed or refresh_type_changed:
+        # Build refresh strings
+        new_refresh = _build_refresh_string(meta_mv_attributes)
+        old_refresh = _build_refresh_string(conn_mv_attributes)
+
+        qualified_mv_name = utils.gen_simple_qualified_name(mv_name, schema)
+        ops_list.append(
+            AlterMaterializedViewOp(
+                view_name=mv_name,
+                schema=schema,
+                refresh=new_refresh,
+                properties=None,
+                reverse_refresh=old_refresh,
+                reverse_properties=None,
+            )
+        )
+        logger.info(f"Detected refresh change for materialized view {qualified_mv_name!r}")
+
+
+def _compare_mv_properties(
+    ops_list: List,
+    schema: Optional[str],
+    mv_name: str,
+    conn_mv_attributes: Dict[str, Any],
+    meta_mv_attributes: Dict[str, Any]
+) -> None:
+    """
+    Compare MV properties and add AlterMaterializedViewOp if changed.
+
+    This is a mutable attribute that can be altered using ALTER MATERIALIZED VIEW.
+    """
+    conn_properties = conn_mv_attributes.get(TableInfoKey.PROPERTIES)
+    meta_properties = meta_mv_attributes.get(TableInfoKey.PROPERTIES)
+
+    if conn_properties != meta_properties:
+        qualified_mv_name = utils.gen_simple_qualified_name(mv_name, schema)
+        ops_list.append(
+            AlterMaterializedViewOp(
+                view_name=mv_name,
+                schema=schema,
+                refresh=None,
+                properties=meta_properties,
+                reverse_refresh=None,
+                reverse_properties=conn_properties,
+            )
+        )
+        logger.info(f"Detected properties change for materialized view {qualified_mv_name!r}")
+
+
+def _build_refresh_string(mv_attributes: Dict[str, Any]) -> Optional[str]:
+    """
+    Build refresh string from MV attributes.
+
+    Combines refresh_moment and refresh_type into a single string.
+    Format: "[IMMEDIATE|DEFERRED] [ASYNC|MANUAL]"
+    """
+    refresh_moment = mv_attributes.get(TableInfoKey.REFRESH_MOMENT, '')
+    refresh_type = mv_attributes.get(TableInfoKey.REFRESH_TYPE, '')
+    parts = []
+    if refresh_moment:
+        parts.append(refresh_moment)
+    if refresh_type:
+        parts.append(refresh_type)
+    return ' '.join(parts) if parts else None
+
+
 @comparators_dispatch_for_starrocks("materialized_view")
 def compare_materialized_view(
     autogen_context: AutogenContext,
@@ -885,8 +1109,13 @@ def compare_materialized_view(
     """
     Compare a single materialized view and generate operations if needed.
 
-    StarRocks does not support ALTER MATERIALIZED VIEW, so any change
-    requires DROP + CREATE.
+    Categorizes changes into:
+    - Mutable attributes (can use ALTER): refresh, properties
+    - Immutable attributes (require DROP + CREATE): definition, partition_by,
+      distributed_by, order_by, comment
+
+    Note: For immutable attributes, this will raise NotSupportedError if changes are detected,
+    as StarRocks does not support altering these attributes.
     """
     # Handle MV creation and deletion scenarios (should not happen here)
     if conn_mv is None or metadata_mv is None:
@@ -911,104 +1140,31 @@ def compare_materialized_view(
         meta_mv_attributes,
     )
 
-    # Compare definition
-    definition_changed = (
-        TableAttributeNormalizer.normalize_sql(conn_mv.definition) !=
-        TableAttributeNormalizer.normalize_sql(metadata_mv.definition)
-    )
+    # Track the number of operations before comparison
+    ops_before = len(upgrade_ops.ops)
 
-    # Compare physical table attributes
-    partition_changed = (
-        TableAttributeNormalizer.normalize_partition_method(
-            conn_mv_attributes.get(TableInfoKey.PARTITION_BY)
-        ) !=
-        TableAttributeNormalizer.normalize_partition_method(
-            meta_mv_attributes.get(TableInfoKey.PARTITION_BY)
-        )
-    )
+    # Compare each MV attribute using dedicated functions
+    # Order: immutable attributes first (will raise error if changed), then mutable attributes
+    # Immutable attributes (will raise NotSupportedError if changed):
+    _compare_mv_definition(upgrade_ops.ops, schema, mv_name, conn_mv, metadata_mv)
+    _compare_mv_partition_by(upgrade_ops.ops, schema, mv_name, conn_mv_attributes, meta_mv_attributes)
+    _compare_mv_distributed_by(upgrade_ops.ops, schema, mv_name, conn_mv_attributes, meta_mv_attributes)
+    _compare_mv_order_by(upgrade_ops.ops, schema, mv_name, conn_mv_attributes, meta_mv_attributes)
+    _compare_mv_comment(upgrade_ops.ops, schema, mv_name, conn_mv, metadata_mv)
 
-    distribution_changed = (
-        TableAttributeNormalizer.normalize_distribution_string(
-            conn_mv_attributes.get(TableInfoKey.DISTRIBUTED_BY)
-        ) !=
-        TableAttributeNormalizer.normalize_distribution_string(
-            meta_mv_attributes.get(TableInfoKey.DISTRIBUTED_BY)
-        )
-    )
+    # Mutable attributes (will generate AlterMaterializedViewOp if changed):
+    _compare_mv_refresh(upgrade_ops.ops, schema, mv_name, conn_mv_attributes, meta_mv_attributes)
+    _compare_mv_properties(upgrade_ops.ops, schema, mv_name, conn_mv_attributes, meta_mv_attributes)
 
-    order_by_changed = (
-        TableAttributeNormalizer.normalize_order_by_string(
-            conn_mv_attributes.get(TableInfoKey.ORDER_BY)
-        ) !=
-        TableAttributeNormalizer.normalize_order_by_string(
-            meta_mv_attributes.get(TableInfoKey.ORDER_BY)
-        )
-    )
-
-    # Compare refresh attributes
-    refresh_moment_changed = (
-        conn_mv_attributes.get(TableInfoKey.REFRESH_MOMENT) !=
-        meta_mv_attributes.get(TableInfoKey.REFRESH_MOMENT)
-    )
-
-    refresh_type_changed = (
-        conn_mv_attributes.get(TableInfoKey.REFRESH_TYPE) !=
-        meta_mv_attributes.get(TableInfoKey.REFRESH_TYPE)
-    )
-
-    # Compare properties
-    properties_changed = (
-        conn_mv_attributes.get(TableInfoKey.PROPERTIES) !=
-        meta_mv_attributes.get(TableInfoKey.PROPERTIES)
-    )
-
-    # Compare comment (MVs don't use Alembic's built-in _compare_table_comment)
-    conn_comment = (conn_mv.comment or "").strip()
-    meta_comment = (metadata_mv.comment or "").strip()
-    comment_changed = conn_comment != meta_comment
-
-    logger.debug(
-        "compare_materialized_view: %s.%s definition_changed=%s partition_changed=%s "
-        "distribution_changed=%s order_by_changed=%s refresh_moment_changed=%s "
-        "refresh_type_changed=%s properties_changed=%s comment_changed=%s",
-        schema or autogen_context.dialect.default_schema_name,
-        mv_name,
-        definition_changed,
-        partition_changed,
-        distribution_changed,
-        order_by_changed,
-        refresh_moment_changed,
-        refresh_type_changed,
-        properties_changed,
-        comment_changed,
-    )
-
-    # If any attribute changed, generate DROP + CREATE operations
-    # StarRocks does not support ALTER MATERIALIZED VIEW
-    if any([
-        definition_changed,
-        partition_changed,
-        distribution_changed,
-        order_by_changed,
-        refresh_moment_changed,
-        refresh_type_changed,
-        properties_changed,
-        comment_changed,
-    ]):
-        upgrade_ops.ops.append(
-            (
-                DropMaterializedViewOp.from_materialized_view(conn_mv),
-                CreateMaterializedViewOp.from_materialized_view(metadata_mv),
-            )
-        )
-        logger.info(
-            "Detected materialized view change for %s.%s, will DROP and CREATE",
-            schema or autogen_context.dialect.default_schema_name,
-            mv_name,
-        )
+    # Log summary if any operations were generated
+    ops_after = len(upgrade_ops.ops)
+    if ops_after > ops_before:
+        qualified_mv_name = utils.gen_simple_qualified_name(mv_name, schema)
+        num_changes = ops_after - ops_before
+        logger.info(f"Materialized view {qualified_mv_name!r} comparison complete: {num_changes} ALTER operation(s) generated")
 
 @comparators_dispatch_for_starrocks("table")
-def compare_starrocks_table(
+def check_table_kind_for_view_mv(
     autogen_context: AutogenContext,
     upgrade_ops: UpgradeOps,
     schema: Optional[str],
@@ -1142,12 +1298,9 @@ def compare_starrocks_table(
     # Log summary if any operations were generated
     ops_after = len(upgrade_ops.ops)
     if ops_after > ops_before:
-        full_table_name = f"{schema}.{table_name}" if schema else table_name
+        qualified_table_name = utils.gen_simple_qualified_name(table_name, schema)
         num_changes = ops_after - ops_before
-        logger.info(
-            f"Table '{full_table_name}' comparison complete: "
-            f"{num_changes} ALTER operation(s) generated"
-        )
+        logger.info(f"Table {qualified_table_name!r} comparison complete: {num_changes} ALTER operation(s) generated")
 
     return False
 
@@ -1563,11 +1716,6 @@ def _compare_table_properties(
             logger.debug(f"Property no changes. key: {key}, effective_conn_str: {effective_conn_str}, effective_meta_str: {effective_meta_str}")
             continue
 
-        # A meaningful change has been detected for this property.
-        logger.info(
-            f"Detected property change for table '{full_table_name}': "
-            f"'{key}' changed from '{effective_conn_str}' to '{effective_meta_str}'"
-        )
         logger.debug(f"Property changes. key: {key}, effective_conn_str: {effective_conn_str}, effective_meta_str: {effective_meta_str}")
         if meta_value is None:
             if default_value is None:
@@ -1598,6 +1746,11 @@ def _compare_table_properties(
         )
         # logger.debug(f"Newly changed property. prop_key: '{prop_key}', target_val_upgrade: '{target_val_upgrade}'")
         properties_to_set[prop_key] = target_val_upgrade
+        # A meaningful change has been detected for this property.
+        logger.info(
+            f"Detected property change for table {full_table_name!r}: "
+            f"{key!r} changed from {effective_conn_str!r} to {effective_meta_str!r}"
+        )
         if prop_key != key:
             logger.warning(f"The property '{key}' will be changed to '{target_val_upgrade}' "
                 f"for the future partitions only by using '{prop_key}'. "
@@ -1664,7 +1817,7 @@ def _compare_single_table_attribute(
     meta_str = str(meta_value) if meta_value is not None else None
     default_str = str(default_value) if default_value is not None else None
 
-    full_table_name = f"{schema}.{table_name}" if schema else table_name or "unknown_table"
+    qualified_table_name = utils.gen_simple_qualified_name(table_name, schema)
     attribute_name: str = attribute_name.upper().replace('_', ' ')
 
     if meta_str is not None:
@@ -1672,12 +1825,12 @@ def _compare_single_table_attribute(
         if meta_str != (conn_str or default_str):
             # Case 1: meta specified, different from conn -> has change
             logger.debug(
-                f"Table '{full_table_name}', Attribute '{attribute_name}' "
+                f"Table {qualified_table_name!r}, Attribute '{attribute_name}' "
                 f"has changed from '{conn_str or '(not set)'}' to '{meta_str}' "
                 f"with default value '{default_str}'")
             if meta_value.lower() == (conn_str or default_str or '').lower():
                 logger.warning(
-                    f"Table '{full_table_name}': Attribute '{attribute_name}' has a case-only difference: "
+                    f"Table {qualified_table_name!r}: Attribute '{attribute_name}' has a case-only difference: "
                     f"'{conn_value}' (database) vs '{meta_value}' (metadata). "
                     f"Consider making them consistent for clarity."
                     f"No ALTER statement will be generated automatically."
@@ -1687,7 +1840,7 @@ def _compare_single_table_attribute(
                 # This attribute doesn't support ALTER operations
                 error_msg = (
                     f"StarRocks does not support 'ALTER TABLE {attribute_name}'. "
-                    f"Table '{full_table_name}' has {attribute_name.upper()} '{conn_str or '(not set)'}' in database "
+                    f"Table {qualified_table_name!r} has {attribute_name.upper()} '{conn_str or '(not set)'}' in database "
                     f"but '{meta_str}' in metadata. "
                     f"Please update your metadata to match the database."
                 )
@@ -1695,11 +1848,8 @@ def _compare_single_table_attribute(
                 raise NotImplementedError(error_msg)
             # Log the detected change at INFO level
             logger.info(
-                f"Detected table attribute change for '{full_table_name}': "
-                f"{attribute_name} changed from '{conn_str or '(not set)'}' to '{meta_str}'"
-            )
-            logger.debug(f"Table '{full_table_name}', Attribute '{attribute_name}' has changed "
-                         f"from '{conn_str or '(not set)'}' to '{meta_str}' with default value '{default_str}'")
+                f"Detected table attribute change for {qualified_table_name!r}: {attribute_name} changed "
+                f"from {conn_str or '(not set)'!r} to {meta_str!r}")
             return True
         # Case 2: meta specified, same as conn -> no change
         return False
@@ -1712,7 +1862,7 @@ def _compare_single_table_attribute(
             # If custom comparison function is provided, use it for default comparison
             if equal_to_default_cmp_func and equal_to_default_cmp_func(conn_value, default_value):
                 logger.debug(
-                    f"Table '{full_table_name}': Attribute '{attribute_name}' in database is considered "
+                    f"Table {qualified_table_name!r}: Attribute '{attribute_name}' in database is considered "
                     f"equal to default '{default_str}' via custom comparison function."
                 )
                 return False
@@ -1720,7 +1870,7 @@ def _compare_single_table_attribute(
             # Case 4: meta not specified, conn is non-default -> log error, NO automatic change
             if conn_str.lower() == (default_str or '').lower():
                 logger.warning(
-                    f"Table '{full_table_name}': Attribute '{attribute_name}' has a case-only difference: "
+                    f"Table {qualified_table_name!r}: Attribute '{attribute_name}' has a case-only difference: "
                     f"'{conn_str}' (database) vs '{default_str}' (default). "
                     f"Consider making them consistent for clarity. "
                     f"No ALTER statement will be generated automatically."
@@ -1728,7 +1878,7 @@ def _compare_single_table_attribute(
                 pass
             else:
                 error_msg = (
-                    f"Table '{full_table_name}': Attribute '{attribute_name}' "
+                    f"Table {qualified_table_name!r}: Attribute '{attribute_name}' "
                     f"in database has non-default value '{conn_str}' (default: '{default_str}'), "
                     f"but not specified in metadata. Please specify this attribute explicitly "
                     "in your table definition to avoid unexpected behavior. "
@@ -1819,8 +1969,9 @@ def compare_starrocks_column_autoincrement(
     # Because we can't inpsect the autoincrement, we can't do the check the difference.
     if conn_col.autoincrement != metadata_col.autoincrement and \
             "auto" != metadata_col.autoincrement:
+        qualified_table_name = utils.gen_simple_qualified_name(tname, schema)
         logger.warning(
-            f"Detected AUTO_INCREMENT is changed for column {cname}. "
+            f"Detected AUTO_INCREMENT change for column '{qualified_table_name}.{cname}'. "
             f"conn_col.autoincrement: {conn_col.autoincrement}, "
             f"metadata_col.autoincrement: {metadata_col.autoincrement}. "
             f"No ALTER statement will be generated automatically, "

@@ -50,17 +50,37 @@ class DropView(DDLElement):
 
 
 class AlterMaterializedView(DDLElement):
-    """Represents an ALTER MATERIALIZED VIEW DDL statement."""
+    """
+    Represents an ALTER MATERIALIZED VIEW DDL statement.
+
+    Only supports altering mutable attributes:
+    - refresh: ALTER MATERIALIZED VIEW ... REFRESH <new_scheme>
+    - properties: ALTER MATERIALIZED VIEW ... SET ("<key>" = "<value>")
+
+    Unsuported attributes (definition, partition_by, distributed_by, order_by, comment, columns)
+    cannot be altered and require DROP + CREATE.
+    """
     __visit_name__ = "alter_materialized_view"
-    def __init__(self, element: MaterializedView) -> None:
-        self.element = element
+
+    def __init__(
+        self,
+        view_name: str,
+        schema: Optional[str] = None,
+        refresh: Optional[str] = None,
+        properties: Optional[Dict[str, str]] = None,
+    ) -> None:
+        self.view_name = view_name
+        self.schema = schema
+        self.refresh = refresh
+        self.properties = properties
 
 
 class CreateMaterializedView(DDLElement):
     """Represents a CREATE MATERIALIZED VIEW DDL statement."""
     __visit_name__ = "create_materialized_view"
-    def __init__(self, element: MaterializedView, if_not_exists: bool = False) -> None:
+    def __init__(self, element: MaterializedView, or_replace: bool = False, if_not_exists: bool = False) -> None:
         self.element = element
+        self.or_replace = or_replace
         self.if_not_exists = if_not_exists
 
 

@@ -323,3 +323,8 @@ def find_matching_parenthesis(text: str, start_index: int = 0) -> int:
             if open_paren_count == 0:
                 return i
     return -1
+
+
+def gen_simple_qualified_name(table_name: str, schema: Optional[str] = None) -> str:
+    """Generate a simple qualified name for a table."""
+    return f"{schema}.{table_name}" if schema else table_name

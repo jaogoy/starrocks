@@ -19,7 +19,7 @@ from sqlalchemy import Column, Table
 from sqlalchemy.schema import MetaData
 from sqlalchemy.sql.selectable import Selectable
 
-from starrocks.common.params import TableKind, TableObjectInfoKey
+from starrocks.common.params import DialectName, TableInfoKey, TableInfoKeyWithPrefix, TableKind, TableObjectInfoKey
 from starrocks.datatype import STRING
 
 
@@ -294,7 +294,8 @@ class View(Table):
 
     @property
     def security(self) -> Optional[str]:
-        return self.dialect_options.get("starrocks", {}).get("security")
+        from starrocks.common.params import DialectName, TableInfoKey
+        return self.dialect_options.get(DialectName, {}).get(TableInfoKey.SECURITY)
 
 
 class MaterializedView(View):
@@ -330,11 +331,12 @@ class MaterializedView(View):
             extend_existing: When True, if the materialized view already exists, apply further
                 arguments to update the existing object.
             **kwargs: Additional keyword arguments, including:
-                - starrocks_partition_by: Partition expression
-                - starrocks_refresh: Refresh mode (ASYNC or MANUAL)
-                - starrocks_distributed_by: Distribution method
-                - starrocks_order_by: Order by columns
-                - starrocks_properties: Additional properties
+                - starrocks_partition_by: Partition expression (e.g., 'date_trunc("day", created_at)')
+                - starrocks_distributed_by: Distribution method (e.g., 'HASH(user_id) BUCKETS 10')
+                - starrocks_order_by: Order by columns (e.g., 'user_id, created_at')
+                - starrocks_refresh: Refresh mode (e.g., 'ASYNC', 'MANUAL', 'IMMEDIATE ASYNC')
+                    Format: [IMMEDIATE|DEFERRED] [ASYNC|MANUAL]
+                - starrocks_properties: Additional properties dict (e.g., {'replication_num': '3'})
                 - Other dialect-specific parameters with starrocks_ prefix
 
         Examples:
@@ -342,15 +344,33 @@ class MaterializedView(View):
             MaterializedView('mv1', metadata, definition='SELECT * FROM users')
 
             # With partition and refresh
-            MaterializedView('mv1', metadata,
-                           definition='SELECT * FROM users',
-                           starrocks_partition_by='date_trunc("day", created_at)',
+            MaterializedView('user_stats_mv', metadata,
+                           definition='SELECT user_id, COUNT(*) FROM orders GROUP BY user_id',
+                           starrocks_partition_by='user_id',
                            starrocks_refresh='ASYNC')
 
-            # With columns
+            # With all options
+            MaterializedView('order_mv', metadata,
+                           Column('user_id', INTEGER),
+                           Column('total', INTEGER, comment='Total orders'),
+                           definition='SELECT user_id, COUNT(*) as total FROM orders GROUP BY user_id',
+                           comment='User order statistics',
+                           starrocks_partition_by='user_id',
+                           starrocks_distributed_by='HASH(user_id) BUCKETS 10',
+                           starrocks_order_by='user_id',
+                           starrocks_refresh='IMMEDIATE ASYNC',
+                           starrocks_properties={'replication_num': '3'})
+
+            # With columns (simplified syntax)
             MaterializedView('mv1', metadata,
                            definition='SELECT id, name FROM users',
                            columns=['id', {'name': 'name', 'comment': 'User name'}])
+
+            # Update existing MV definition
+            MaterializedView('mv1', metadata,
+                           definition='SELECT id, name, email FROM users',
+                           starrocks_refresh='MANUAL',
+                           extend_existing=True)
         """
         # First, call the parent View's __init__ to handle the definition
         # and other common parameters.
@@ -364,10 +384,52 @@ class MaterializedView(View):
         if not _no_init:
             self.info[TableObjectInfoKey.TABLE_KIND] = TableKind.MATERIALIZED_VIEW
 
+    def _init_existing(self, *args, **kwargs):
+        """
+        Override View._init_existing to handle MV-specific parameters.
+
+        This is called when extend_existing=True and the MV already exists in metadata.
+        We need to extract MV-specific parameters before passing to View._init_existing.
+        """
+        # Extract MV-specific parameters from kwargs
+        partition_by = kwargs.pop(TableInfoKeyWithPrefix.PARTITION_BY, None)
+        distributed_by = kwargs.pop(TableInfoKeyWithPrefix.DISTRIBUTED_BY, None)
+        order_by = kwargs.pop(TableInfoKeyWithPrefix.ORDER_BY, None)
+        refresh = kwargs.pop(TableInfoKeyWithPrefix.REFRESH, None)
+        properties = kwargs.pop(TableInfoKeyWithPrefix.PROPERTIES, None)
+
+        # Update dialect_options if provided
+        dialect_opts = self.dialect_options.setdefault(DialectName, {})
+        if partition_by is not None:
+            dialect_opts[TableInfoKey.PARTITION_BY] = partition_by
+        if distributed_by is not None:
+            dialect_opts[TableInfoKey.DISTRIBUTED_BY] = distributed_by
+        if order_by is not None:
+            dialect_opts[TableInfoKey.ORDER_BY] = order_by
+        if refresh is not None:
+            dialect_opts[TableInfoKey.REFRESH] = refresh
+        if properties is not None:
+            dialect_opts[TableInfoKey.PROPERTIES] = properties
+
+        # Call parent to handle View-specific parameters (definition, columns, comment, security)
+        super()._init_existing(*args, **kwargs)
+
     @property
     def partition_by(self) -> Optional[str]:
-        return self.dialect_options.get("starrocks", {}).get("partition_by")
+        return self.dialect_options.get(DialectName, {}).get(TableInfoKey.PARTITION_BY)
+
+    @property
+    def distributed_by(self) -> Optional[str]:
+        return self.dialect_options.get(DialectName, {}).get(TableInfoKey.DISTRIBUTED_BY)
+
+    @property
+    def order_by(self) -> Optional[str]:
+        return self.dialect_options.get(DialectName, {}).get(TableInfoKey.ORDER_BY)
 
     @property
     def refresh(self) -> Optional[str]:
-        return self.dialect_options.get("starrocks", {}).get("refresh")
+        return self.dialect_options.get(DialectName, {}).get(TableInfoKey.REFRESH)
+
+    @property
+    def properties(self) -> Optional[Dict[str, str]]:
+        return self.dialect_options.get(DialectName, {}).get(TableInfoKey.PROPERTIES)

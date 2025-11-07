@@ -106,8 +106,14 @@ MaterializedView(
     definition: str | Selectable,  # Required
     schema: Optional[str] = None,
     comment: Optional[str] = None,
+    columns: Optional[List[str | dict]] = None,  # Same as View
+    keep_existing: bool = False,  # Same as View
+    extend_existing: bool = False,  # Same as View
     starrocks_partition_by: Optional[str] = None,
-    starrocks_refresh: Optional[str] = None,  # ASYNC or MANUAL
+    starrocks_distributed_by: Optional[str] = None,
+    starrocks_order_by: Optional[str] = None,
+    starrocks_refresh: Optional[str] = None,  # "[IMMEDIATE|DEFERRED] {ASYNC|MANUAL}"
+    starrocks_properties: Optional[Dict[str, str]] = None,
     **kwargs
 )
 ```
@@ -183,11 +189,23 @@ view = View('secure_view', metadata,
 stmt = select(users.c.id, users.c.name)
 view = View('user_view', metadata, definition=stmt)
 
-# Materialized View
+# Materialized View (basic)
 mv = MaterializedView('user_stats', metadata,
                      definition='SELECT user_id, COUNT(*) FROM orders GROUP BY user_id',
                      starrocks_partition_by='user_id',
                      starrocks_refresh='ASYNC')
+
+# Materialized View (with all options)
+mv = MaterializedView('order_mv', metadata,
+                     Column('user_id', INTEGER),
+                     Column('total', INTEGER, comment='Total orders'),
+                     definition='SELECT user_id, COUNT(*) as total FROM orders GROUP BY user_id',
+                     comment='User order statistics',
+                     starrocks_partition_by='user_id',
+                     starrocks_distributed_by='HASH(user_id) BUCKETS 10',
+                     starrocks_order_by='user_id',
+                     starrocks_refresh='IMMEDIATE ASYNC',
+                     starrocks_properties={'replication_num': '3'})
 ```
 
 **Column Support Details:**
@@ -199,6 +217,8 @@ mv = MaterializedView('user_stats', metadata,
 | Column type      | ❌        | Auto-inferred from SELECT        |
 | Column nullable  | ❌        | Auto-inferred from SELECT        |
 | Other attributes | ❌        | Not supported by StarRocks       |
+
+> **Note**: Both View and MaterializedView support columns in the same way.
 
 For detailed implementation, see [view_columns_implementation.md](./view_columns_implementation.md).
 
@@ -1144,6 +1164,8 @@ def _compare_objects(conn_objs, meta_objs, object_kind, ...):
 
 #### Approach A: Independent Ops + from_table() Method ⭐ **Adopted**
 
+Take the view for example. MV is similar.
+
 ```python
 @Operations.register_operation("create_view")
 class CreateViewOp(ops.MigrateOperation):
@@ -1336,20 +1358,23 @@ def _compile_create_view_from_table(self, table, create, **kw):
 
 1. **Separate Entry Points**: TABLE/VIEW/MV maintain independent `autogen_for_*` entry points.
 2. **Uniform Object Type**: All are Table objects, but `table_kind` is different.
-3. **Critical Filter via `include_object`**: Must exclude View/MV from Alembic's `_autogen_for_tables`.
+3. **MV ALTER Limitations**: Based on [ALTER MATERIALIZED VIEW docs](https://docs.starrocks.io/docs/sql-reference/sql-statements/materialized_view/ALTER_MATERIALIZED_VIEW/):
+   - ✅ **Mutable**: `refresh`, `properties` (can use ALTER)
+   - ❌ **Immutable**: `definition`, `partition_by`, `distributed_by`, `order_by` (cannot ALTER, log warning)
+4. **Critical Filter via `include_object`**: Must exclude View/MV from Alembic's `_autogen_for_tables`.
    - **Problem**: `sorted_tables` includes all Table objects (View/MV inherit from Table).
    - **Solution**: Provide pre-defined `include_object_for_view_mv` and `combine_include_object`.
    - **Why**: `@comparators.dispatch_for` is append-only, can't override internal comparator.
    - **Implementation**: Define in `compare.py`, document in README.
-4. **User Custom Filters**: Must respect user's `include_object` in our comparators.
+5. **User Custom Filters**: Must respect user's `include_object` in our comparators.
    - **Problem**: `autogen_for_view/mv` needs to honor user's custom filter logic.
    - **Solution**: Call `autogen_context.run_object_filters()` for each View/MV.
    - **Why**: Alembic's internal comparators call this, ours must too.
-5. **Shared Comparison Logic**: Extract common functions for comparison.
-6. **Default Value Handling**: Use different default values for different object types.
-7. **Attribute Normalization**: Normalize attributes before comparison (e.g., SQL formatting).
-8. **Reflection Object Type**: When reflecting views/MVs for comparison, create View/MaterializedView objects (not plain Table objects) for semantic clarity and type consistency.
-9. **Warning Strategy**: Use `warnings.warn(UserWarning)` for unsupported ALTER operations (more visible than `logger.warning`).
+6. **Shared Comparison Logic**: Extract common functions for comparison.
+7. **Default Value Handling**: Use different default values for different object types.
+8. **Attribute Normalization**: Normalize attributes before comparison (e.g., SQL formatting).
+9. **Reflection Object Type**: When reflecting views/MVs for comparison, create View/MaterializedView objects (not plain Table objects) for semantic clarity and type consistency.
+10. **Warning Strategy**: Use `warnings.warn(UserWarning)` for unsupported ALTER operations (more visible than `logger.warning`).
 
 **Key Logic**:
 
@@ -1402,17 +1427,118 @@ def my_filter(object, name, type_, reflected, compare_to):
 context.configure(include_object=combine_include_object(my_filter))
 ```
 
-#### MV-Specific Attribute Comparison Logic
+#### MV ALTER Capabilities
 
-Detailed comparison for Materialized View (MV)-specific attributes is crucial for accurate autogeneration. The comparison logic should handle the following attributes:
+Based on [StarRocks ALTER MATERIALIZED VIEW documentation](https://docs.starrocks.io/docs/sql-reference/sql-statements/materialized_view/ALTER_MATERIALIZED_VIEW/), MV supports limited ALTER operations:
 
-1. **`partition_by`**: This is a complex type (`ReflectedPartitionInfo`). The comparison needs to convert both the reflected `ReflectedPartitionInfo` object from the database and the `dialect_options['starrocks']['partition_by']` string from metadata into a canonical form for comparison.
-2. **`distributed_by`**: This is also a complex type (`ReflectedDistributionInfo`) and includes `BUCKETS` information. The comparison must normalize variations like `HASH(id)` vs `HASH(id) BUCKETS 10` by extracting and normalizing the `BUCKETS` value.
-3. **`refresh`**: This attribute (`ReflectedRefreshInfo`) requires careful comparison, handling different modes like `IMMEDIATE ASYNC` vs `ASYNC`, or `MANUAL` vs `None`.
-4. **`order_by`**: This is a string attribute, and its comparison should be straightforward after normalization (e.g., removing extra whitespace, consistent casing).
-5. **`properties`**: This is a dictionary of key-value pairs. The comparison should normalize the dictionary (e.g., consistent key/value quoting) and identify differences in individual properties.
+**✅ Supported ALTER Operations** (from schema comparison perspective):
 
-The comparison functions should also consider default values and potential immutability of certain MV attributes in StarRocks (i.e., whether a change requires an `ALTER` or `DROP + CREATE` operation). For mutable properties, the comparison should generate an `AlterMaterializedViewOp` that includes both current and reverse values for bidirectional migrations.
+1. **`refresh`** - Modify refresh strategy
+
+   - Syntax: `ALTER MATERIALIZED VIEW mv_name REFRESH {ASYNC|MANUAL} ...`
+   - Can be detected in schema comparison and generate `AlterMaterializedViewOp`
+
+2. **`properties`** - Modify properties
+   - Syntax: `ALTER MATERIALIZED VIEW mv_name SET ("key" = "value", ...)`
+   - Can be detected in schema comparison and generate `AlterMaterializedViewOp`
+
+**❌ Not Supported (Changes Generate Warning Only)**:
+
+The following attributes cannot be altered via `ALTER MATERIALIZED VIEW`:
+
+1. **`definition`** - Query definition (requires DROP + CREATE)
+2. **`partition_by`** - Partition strategy (requires DROP + CREATE)
+3. **`distributed_by`** - Distribution strategy (requires DROP + CREATE)
+4. **`order_by`** - Order by clause (requires DROP + CREATE)
+5. **`comment`** - Comment (not mentioned in ALTER MV docs)
+6. **`columns`** - Column definitions (not mentioned in ALTER MV docs)
+
+**Comparison Strategy**:
+
+```python
+def compare_materialized_view(autogen_context, upgrade_ops, schema, mv_name, conn_mv, metadata_mv):
+    """
+    Compare MV and generate operations.
+
+    Strategy:
+        - Only refresh and properties changes → Generate AlterMaterializedViewOp
+        - Other attribute changes → Generate warning only (no operations)
+    """
+
+    # Check immutable attributes (cannot ALTER)
+    if _compare_mv_definition(conn_mv, metadata_mv):
+        warnings.warn(
+            f"StarRocks does not support altering MV definition; "
+            f"definition changes detected for {mv_name} will be ignored.",
+            UserWarning
+        )
+
+    ...
+
+    # Check mutable attributes (can ALTER)
+    alter_op = None
+
+    # Refresh (can ALTER)
+    refresh_changed, conn_refresh, meta_refresh = _compare_mv_refresh_with_reverse(conn_mv, metadata_mv)
+    if refresh_changed:
+        alter_op = alter_op or AlterMaterializedViewOp(mv_name, schema)
+        alter_op.refresh = meta_refresh
+        alter_op.reverse_refresh = conn_refresh
+
+    # Properties (can ALTER)
+    ...
+
+    # Generate operation if needed
+    if alter_op is not None:
+        if not autogen_context.run_object_filters(
+            mv_name, "materialized_view", False, alter_op
+        ):
+            return
+        upgrade_ops.ops.append(alter_op)
+```
+
+**AlterMaterializedViewOp Design**:
+
+```python
+@Operations.register_operation("alter_materialized_view")
+class AlterMaterializedViewOp(ops.MigrateOperation):
+    """
+    Alter a materialized view (mutable attributes only).
+
+    Only supports: refresh, properties.
+    Does not support: definition, partition_by, distributed_by, order_by, comment, columns.
+    """
+
+    def __init__(
+        self,
+        view_name: str,
+        schema: Optional[str] = None,
+        # Mutable attributes only
+        refresh: Optional[str] = None,
+        properties: Optional[Dict[str, str]] = None,
+        # Reverse values for downgrade
+        reverse_refresh: Optional[str] = None,
+        reverse_properties: Optional[Dict[str, str]] = None,
+    ):
+        self.view_name = view_name
+        self.schema = schema
+        self.refresh = refresh
+        self.properties = properties
+        self.reverse_refresh = reverse_refresh
+        self.reverse_properties = reverse_properties
+
+    def reverse(self) -> "AlterMaterializedViewOp":
+        return AlterMaterializedViewOp(
+            self.view_name,
+            self.schema,
+            refresh=self.reverse_refresh,
+            properties=self.reverse_properties,
+            reverse_refresh=self.refresh,
+            reverse_properties=self.properties,
+        )
+```
+
+**Note**: Currently we do not support automatic DROP + CREATE for immutable attribute changes. This may be added in future versions.
 
 ### 5.5 Metadata Management Key Points
 

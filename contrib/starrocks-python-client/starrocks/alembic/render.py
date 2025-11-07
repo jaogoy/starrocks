@@ -19,7 +19,10 @@ from alembic.autogenerate import renderers
 from alembic.autogenerate.api import AutogenContext
 from sqlalchemy.types import TypeEngine
 
+from starrocks.common.params import TableInfoKeyWithPrefix
+
 from .ops import (
+    AlterMaterializedViewOp,
     AlterTableDistributionOp,
     AlterTableOrderOp,
     AlterTablePropertiesOp,
@@ -173,19 +176,59 @@ def _drop_view(autogen_context: AutogenContext, op: DropViewOp) -> str:
 
 @renderers.dispatch_for(CreateMaterializedViewOp)
 def _create_materialized_view(autogen_context: AutogenContext, op: CreateMaterializedViewOp) -> str:
+    """
+    Render CREATE MATERIALIZED VIEW operation.
+
+    Similar to _create_view but with MV-specific parameters.
+    """
     args = [
         f"{op.view_name!r}",
-        f"{op.definition!r}",
+        f"{op.definition!r}"
     ]
-    # Check for properties in kw (as CreateMaterializedViewOp uses **kw)
-    properties = op.kw.get('properties') if hasattr(op, 'kw') else None
-    if properties:
-        args.append(f"properties={properties!r}")
+
     if op.schema:
         args.append(f"schema={op.schema!r}")
+    if op.comment:
+        args.append(f"comment={op.comment!r}")
+    if op.columns:
+        # Render columns as a list of dicts
+        args.append(f"columns={op.columns!r}")
 
-    call = f"op.create_materialized_view({', '.join(args)})"
+    # MV-specific attributes (use starrocks_ prefix)
+    if op.partition_by:
+        args.append(f"{TableInfoKeyWithPrefix.PARTITION_BY}={op.partition_by!r}")
+    if op.distributed_by:
+        args.append(f"{TableInfoKeyWithPrefix.DISTRIBUTED_BY}={op.distributed_by!r}")
+    if op.order_by:
+        args.append(f"{TableInfoKeyWithPrefix.ORDER_BY}={op.order_by!r}")
+    if op.refresh:
+        args.append(f"{TableInfoKeyWithPrefix.REFRESH}={op.refresh!r}")
+    if op.properties:
+        args.append(f"{TableInfoKeyWithPrefix.PROPERTIES}={op.properties!r}")
+
+    call = f"op.create_materialized_view({op_param_separator.join(args)}{op_close_paren_indent})"
     logger.debug("render create_materialized_view: %s", call)
+    return call
+
+
+@renderers.dispatch_for(AlterMaterializedViewOp)
+def _alter_materialized_view(autogen_context: AutogenContext, op: AlterMaterializedViewOp) -> str:
+    """
+    Render ALTER MATERIALIZED VIEW operation.
+
+    Only renders mutable attributes (refresh, properties).
+    """
+    args = [f"{op.view_name!r}"]
+
+    if op.schema:
+        args.append(f"schema={op.schema!r}")
+    if op.refresh is not None:
+        args.append(f"{TableInfoKeyWithPrefix.REFRESH}={op.refresh!r}")
+    if op.properties is not None:
+        args.append(f"{TableInfoKeyWithPrefix.PROPERTIES}={op.properties!r}")
+
+    call = f"op.alter_materialized_view({op_param_separator.join(args)}{op_close_paren_indent})"
+    logger.debug("render alter_materialized_view: %s", call)
     return call
 
 
@@ -194,6 +237,8 @@ def _drop_materialized_view(autogen_context: AutogenContext, op: DropMaterialize
     args = [f"{op.view_name!r}"]
     if op.schema:
         args.append(f"schema={op.schema!r}")
+    if op.if_exists:
+        args.append(f"if_exists={op.if_exists!r}")
 
     call = f"op.drop_materialized_view({', '.join(args)})"
     logger.debug("render drop_materialized_view: %s", call)

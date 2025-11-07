@@ -901,9 +901,17 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
                 column_clauses.append(f'{self.indent}{col_name}')
         return " (\n%s\n)" % ",\n".join(column_clauses)
 
-    def _compile_create_view_from_table(self, create: CreateView, **kw):
-        """Helper to compile CREATE VIEW from a CreateView object."""
-        table = create.element
+    def _compile_create_view_from_table(self, table: Table, create: CreateView, **kw: Any) -> str:
+        """
+        Helper to compile CREATE VIEW from a CreateView DDL element or CreateTable for View.
+
+        Args:
+            create: CreateView DDL element or CreateTable element where table_kind='VIEW'
+            **kw: Additional compilation kwargs
+
+        Returns:
+            Compiled SQL string for CREATE VIEW statement
+        """
         preparer = self.preparer
 
         view_name = preparer.format_table(table)
@@ -911,7 +919,7 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
         if not definition:
             raise exc.CompileError("View definition is required")
         dialect_options = table.dialect_options.get(DialectName, {})
-        security = dialect_options.get("security")
+        security = dialect_options.get(TableInfoKey.SECURITY)
 
         or_replace_clause = "OR REPLACE " if create.or_replace else ""
         if_not_exists_clause = "IF NOT EXISTS " if create.if_not_exists else ""
@@ -937,7 +945,7 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
         based on `table.info['table_type']`.
         But, this is still needed for alembic's `CreateViewOp`.
         """
-        return self._compile_create_view_from_table(create, **kw)
+        return self._compile_create_view_from_table(create.element, create, **kw)
 
     def visit_drop_view(self, drop: DropView, **kw: Any) -> str:
         view = drop.element
@@ -948,12 +956,50 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
         return text
 
     def visit_alter_materialized_view(self, alter: AlterMaterializedView, **kw: Any) -> str:
-        mv = alter.element
-        return f"ALTER MATERIALIZED VIEW {self.preparer.format_table(mv)} {alter.alter_type} {alter.alter_by}"
+        """
+        Compile ALTER MATERIALIZED VIEW statement.
+        Each attribute will be generated as a separate statement.
 
-    def _compile_create_mv_from_table(self, create: CreateMaterializedView, **kw):
-        """Helper to compile CREATE MV from a CreateMaterializedView object."""
-        table = create.element
+        Only supports altering mutable attributes:
+        - refresh: ALTER MATERIALIZED VIEW ... REFRESH <new_scheme>
+        - properties: ALTER MATERIALIZED VIEW ... SET ("<key>" = "<value>")
+        """
+        preparer = self.preparer
+
+        # Format MV name with schema
+        if alter.schema:
+            mv_name = f"{preparer.quote(alter.schema)}.{preparer.quote(alter.view_name)}"
+        else:
+            mv_name = preparer.quote(alter.view_name)
+
+        statements = []
+
+        # ALTER REFRESH
+        if alter.refresh is not None:
+            statements.append(f"ALTER MATERIALIZED VIEW {mv_name} REFRESH {alter.refresh}")
+
+        # ALTER PROPERTIES
+        if alter.properties is not None:
+            props_str = ", ".join([f'"{k}" = "{v}"' for k, v in alter.properties.items()])
+            statements.append(f"ALTER MATERIALIZED VIEW {mv_name} SET ({props_str})")
+
+        if not statements:
+            raise exc.CompileError("ALTER MATERIALIZED VIEW requires at least one mutable attribute (refresh or properties)")
+
+        # Return statements joined by semicolon
+        return ";\n".join(statements)
+
+    def _compile_create_mv_from_table(self, table: Table, create: CreateMaterializedView, **kw: Any) -> str:
+        """
+        Helper to compile CREATE MATERIALIZED VIEW from a CreateMaterializedView DDL element or CreateTable for MV.
+
+        Args:
+            create: CreateMaterializedView DDL element or CreateTable element where table_kind='MATERIALIZED_VIEW'
+            **kw: Additional compilation kwargs
+
+        Returns:
+            Compiled SQL string for CREATE MATERIALIZED VIEW statement
+        """
         preparer = self.preparer
 
         mv_name = preparer.format_table(table)
@@ -961,9 +1007,15 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
         if not definition:
             raise exc.CompileError("Materialized view definition is required")
 
-        if_not_exists_clause = "IF NOT EXISTS " if create.if_not_exists else ""
+        # Handle or_replace and if_not_exists flags
+        or_replace_clause = "OR REPLACE " if getattr(create, 'or_replace', False) else ""
+        if_not_exists_clause = "IF NOT EXISTS " if getattr(create, 'if_not_exists', False) else ""
 
-        text = f"CREATE MATERIALIZED VIEW {if_not_exists_clause}{mv_name}"
+        text = f"CREATE {or_replace_clause}MATERIALIZED VIEW {if_not_exists_clause}{mv_name}"
+
+        # Add column definitions if present (only name and comment are supported, same as View)
+        if table.columns:
+            text += self._get_view_column_clauses(table)
 
         if table.comment:
             text += f"\nCOMMENT '{table.comment}'"
@@ -991,13 +1043,13 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
         logger.debug("Compiled SQL for CreateMaterializedView: \n%s", text)
         return text
 
-    def visit_create_materialized_view(self, create, **kw):
+    def visit_create_materialized_view(self, create: CreateMaterializedView, **kw: Any) -> str:
         """
         CREATE MATERIALIZED VIEW is handled by `visit_create_table` dispatcher
         based on `table.info['table_type']`.
         But, this is still needed for alembic's `CreateMaterializedViewOp`.
         """
-        return self._compile_create_mv_from_table(create, **kw)
+        return self._compile_create_mv_from_table(create.element, create, **kw)
 
     def visit_drop_materialized_view(self, drop: DropMaterializedView, **kw: Any) -> str:
         mv = drop.element
