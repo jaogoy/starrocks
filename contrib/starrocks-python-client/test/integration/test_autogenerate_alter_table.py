@@ -49,8 +49,7 @@ from starrocks.common.params import AlterTableEnablement, TableInfoKeyWithPrefix
 from starrocks.common.types import PartitionType
 from starrocks.engine.interfaces import ReflectedPartitionInfo
 from test.conftest_sr import create_test_engine, test_default_schema
-from test.unit import test_utils
-
+from test import test_utils
 
 logger = logging.getLogger(__name__)
 
@@ -423,7 +422,7 @@ class TestAlterTableIntegration:
                 assert partition_info.type == PartitionType.RANGE
                 assert test_utils.normalize_sql(partition_info.partition_method) == "RANGE(from_unixtime(dt))"
                 assert test_utils.normalize_sql(partition_info.pre_created_partitions) \
-                        == test_utils.normalize_sql("(PARTITION p1 VALUES [('2023-01-01 00:00:00'), ('2023-02-01 00:00:00')))")
+                    == test_utils.normalize_sql("(PARTITION p1 VALUES [('2023-01-01 00:00:00'), ('2023-02-01 00:00:00')))")
 
                 # Target: add RANGE partition
                 metadata_target = MetaData()

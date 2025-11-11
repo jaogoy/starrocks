@@ -115,9 +115,7 @@ class StarRocksInspector(Inspector):
         super().reflect_table(table, include_columns, exclude_columns, resolve_fks, _extend_on, _reflect_info)
 
         # 2. Get table_kind and parsed_state (from cache)
-        table_name = table.name
-        schema = table.schema
-        parsed_state = self.dialect._parsed_state_or_create(self.bind, table_name, schema)
+        parsed_state = self.dialect._parsed_state_or_create(self.bind, table.name, table.schema, info_cache=self.info_cache)
         table_kind = parsed_state.table_kind
 
         # 3. Set info['table_kind']
@@ -142,7 +140,7 @@ class StarRocksInspector(Inspector):
 
     def _reflect_mv_attributes(self, table, mv_state: ReflectedMVState):
         """Set MV specific attributes from ReflectedMVState"""
-        table.info[TableInfoKey.DEFINITION] = mv_state.definition
+        table.info[TableObjectInfoKey.DEFINITION] = mv_state.definition
         table.dialect_options.setdefault(DialectName, {}).update(mv_state.table_options)
 
 
@@ -212,6 +210,7 @@ class StarRocksTableDefinitionParser(object):
                 for column in columns
             ],
             table_options=self._parse_table_options(
+                table.TABLE_NAME, schema=table.TABLE_SCHEMA,
                 table=table, table_config=table_config, columns=columns
             ),
             keys=[{
@@ -438,18 +437,24 @@ class StarRocksTableDefinitionParser(object):
             opts[TableInfoKeyWithPrefix.COMMENT] = table_row.TABLE_COMMENT
         return opts
 
-    def _parse_physical_table_options(self, table_config: Dict[str, Any]) -> Dict[str, Any]:
+    def _parse_general_table_options(self, table_name: str, schema: Optional[str] = None, table_config: Dict[str, Any] = None) -> Dict[str, Any]:
         """
-        Parses common physical table options from a `tables_config` dict (not the original _DecodingRow object).
+        Parses general table options from a `tables_config` dict (not the original _DecodingRow object).
         This logic is shared between table and materialized view reflection.
         """
+        table_fqn = utils.gen_simple_qualified_name(table_name, schema)
+        logger.debug(f"parse general table options for table: {table_fqn}.")
+
         opts = {}
         if partition_clause := table_config.get(TableConfigKey.PARTITION_CLAUSE):
             logger.debug(f"table_config.{TableConfigKey.PARTITION_CLAUSE}: {partition_clause}")
             opts[TableInfoKeyWithPrefix.PARTITION_BY] = self.parse_partition_clause(partition_clause)
 
-        if distribute_key := table_config.get(TableConfigKey.DISTRIBUTE_KEY):
+        distribute_key = table_config.get(TableConfigKey.DISTRIBUTE_KEY)
+        distribute_type = table_config.get(TableConfigKey.DISTRIBUTE_TYPE)
+        if distribute_key or distribute_type:
             logger.debug(f"table_config.{TableConfigKey.DISTRIBUTE_KEY}: {distribute_key}")
+            logger.debug(f"table_config.{TableConfigKey.DISTRIBUTE_TYPE}: {distribute_type}")
             opts[TableInfoKeyWithPrefix.DISTRIBUTED_BY] = str(self._get_distribution_info(table_config))
 
         if sort_key := table_config.get(TableConfigKey.SORT_KEY):
@@ -464,7 +469,9 @@ class StarRocksTableDefinitionParser(object):
                 logger.info(f"properties are not valid JSON: {properties}")
         return opts
 
-    def _parse_table_options(self, table: _DecodingRow, table_config: Dict[str, Any], columns: List[_DecodingRow]) -> Dict:
+    def _parse_table_options(self, table_name: str, schema: Optional[str],
+            table: _DecodingRow, table_config: Dict[str, Any], columns: List[_DecodingRow]
+        ) -> Dict:
         """
         Parse table options from `information_schema` views,
         and generate the table options with `starrocks_` prefix, which will be used to reflect a Table().
@@ -484,8 +491,11 @@ class StarRocksTableDefinitionParser(object):
             A dictionary of StarRocks-specific table options with the 'starrocks_' prefix.
         """
         opts = self._parse_common_table_options(table)
+        table_fqn = utils.gen_simple_qualified_name(table_name, schema)
+        logger.debug(f"parse table options for table: {table_fqn}.")
+
         # Set partition, distribution, sort key, properties
-        opts.update(self._parse_physical_table_options(table_config))
+        opts.update(self._parse_general_table_options(table_name, schema, table_config))
 
         if table_engine := table_config.get(TableConfigKey.TABLE_ENGINE):
             logger.debug(f"table_config.{TableConfigKey.TABLE_ENGINE}: {table_engine}")
@@ -600,19 +610,20 @@ class StarRocksTableDefinitionParser(object):
         ddl = mv_row.MATERIALIZED_VIEW_DEFINITION.strip()
         logger.debug(f"mv create ddl for {mv_row.TABLE_SCHEMA}.{mv_row.TABLE_NAME}: {ddl}")
 
+        mv_name, schema = mv_row.TABLE_NAME, mv_row.TABLE_SCHEMA
         # 1. Parse the DDL to get properties that are only available there.
         #   Includes partition, refresh, and properties.
         try:
-            parsed_state = self._parse_mv_ddl(mv_row.TABLE_NAME, ddl, mv_row.TABLE_SCHEMA)
+            parsed_state = self._parse_mv_ddl(mv_name, ddl, schema)
         except Exception as e:
             self.logger.warning(f"Failed to parse DDL for MV '{mv_row.TABLE_SCHEMA}.{mv_row.TABLE_NAME}', reflection may be incomplete: {e}")
-            parsed_state = ReflectedMVState(mv_name=mv_row.TABLE_NAME, definition=ddl)
+            parsed_state = ReflectedMVState(table_name=mv_row.TABLE_NAME, definition=ddl)
 
         # 2. Augment/overwrite with more reliable info from other sources.
         parsed_state.table_options.update(self._parse_common_table_options(table_row))
 
         if config_row:
-            physical_options = self._parse_physical_table_options(config_row)
+            physical_options = self._parse_general_table_options(mv_name, schema, table_config=config_row)
             parsed_state.table_options.update(physical_options)
 
         return parsed_state
@@ -637,7 +648,7 @@ class StarRocksTableDefinitionParser(object):
             raise SQLParseError(f"Could not find 'AS SELECT' in CREATE MATERIALIZED VIEW statement for {mv_name}", create_mv_ddl)
 
         state = ReflectedMVState(
-            mv_name=mv_name,
+            table_name=mv_name,
             definition=mv_definition,
         )
 
@@ -650,7 +661,7 @@ class StarRocksTableDefinitionParser(object):
             refresh_text_match = self._MV_REFRESH_PATTERN.search(clauses_str)
             if refresh_text_match:
                 refresh_clause_str = refresh_text_match.group(0).strip()
-                logger.debug(f"refresh_clause_str: {refresh_clause_str}")
+                logger.debug(f"mv: {mv_name}, refresh_clause: {refresh_clause_str!r}")
                 parsed_refresh = parse_mv_refresh_clause(refresh_clause_str)
                 state.table_options[TableInfoKeyWithPrefix.REFRESH] = ReflectedRefreshInfo(
                     moment=parsed_refresh.get("refresh_moment"),

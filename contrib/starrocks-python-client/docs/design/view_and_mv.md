@@ -79,7 +79,7 @@ To unify the representation of View and MaterializedView using the `Table` class
 View and MaterializedView follow **SQLAlchemy Table conventions**:
 
 - Parameter order: `(name, metadata, *args, **kwargs)`
-- `definition` as optional keyword argument (but required)
+- `definition` as optional keyword argument (but required). Otherwise, it will be very complicated.
 - All dialect-specific parameters use `starrocks_` prefix
 
 ### Signatures
@@ -1538,7 +1538,7 @@ class AlterMaterializedViewOp(ops.MigrateOperation):
         )
 ```
 
-**Note**: Currently we do not support automatic DROP + CREATE for immutable attribute changes. This may be added in future versions.
+> **Note on Limitations**: StarRocks' `ALTER MATERIALIZED VIEW` statement has several limitations. The current integration only supports altering the `REFRESH` clause and `PROPERTIES`. Renaming the materialized view, changing its definition (`AS SELECT ...`), or modifying `PARTITION BY`, `DISTRIBUTED BY`, and `ORDER BY` clauses are not supported. For such changes, you must manually write a `DROP` and `CREATE` operation in your migration script.
 
 ### 5.5 Metadata Management Key Points
 

@@ -27,7 +27,7 @@ from starrocks.common.params import TableInfoKey
 from starrocks.datatype import INTEGER, STRING
 from starrocks.sql.schema import View
 from test import conftest_sr
-from test.unit.test_utils import normalize_sql
+from test.test_utils import normalize_sql
 
 
 logger = logging.getLogger(__name__)

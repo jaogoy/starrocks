@@ -22,12 +22,8 @@ from starrocks.alembic.ops import (
     AlterTableDistributionOp,
     AlterTableOrderOp,
     AlterTablePropertiesOp,
-    CreateMaterializedViewOp,
-    DropMaterializedViewOp,
 )
 from starrocks.alembic.render import (
-    _create_materialized_view,
-    _drop_materialized_view,
     _render_alter_table_distribution,
     _render_alter_table_order,
     _render_alter_table_properties,
@@ -66,44 +62,6 @@ def _normalize_py_call(s: str) -> str:
     s = re.sub(r" , ", ", ", s)
     s = re.sub(r" \)", ")", s)
     return s
-
-
-@pytest.mark.skip(reason="Skipping materialized view rendering tests")
-class TestMaterializedViewRendering:
-    def test_render_create_materialized_view(self):
-        ctx = Mock()
-        op = CreateMaterializedViewOp(
-            "mv1",
-            "SELECT id, name FROM t1",
-            properties={"replication_num": "1"},
-            schema="s1"
-        )
-        rendered = _create_materialized_view(ctx, op)
-        expected = "op.create_materialized_view('mv1', 'SELECT id, name FROM t1', properties={'replication_num': '1'}, schema='s1')"
-        assert _normalize_py_call(rendered) == _normalize_py_call(expected)
-
-    def test_render_create_materialized_view_no_options(self):
-        ctx = Mock()
-        op = CreateMaterializedViewOp(
-            "mv1",
-            "SELECT id, name FROM t1",
-            properties=None,
-            schema=None
-        )
-        rendered = _create_materialized_view(ctx, op)
-        expected = "op.create_materialized_view('mv1', 'SELECT id, name FROM t1')"
-        assert _normalize_py_call(rendered) == _normalize_py_call(expected)
-
-    def test_render_drop_materialized_view(self):
-        ctx = Mock()
-        op = DropMaterializedViewOp("mv1", schema="s1")
-        rendered = _drop_materialized_view(ctx, op)
-        assert rendered == "op.drop_materialized_view('mv1', schema='s1')"
-
-        # without schema
-        op = DropMaterializedViewOp("mv1", schema=None)
-        rendered = _drop_materialized_view(ctx, op)
-        assert rendered == "op.drop_materialized_view('mv1')"
 
 
 class TestTableRendering:

@@ -58,6 +58,19 @@ class AlterTableEnablement:
     PROPERTIES = True
 
 
+class AlterMVEnablement:
+    """Enablement for ALTER MATERIALIZED VIEW operations.
+    """
+    RENAME = True
+    KEY = False
+    COMMENT = False
+    PARTITION_BY = False
+    DISTRIBUTED_BY = False
+    ORDER_BY = False
+    REFRESH = True
+    PROPERTIES = True
+
+
 class TableInfoKey:
     """Centralizes starrocks_ prefixed kwargs for Table objects. Clean names without prefix."""
 
@@ -94,7 +107,9 @@ class TableInfoKey:
     BUCKETS = 'BUCKETS'
     ORDER_BY = 'ORDER_BY'
     PROPERTIES = 'PROPERTIES'
+    # for view only
     SECURITY = 'SECURITY'
+    # for MV only
     REFRESH = 'REFRESH'
 
 
@@ -144,7 +159,9 @@ class TableInfoKeyWithPrefix:
     BUCKETS = 'starrocks_BUCKETS'
     ORDER_BY = 'starrocks_ORDER_BY'
     PROPERTIES = 'starrocks_PROPERTIES'
+    # for view only
     SECURITY = 'starrocks_SECURITY'
+    # for MV only
     REFRESH = 'starrocks_REFRESH'
 
 

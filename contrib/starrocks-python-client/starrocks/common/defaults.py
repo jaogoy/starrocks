@@ -79,8 +79,8 @@ class ReflectionTableDefaults:
         return ReflectedTableKeyInfo(type=cls.key(), columns=None)
 
     @classmethod
-    def table_comment(cls) -> str:
-        return ""
+    def comment(cls) -> str:
+        return None
 
     @classmethod
     def partition_by(cls) -> Optional[str]:
@@ -124,12 +124,8 @@ class ReflectionTableDefaults:
 
 
 
-class ReflectionViewDefaults:
+class ReflectionViewDefaults(ReflectionTableDefaults):
     """Central place for view reflection default values and normalization."""
-
-    @classmethod
-    def comment(cls) -> str:
-        return ""
 
     @classmethod
     def security(cls) -> str:
@@ -167,16 +163,21 @@ class ReflectionViewDefaults:
         return reflection_view_info
 
 
-class ReflectionMVDefaults:
+class ReflectionMVDefaults(ReflectionViewDefaults):
     """Central place for materialized view reflection default values and normalization."""
 
-    @classmethod
-    def comment(cls) -> str:
-        return ""
+    _DEFAULT_PROPERTIES = {
+        "mv_rewrite_staleness_second": "0",
+        "storage_medium": "HDD",
+    }
 
-    @classmethod
-    def security(cls) -> str:
-        return ViewSecurityType.DEFINER
+    _DEFAULT_PROPERTIES_SHARED_NOTHING = {**{
+        'replication_num': '3',
+    }, **_DEFAULT_PROPERTIES}
+
+    _DEFAULT_PROPERTIES_SHARED_DATA = {**{
+        'replication_num': '1',  # Different for shared-data
+    }, **_DEFAULT_PROPERTIES}
 
     @classmethod
     def apply(cls, *, name: str, definition: str, comment: Union[str, None] = None, security: Union[str, None] = None) -> ReflectedMVState:

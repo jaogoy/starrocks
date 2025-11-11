@@ -21,7 +21,7 @@ from sqlalchemy.schema import MetaData
 from starrocks.datatype import INTEGER, VARCHAR
 from starrocks.sql.ddl import AlterView, CreateView, DropView
 from starrocks.sql.schema import View
-from test.unit.test_utils import normalize_sql
+from test.test_utils import normalize_sql
 
 
 class TestViewCompilerBase:

@@ -18,7 +18,6 @@ from unittest.mock import Mock, PropertyMock
 from alembic.autogenerate.api import AutogenContext
 from alembic.operations.ops import UpgradeOps
 import pytest
-from sqlalchemy.exc import NotSupportedError
 
 from starrocks.alembic.compare import compare_starrocks_table, extract_starrocks_dialect_attributes
 from starrocks.common.defaults import ReflectionTableDefaults
@@ -275,7 +274,7 @@ class TestRealTableObjects:
             starrocks_PRIMARY_KEY='id',
             schema='test_db'
         )
-        with pytest.raises(NotSupportedError) as exc_info:
+        with pytest.raises(NotImplementedError) as exc_info:
             upgrade_ops = UpgradeOps([])
             compare_starrocks_table(
                 autogen_context, upgrade_ops, conn_table.schema, conn_table.name, conn_table, meta_table
@@ -574,7 +573,7 @@ class TestKeyChanges:
         )
         meta_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(meta_table.kwargs)}
 
-        with pytest.raises(NotSupportedError) as exc_info:
+        with pytest.raises(NotImplementedError) as exc_info:
             upgrade_ops = UpgradeOps([])
             compare_starrocks_table(
                 autogen_context, upgrade_ops, conn_table.schema, conn_table.name, conn_table, meta_table
@@ -662,7 +661,7 @@ class TestKeyChanges:
         )
         meta_table.dialect_options = {DialectName: extract_starrocks_dialect_attributes(meta_table.kwargs)}
 
-        with pytest.raises(NotSupportedError) as exc_info:
+        with pytest.raises(NotImplementedError) as exc_info:
             upgrade_ops = UpgradeOps([])
             compare_starrocks_table(
                 autogen_context, upgrade_ops, conn_table.schema, conn_table.name, conn_table, meta_table

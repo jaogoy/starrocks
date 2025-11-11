@@ -21,9 +21,8 @@ from alembic.operations import Operations, ops
 from sqlalchemy import MetaData, Table
 
 from starrocks.common.params import (
-    DialectName,
+    SRKwargsPrefix,
     TableInfoKey,
-    TableInfoKeyWithPrefix,
     TableObjectInfoKey,
 )
 from starrocks.common.utils import get_dialect_option
@@ -31,6 +30,14 @@ from starrocks.sql.schema import MaterializedView, View, extract_view_columns
 
 
 logger = logging.getLogger(__name__)
+
+
+def _extract_starrocks_dialect_kwargs(kwargs: dict) -> dict:
+    """
+    Return only StarRocks dialect kwargs that start with the SRKwargsPrefix (e.g., 'starrocks_').
+    Non-prefixed kwargs are filtered out and not stored as dialect kwargs.
+    """
+    return {k: v for k, v in kwargs.items() if isinstance(k, str) and k.startswith(SRKwargsPrefix)}
 
 
 def _columns_dicts_to_column_objects(columns: Union[List[Dict], None]) -> List:
@@ -82,7 +89,6 @@ class AlterViewOp(ops.MigrateOperation):
         reverse_columns: Union[List[Dict], None] = None,
         reverse_comment: Optional[str] = None,
         reverse_security: Optional[str] = None,
-        **kwargs,
     ):
         """
         Definition usually should not be None. But for future, we may want to support Alter View by only comment or security,
@@ -98,7 +104,6 @@ class AlterViewOp(ops.MigrateOperation):
         self.reverse_columns = reverse_columns
         self.reverse_comment = reverse_comment
         self.reverse_security = reverse_security
-        self.kwargs = kwargs
 
     def to_view(self, metadata: Optional[MetaData] = None) -> "View":
         return View(
@@ -109,7 +114,6 @@ class AlterViewOp(ops.MigrateOperation):
             columns=self.columns,
             comment=self.comment,
             starrocks_security=self.security,
-            **self.kwargs,
         )
 
     @classmethod
@@ -126,7 +130,6 @@ class AlterViewOp(ops.MigrateOperation):
         reverse_columns: Union[List[Dict], None] = None,
         reverse_comment: Optional[str] = None,
         reverse_security: Optional[str] = None,
-        **kwargs,
     ):
         """Invoke an ALTER VIEW operation."""
         op = cls(
@@ -140,7 +143,6 @@ class AlterViewOp(ops.MigrateOperation):
             reverse_columns=reverse_columns,
             reverse_comment=reverse_comment,
             reverse_security=reverse_security,
-            **kwargs,
         )
         return operations.invoke(op)
 
@@ -159,7 +161,6 @@ class AlterViewOp(ops.MigrateOperation):
             reverse_columns=self.columns,
             reverse_comment=self.comment,
             reverse_security=self.security,
-            **self.kwargs,
         )
 
     def __str__(self) -> str:
@@ -197,7 +198,7 @@ class CreateViewOp(ops.MigrateOperation):
         self.security = security
         self.or_replace = or_replace
         self.if_not_exists = if_not_exists
-        self.kwargs = kwargs
+        self.kwargs = _extract_starrocks_dialect_kwargs(kwargs)
 
     def to_view(self, metadata: Optional[MetaData] = None) -> "View":
         return View(
@@ -224,6 +225,7 @@ class CreateViewOp(ops.MigrateOperation):
             columns=extract_view_columns(view),
             comment=view.comment,
             security=security,
+            **view.dialect_kwargs,
         )
 
     @classmethod
@@ -258,10 +260,6 @@ class CreateViewOp(ops.MigrateOperation):
         return DropViewOp(
             self.view_name,
             schema=self.schema,
-            reverse_definition=self.definition,
-            reverse_columns=self.columns,
-            reverse_comment=self.comment,
-            reverse_security=self.security,
             **self.kwargs,
         )
 
@@ -270,7 +268,8 @@ class CreateViewOp(ops.MigrateOperation):
             f"CreateViewOp(view_name={self.view_name!r}, schema={self.schema!r}, "
             f"definition=({self.definition!r}), columns={self.columns!r}, comment={self.comment!r}, "
             f"security={self.security}, or_replace={self.or_replace}, "
-            f"if_not_exists={self.if_not_exists}, kwargs=({self.kwargs!r})"
+            f"if_not_exists={self.if_not_exists}, kwargs=({self.kwargs!r}), "
+            f"kwargs={self.kwargs!r}"
         )
 
 
@@ -285,6 +284,7 @@ class DropViewOp(ops.MigrateOperation):
         reverse_columns: Optional[List[Dict]] = None,
         reverse_comment: Optional[str] = None,
         reverse_security: Optional[str] = None,
+        **kwargs,
     ):
         self.view_name = view_name
         self.schema = schema
@@ -293,6 +293,7 @@ class DropViewOp(ops.MigrateOperation):
         self.reverse_columns = reverse_columns
         self.reverse_comment = reverse_comment
         self.reverse_security = reverse_security
+        self.kwargs = kwargs
 
     def to_view(self, metadata: Optional[MetaData] = None) -> "View":
         """Create a View object for DROP VIEW operation.
@@ -305,6 +306,7 @@ class DropViewOp(ops.MigrateOperation):
             MetaData(),
             definition='',  # Empty definition for DROP VIEW
             schema=self.schema,
+            **self.kwargs,
         )
 
     @classmethod
@@ -319,6 +321,7 @@ class DropViewOp(ops.MigrateOperation):
             reverse_columns=extract_view_columns(view),
             reverse_comment=view.comment,
             reverse_security=security,
+            **view.dialect_kwargs,
         )
 
     @classmethod
@@ -343,6 +346,7 @@ class DropViewOp(ops.MigrateOperation):
             columns=self.reverse_columns,
             comment=self.reverse_comment,
             security=self.reverse_security,
+            **self.kwargs,
         )
         logger.debug("reverse DropViewOp for %s, with op: (%s)", self.view_name, op)
         return op
@@ -353,7 +357,8 @@ class DropViewOp(ops.MigrateOperation):
             f"if_exists={self.if_exists}, reverse_definition=({self.reverse_definition!r}), "
             f"reverse_comment=({self.reverse_comment!r}), "
             f"reverse_security={self.reverse_security}, "
-            f"reverse_columns={self.reverse_columns!r})"
+            f"reverse_columns={self.reverse_columns!r}), "
+            f"kwargs=({self.kwargs!r})"
         )
 
 
@@ -371,6 +376,8 @@ class AlterMaterializedViewOp(ops.MigrateOperation):
 
     Immutable attributes (definition, partition_by, distributed_by, order_by, comment, columns)
     cannot be altered via ALTER MATERIALIZED VIEW and require DROP + CREATE.
+
+    Currently, we make an Alter including all the mutable attributes, which is different with AlterTableXxxOp.
     """
 
     def __init__(
@@ -440,7 +447,7 @@ class CreateMaterializedViewOp(CreateViewOp):
     Create a materialized view.
 
     Inherits from CreateViewOp to reuse view_name, definition, schema, comment, columns.
-    Adds MV-specific parameters: partition_by, distributed_by, order_by, refresh, properties.
+    Adds dialect-specific parameters via kwargs, e.g., starrocks_partition_by.
     """
 
     def __init__(
@@ -452,12 +459,6 @@ class CreateMaterializedViewOp(CreateViewOp):
         columns: Union[List[Dict], None] = None,
         or_replace: bool = False,
         if_not_exists: bool = False,
-        # MV-specific parameters (explicit!)
-        partition_by: Optional[str] = None,
-        distributed_by: Optional[str] = None,
-        order_by: Optional[str] = None,
-        refresh: Optional[str] = None,
-        properties: Optional[Dict[str, str]] = None,
         **kwargs,
     ):
         super().__init__(
@@ -468,13 +469,8 @@ class CreateMaterializedViewOp(CreateViewOp):
             columns=columns,
             or_replace=or_replace,
             if_not_exists=if_not_exists,
-            **kwargs,
+            **kwargs,  # Processed by CreateViewOp.__init__ to only keep starrocks_*
         )
-        self.partition_by = partition_by
-        self.distributed_by = distributed_by
-        self.order_by = order_by
-        self.refresh = refresh
-        self.properties = properties
 
     def to_mv(self, metadata: Optional[MetaData] = None) -> "MaterializedView":
         """Convert Op to MaterializedView object (for toimpl)."""
@@ -488,13 +484,7 @@ class CreateMaterializedViewOp(CreateViewOp):
             definition=self.definition,
             schema=self.schema,
             comment=self.comment,
-            **{
-                TableInfoKeyWithPrefix.PARTITION_BY: self.partition_by,
-                TableInfoKeyWithPrefix.DISTRIBUTED_BY: self.distributed_by,
-                TableInfoKeyWithPrefix.ORDER_BY: self.order_by,
-                TableInfoKeyWithPrefix.REFRESH: self.refresh,
-                TableInfoKeyWithPrefix.PROPERTIES: self.properties,
-            }
+            **self.kwargs,
         )
 
     # Keep backward compatibility alias
@@ -505,7 +495,6 @@ class CreateMaterializedViewOp(CreateViewOp):
     @classmethod
     def from_mv(cls, mv: Table) -> "CreateMaterializedViewOp":
         """Create Op from MaterializedView Table object."""
-        dialect_opts = mv.dialect_options.get(DialectName, {})
         columns = extract_view_columns(mv)
 
         return cls(
@@ -514,11 +503,7 @@ class CreateMaterializedViewOp(CreateViewOp):
             schema=mv.schema,
             comment=mv.comment,
             columns=columns,
-            partition_by=dialect_opts.get(TableInfoKey.PARTITION_BY),
-            distributed_by=dialect_opts.get(TableInfoKey.DISTRIBUTED_BY),
-            order_by=dialect_opts.get(TableInfoKey.ORDER_BY),
-            refresh=dialect_opts.get(TableInfoKey.REFRESH),
-            properties=dialect_opts.get(TableInfoKey.PROPERTIES),
+            **mv.dialect_kwargs,
         )
 
     # Keep backward compatibility alias
@@ -538,11 +523,6 @@ class CreateMaterializedViewOp(CreateViewOp):
         columns: Union[List[Dict], None] = None,
         or_replace: bool = False,
         if_not_exists: bool = False,
-        partition_by: Optional[str] = None,
-        distributed_by: Optional[str] = None,
-        order_by: Optional[str] = None,
-        refresh: Optional[str] = None,
-        properties: Optional[Dict[str, str]] = None,
         **kwargs,
     ):
         """Invoke a CREATE MATERIALIZED VIEW operation."""
@@ -554,11 +534,6 @@ class CreateMaterializedViewOp(CreateViewOp):
             columns=columns,
             or_replace=or_replace,
             if_not_exists=if_not_exists,
-            partition_by=partition_by,
-            distributed_by=distributed_by,
-            order_by=order_by,
-            refresh=refresh,
-            properties=properties,
             **kwargs,
         )
         return operations.invoke(op)
@@ -567,14 +542,6 @@ class CreateMaterializedViewOp(CreateViewOp):
         return DropMaterializedViewOp(
             self.view_name,
             schema=self.schema,
-            reverse_definition=self.definition,
-            reverse_columns=self.columns,
-            reverse_comment=self.comment,
-            reverse_partition_by=self.partition_by,
-            reverse_distributed_by=self.distributed_by,
-            reverse_order_by=self.order_by,
-            reverse_refresh=self.refresh,
-            reverse_properties=self.properties,
         )
 
     def __str__(self) -> str:
@@ -582,9 +549,8 @@ class CreateMaterializedViewOp(CreateViewOp):
         return (
             f"CreateMaterializedViewOp(view_name={self.view_name!r}, schema={self.schema!r}, "
             f"definition={self.definition!r}, comment={self.comment!r}, columns={self.columns!r}, "
-            f"partition_by={self.partition_by!r}, distributed_by={self.distributed_by!r}, "
-            f"order_by={self.order_by!r}, refresh={self.refresh!r}, properties={self.properties!r}, "
-            f"or_replace={self.or_replace}, if_not_exists={self.if_not_exists})"
+            f"or_replace={self.or_replace}, if_not_exists={self.if_not_exists}, "
+            f"kwargs={self.kwargs!r})"
         )
 
 
@@ -600,15 +566,11 @@ class DropMaterializedViewOp(DropViewOp):
         reverse_definition: Optional[str] = None,
         reverse_columns: Optional[List[Dict]] = None,
         reverse_comment: Optional[str] = None,
-        reverse_security: Optional[str] = None,
-        # MV-specific reverse parameters
-        reverse_partition_by: Optional[str] = None,
-        reverse_distributed_by: Optional[str] = None,
-        reverse_order_by: Optional[str] = None,
-        reverse_refresh: Optional[str] = None,
-        reverse_properties: Optional[Dict[str, str]] = None,
+        **kwargs,
     ) -> None:
-        # Call parent constructor with common reverse_* parameters
+        """
+        kwargs are already processed by DropViewOp.__init__ to only keep starrocks_*.
+        """
         super().__init__(
             view_name,
             schema=schema,
@@ -616,31 +578,24 @@ class DropMaterializedViewOp(DropViewOp):
             reverse_definition=reverse_definition,
             reverse_columns=reverse_columns,
             reverse_comment=reverse_comment,
-            reverse_security=reverse_security,
+            **kwargs,
         )
-        # Store MV-specific reverse parameters
-        self.reverse_partition_by = reverse_partition_by
-        self.reverse_distributed_by = reverse_distributed_by
-        self.reverse_order_by = reverse_order_by
-        self.reverse_refresh = reverse_refresh
-        self.reverse_properties = reverse_properties
 
     @classmethod
     def from_mv(cls, mv: Table) -> "DropMaterializedViewOp":
         """Create DropMaterializedViewOp from a MaterializedView object."""
-        dialect_opts = mv.dialect_options.get(DialectName, {})
         return cls(
             mv.name,
             schema=mv.schema,
             reverse_definition=mv.info.get(TableObjectInfoKey.DEFINITION),
             reverse_columns=extract_view_columns(mv),
             reverse_comment=mv.comment,
-            reverse_partition_by=dialect_opts.get(TableInfoKey.PARTITION_BY),
-            reverse_distributed_by=dialect_opts.get(TableInfoKey.DISTRIBUTED_BY),
-            reverse_order_by=dialect_opts.get(TableInfoKey.ORDER_BY),
-            reverse_refresh=dialect_opts.get(TableInfoKey.REFRESH),
-            reverse_properties=dialect_opts.get(TableInfoKey.PROPERTIES),
+            **mv.dialect_kwargs,
         )
+
+    @classmethod
+    def from_materialized_view(cls, mv: Table) -> "DropMaterializedViewOp":
+        return cls.from_mv(mv)
 
     @classmethod
     def drop_materialized_view(
@@ -664,11 +619,7 @@ class DropMaterializedViewOp(DropViewOp):
             schema=self.schema,
             comment=self.reverse_comment,
             columns=self.reverse_columns,
-            partition_by=self.reverse_partition_by,
-            distributed_by=self.reverse_distributed_by,
-            order_by=self.reverse_order_by,
-            refresh=self.reverse_refresh,
-            properties=self.reverse_properties,
+            **self.kwargs,
         )
 
     def __str__(self) -> str:
@@ -676,11 +627,7 @@ class DropMaterializedViewOp(DropViewOp):
         return (
             f"DropMaterializedViewOp(view_name={self.view_name!r}, schema={self.schema!r}, "
             f"if_exists={self.if_exists}, reverse_definition={self.reverse_definition!r}, "
-            f"reverse_partition_by={self.reverse_partition_by!r}, "
-            f"reverse_distributed_by={self.reverse_distributed_by!r}, "
-            f"reverse_order_by={self.reverse_order_by!r}, "
-            f"reverse_refresh={self.reverse_refresh!r}, "
-            f"reverse_properties={self.reverse_properties!r})"
+            f"kwargs={self.kwargs!r})"
         )
 
 

@@ -20,7 +20,7 @@ from typing import Any, Dict, List, NamedTuple, Optional, Tuple, TypedDict, Unio
 
 from sqlalchemy.engine.interfaces import ReflectedColumn
 
-from starrocks.common.params import TableKind, TableInfoKeyWithPrefix
+from starrocks.common.params import TableInfoKeyWithPrefix, TableKind
 
 
 """
@@ -74,6 +74,26 @@ class ReflectedState:
         """Get the comment easily only, not able to write to it."""
         return self.table_options.get(TableInfoKeyWithPrefix.COMMENT)
 
+    @property
+    def partition_info(self) -> Optional['ReflectedPartitionInfo']:
+        return self.table_options.get(TableInfoKeyWithPrefix.PARTITION_BY)
+
+    @property
+    def distribution_info(self) -> Optional['ReflectedDistributionInfo']:
+        return self.table_options.get(TableInfoKeyWithPrefix.DISTRIBUTED_BY)
+
+    @property
+    def refresh_info(self) -> Optional['ReflectedRefreshInfo']:
+        return self.table_options.get(TableInfoKeyWithPrefix.REFRESH)
+
+    @property
+    def order_by(self) -> Optional[str]:
+        return self.table_options.get(TableInfoKeyWithPrefix.ORDER_BY)
+
+    @property
+    def properties(self) -> Optional[Union[str, Dict[str, str]]]:
+        return self.table_options.get(TableInfoKeyWithPrefix.PROPERTIES)
+
 
 @dataclasses.dataclass
 class ReflectedViewState(ReflectedState):
@@ -118,26 +138,6 @@ class ReflectedMVState(ReflectedViewState):
     @mv_name.setter
     def mv_name(self, value: str) -> None:
         self.table_name = value
-
-    @property
-    def partition_info(self) -> Optional['ReflectedPartitionInfo']:
-        return self.table_options.get(TableInfoKeyWithPrefix.PARTITION_BY)
-
-    @property
-    def distribution_info(self) -> Optional['ReflectedDistributionInfo']:
-        return self.table_options.get(TableInfoKeyWithPrefix.DISTRIBUTED_BY)
-
-    @property
-    def refresh_info(self) -> Optional['ReflectedRefreshInfo']:
-        return self.table_options.get(TableInfoKeyWithPrefix.REFRESH)
-
-    @property
-    def order_by(self) -> Optional[str]:
-        return self.table_options.get(TableInfoKeyWithPrefix.ORDER_BY)
-
-    @property
-    def properties(self) -> Optional[Dict[str, str]]:
-        return self.table_options.get(TableInfoKeyWithPrefix.PROPERTIES)
 
 
 @add_cached_str_clause

@@ -24,8 +24,7 @@ from sqlalchemy.testing.assertions import AssertsCompiledSQL, eq_
 # from sqlalchemy.testing.suite import *  # noqa: F403, I001
 
 from starrocks.datatype import INTEGER, VARCHAR
-from test.unit import test_utils
-
+from test import test_utils
 
 logger = logging.getLogger(__name__)
 

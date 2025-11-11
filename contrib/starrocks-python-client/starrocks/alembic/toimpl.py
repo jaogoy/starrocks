@@ -81,7 +81,7 @@ def alter_materialized_view(operations: Operations, op: AlterMaterializedViewOp)
     """
     logger.debug("implementation alter_materialized_view: %s", op.view_name)
     operations.execute(AlterMaterializedView(
-        view_name=op.view_name,
+        mv_name=op.view_name,
         schema=op.schema,
         refresh=op.refresh,
         properties=op.properties,

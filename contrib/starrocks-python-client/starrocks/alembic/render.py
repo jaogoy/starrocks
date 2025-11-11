@@ -19,8 +19,6 @@ from alembic.autogenerate import renderers
 from alembic.autogenerate.api import AutogenContext
 from sqlalchemy.types import TypeEngine
 
-from starrocks.common.params import TableInfoKeyWithPrefix
-
 from .ops import (
     AlterMaterializedViewOp,
     AlterTableDistributionOp,
@@ -41,6 +39,16 @@ op_param_indent: Final[str] = " " * 4
 op_param_indent_with_line: Final[str] = "\n" + op_param_indent
 op_param_separator: Final[str] = "," + op_param_indent_with_line
 op_close_paren_indent: Final[str] = "\n"
+
+
+def _render_op_call(op_name: str, args: list[str]) -> str:
+    """Render an operation call, deciding between single-line and multi-line formatting."""
+    if len(args) <= 2:
+        # Simple case, render on a single line
+        return f"op.{op_name}({', '.join(args)})"
+    else:
+        # Complex case, render on multiple lines
+        return f"op.{op_name}({op_param_separator.join(args)}{op_close_paren_indent})"
 
 
 def render_column_type(type_: str, obj: Any, autogen_context: AutogenContext):
@@ -194,19 +202,12 @@ def _create_materialized_view(autogen_context: AutogenContext, op: CreateMateria
         # Render columns as a list of dicts
         args.append(f"columns={op.columns!r}")
 
-    # MV-specific attributes (use starrocks_ prefix)
-    if op.partition_by:
-        args.append(f"{TableInfoKeyWithPrefix.PARTITION_BY}={op.partition_by!r}")
-    if op.distributed_by:
-        args.append(f"{TableInfoKeyWithPrefix.DISTRIBUTED_BY}={op.distributed_by!r}")
-    if op.order_by:
-        args.append(f"{TableInfoKeyWithPrefix.ORDER_BY}={op.order_by!r}")
-    if op.refresh:
-        args.append(f"{TableInfoKeyWithPrefix.REFRESH}={op.refresh!r}")
-    if op.properties:
-        args.append(f"{TableInfoKeyWithPrefix.PROPERTIES}={op.properties!r}")
+    # MV-specific attributes from kwargs (should all have "starrocks_" prefix)
+    for key, value in op.kwargs.items():
+        if value is not None:
+            args.append(f"{key}={value!r}")
 
-    call = f"op.create_materialized_view({op_param_separator.join(args)}{op_close_paren_indent})"
+    call = _render_op_call("create_materialized_view", args)
     logger.debug("render create_materialized_view: %s", call)
     return call
 
@@ -222,12 +223,19 @@ def _alter_materialized_view(autogen_context: AutogenContext, op: AlterMateriali
 
     if op.schema:
         args.append(f"schema={op.schema!r}")
-    if op.refresh is not None:
-        args.append(f"{TableInfoKeyWithPrefix.REFRESH}={op.refresh!r}")
-    if op.properties is not None:
-        args.append(f"{TableInfoKeyWithPrefix.PROPERTIES}={op.properties!r}")
 
-    call = f"op.alter_materialized_view({op_param_separator.join(args)}{op_close_paren_indent})"
+    if op.refresh is not None:
+        args.append(f"refresh={op.refresh!r}")
+    if op.properties is not None:
+        args.append(f"properties={op.properties!r}")
+
+    # Render reverse values for downgrade if present
+    if op.reverse_refresh is not None:
+        args.append(f"reverse_refresh={op.reverse_refresh!r}")
+    if op.reverse_properties is not None:
+        args.append(f"reverse_properties={op.reverse_properties!r}")
+
+    call = _render_op_call("alter_materialized_view", args)
     logger.debug("render alter_materialized_view: %s", call)
     return call
 

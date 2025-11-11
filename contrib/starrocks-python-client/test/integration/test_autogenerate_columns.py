@@ -120,7 +120,7 @@ class TestCompareColumnAggTypeIntegration:
                 conn.exec_driver_sql(f"DROP TABLE IF EXISTS {full_tname}")
 
     def test_compare_agg_type_changes_raises(self) -> None:
-        """Test agg_type changes raises NotSupportedError."""
+        """Test agg_type changes raises NotImplementedError."""
         tname = "compare_agg_type_changes_raises"
         full_tname = self._full_table_name(tname)
         with self.engine.begin() as conn:
@@ -151,10 +151,8 @@ class TestCompareColumnAggTypeIntegration:
             )
 
             autogen_context = self._setup_autogen_context()
-            from sqlalchemy.exc import NotSupportedError
-
             from starrocks.alembic.compare import compare_starrocks_column_agg_type
-            with pytest.raises(NotSupportedError, match="does not support changing the aggregation type"):
+            with pytest.raises(NotImplementedError, match="does not support changing the aggregation type"):
                 compare_starrocks_column_agg_type(autogen_context, None, self.schema, tname, "v",
                     conn_table.columns["v"], meta_table.columns["v"])
 

@@ -21,7 +21,7 @@ from sqlalchemy.schema import CreateTable
 
 from starrocks.common.params import ColumnAggInfoKeyWithPrefix
 from starrocks.common.types import ColumnAggType
-from test.unit.test_utils import normalize_sql
+from test.test_utils import normalize_sql
 
 
 class TestCreateTableCompiler:
