@@ -23,12 +23,12 @@ my_table = Table(
 
     # Table-level attributes (optional)
     comment="my first sqlalchemy table",
-    starrocks_ENGINE="OLAP",
-    starrocks_PRIMARY_KEY="id, dt",
-    starrocks_PARTITION_BY="date_trunc('day', dt)",
-    starrocks_DISTRIBUTED_BY="HASH(id) BUCKETS 10",
-    starrocks_ORDER_BY="dt, id",
-    starrocks_PROPERTIES={"replication_num": "3"}
+    starrocks_engine="OLAP",
+    starrocks_primary_key="id, dt",
+    starrocks_partition_by="date_trunc('day', dt)",
+    starrocks_distributed_by="HASH(id) BUCKETS 10",
+    starrocks_order_by="dt, id",
+    starrocks_properties={"replication_num": "3"}
 )
 ```
 
@@ -48,41 +48,41 @@ StarRocks-specific physical attributes for a table are configured by passing spe
 
 Here is a comprehensive list of the supported `starrocks_` prefixed arguments. The order of attributes in the documentation follows the recommended order in the `CREATE TABLE` DDL statement.
 
-The prefix `starrocks_` should be **lower case**, the other part is recommended to be upper case for clearity.
+The prefix `starrocks_` should be **lower case**, the other part can be either lower case or upper case for clearity.
 
-##### 1. `starrocks_ENGINE`
+##### 1. `starrocks_engine`
 
 Specifies the table engine. `OLAP` is the default and only supported engine.
 
 - **Type**: `str`
 - **Default**: `"OLAP"`
 
-##### 2. Table Type (`starrocks_*_KEY`)
+##### 2. Table Type (`starrocks_*_key`)
 
 Defines the table's type (key) and the columns that constitute the key. You must choose **at most one** of the following options.
 
-- **`starrocks_PRIMARY_KEY`**
+- **`starrocks_primary_key`**
 
   - **Description**: Defines a Primary Key type table. Data is sorted by the primary key, and each row is unique.
   - **Type**: `str` (comma-separated column names)
-  - **Example**: `starrocks_PRIMARY_KEY="user_id, event_date"`
+  - **Example**: `starrocks_primary_key="user_id, event_date"`
 
-- **`starrocks_DUPLICATE_KEY`**
+- **`starrocks_duplicate_key`**
 
   - **Description**: Defines a Duplicate Key type table. This is the default type if no key is specified. It's suitable for storing raw, unchanged data.
   - **Type**: `str` (comma-separated column names)
-  - **Example**: `starrocks_DUPLICATE_KEY="request_id, timestamp"`
+  - **Example**: `starrocks_duplicate_key="request_id, timestamp"`
 
-- **`starrocks_AGGREGATE_KEY`**
+- **`starrocks_aggregate_key`**
 
   - **Description**: Defines an Aggregate Key type table. Rows with the same key are aggregated into a single row.
   - **Type**: `str` (comma-separated column names)
-  - **Example**: `starrocks_AGGREGATE_KEY="site_id, visit_date"`
+  - **Example**: `starrocks_aggregate_key="site_id, visit_date"`
 
-- **`starrocks_UNIQUE_KEY`**
+- **`starrocks_unique_key`**
   - **Description**: Defines a Unique Key type table, where all rows are unique. It functions like a primary key but with a different underlying implementation strategy. You could use it only when Primary Key type can't satisfy you.
   - **Type**: `str` (comma-separated column names)
-  - **Example**: `starrocks_UNIQUE_KEY="device_id"`
+  - **Example**: `starrocks_unique_key="device_id"`
 
 > Although you **CAN'T only** specify the Primary Key type in Columns, such as `Column('id', Integer, primary_key=True)`, or by using `PrimaryKeyConstraint`, You still need to specify it as the SQLAlchemy's stardard primary key declaration, either via Columns or `PrimaryKeyConstraint`, to prevent errors.
 
@@ -90,7 +90,7 @@ Defines the table's type (key) and the columns that constitute the key. You must
 
 The table comment should be passed as the standard `comment` keyword argument to the `Table` constructor, not as a `starrocks_` prefix. Otherwise, it will show some uncertain behaviors.
 
-##### 4. `starrocks_PARTITION_BY`
+##### 4. `starrocks_partition_by`
 
 Defines the partitioning strategy.
 
@@ -98,29 +98,29 @@ Defines the partitioning strategy.
 - **Example**:
 
   ```Python
-  starrocks_PARTITION_BY="""RANGE(event_date) (
+  starrocks_partition_by="""RANGE(event_date) (
       START ('2022-01-01') END ('2023-01-01') EVERY (INTERVAL 1 DAY)
   )"""
   ```
 
-##### 5. `starrocks_DISTRIBUTED_BY`
+##### 5. `starrocks_distributed_by`
 
 Specifies the data distribution (including bucketing) strategy.
 
 - **Type**: `str`
 - **Default**: `RANDOM`
-- **Example**: `starrocks_DISTRIBUTED_BY="HASH(user_id) BUCKETS 32"`
+- **Example**: `starrocks_distributed_by="HASH(user_id) BUCKETS 32"`
 
 > **Note on Buckets**: If you specify a distribution method (e.g., `HASH(user_id)`) but omit the `BUCKETS` clause, StarRocks will automatically assign a bucket count. Alembic's `autogenerate` feature is designed to handle this: if the distribution method in your metadata matches the one in the database and you haven't specified a bucket count, no changes will be detected. This prevents unnecessary `ALTER TABLE` statements when the bucket count is automatically managed by the system.
 
-##### 6. `starrocks_ORDER_BY`
+##### 6. `starrocks_order_by`
 
 Specifies the sorting columns.
 
 - **Type**: `str` (comma-separated column names)
-- **Example**: `starrocks_ORDER_BY="event_timestamp, event_type"`
+- **Example**: `starrocks_order_by="event_timestamp, event_type"`
 
-##### 7. `starrocks_PROPERTIES`
+##### 7. `starrocks_properties`
 
 A dictionary of additional table attributes.
 
@@ -128,7 +128,7 @@ A dictionary of additional table attributes.
 - **Example**:
 
   ```python
-  starrocks_PROPERTIES={
+  starrocks_properties={
       "replication_num": "3",
       "storage_medium": "SSD",
       "enable_persistent_index": "true"
@@ -245,10 +245,10 @@ aggregate_table = Table(
     Column('uv_estimate', HLL, starrocks_agg_type='HLL_UNION'),
 
     # Table-level attributes
-    starrocks_AGGREGATE_KEY="event_date, site_id",
-    starrocks_PARTITION_BY="date_trunc('day', event_date)",
-    starrocks_DISTRIBUTED_BY="HASH(site_id)",
-    starrocks_PROPERTIES={"replication_num": "1"}
+    starrocks_aggregate_key="event_date, site_id",
+    starrocks_partition_by="date_trunc('day', event_date)",
+    starrocks_distributed_by="HASH(site_id)",
+    starrocks_properties={"replication_num": "1"}
 )
 ```
 
@@ -269,15 +269,15 @@ orders = Table(
     Column('order_dt', DATETIME, primary_key=True),
     Column('customer', VARCHAR(100), nullable=False),
 
-    starrocks_PRIMARY_KEY='order_id, order_dt',
-    starrocks_ORDER_BY='order_dt, order_id',
+    starrocks_primary_key='order_id, order_dt',
+    starrocks_order_by='order_dt, order_id',
     # With BUCKETS
-    starrocks_DISTRIBUTED_BY='HASH(order_id) BUCKETS 16',
-    starrocks_PROPERTIES={'replication_num': '1'},
+    starrocks_distributed_by='HASH(order_id) BUCKETS 16',
+    starrocks_properties={'replication_num': '1'},
 )
 ```
 
-Note: If you omit BUCKETS (e.g., `starrocks_DISTRIBUTED_BY='HASH(order_id)'`), StarRocks assigns a bucket count. Autogenerate won’t emit changes when the distribution method matches and buckets were omitted in both metadata and DB.
+Note: If you omit BUCKETS (e.g., `starrocks_distributed_by='HASH(order_id)'`), StarRocks assigns a bucket count. Autogenerate won’t emit changes when the distribution method matches and buckets were omitted in both metadata and DB.
 
 ### Aggregate Key table with PARTITION and PROPERTIES
 
@@ -296,10 +296,10 @@ daily_stats = Table(
     Column('uv_est', HLL, starrocks_agg_type='HLL_UNION'),
     Column('user_ids', BITMAP, starrocks_agg_type='BITMAP_UNION'),
 
-    starrocks_AGGREGATE_KEY='dt, site_id',
-    starrocks_PARTITION_BY="date_trunc('day', dt)",
-    starrocks_DISTRIBUTED_BY='HASH(dt)',
-    starrocks_PROPERTIES={'replication_num': '1'},
+    starrocks_aggregate_key='dt, site_id',
+    starrocks_partition_by="date_trunc('day', dt)",
+    starrocks_distributed_by='HASH(dt)',
+    starrocks_properties={'replication_num': '1'},
 )
 ```
 
@@ -324,8 +324,8 @@ events = Table(
         metrics=MAP(STRING, DECIMAL(10, 2))
     )),
 
-    starrocks_DUPLICATE_KEY='event_id, event_type',
-    starrocks_DISTRIBUTED_BY='RANDOM',
+    starrocks_duplicate_key='event_id, event_type',
+    starrocks_distributed_by='RANDOM',
 )
 ```
 
@@ -384,7 +384,7 @@ class PageViewAggregates(Base):
 
     # -- Key Columns --
     page_id = Column(INTEGER, primary_key=True, starrocks_is_agg_key=True)
-    visit_date = Column(DATE, starrocks_is_agg_key=True)
+    visit_date = Column(DATE, primary_key=True, starrocks_is_agg_key=True)
 
     # -- Value Columns --
     total_views = Column(INTEGER, starrocks_agg_type='SUM')

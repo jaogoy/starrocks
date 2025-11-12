@@ -84,7 +84,7 @@ def compare_simple_type(impl: DefaultImpl, inspector_column: Column[Any], metada
     inspector_type = inspector_column.type
     metadata_type = metadata_column.type
 
-    # logger.debug(f"compare_simple_type: inspector_type: {inspector_type}, metadata_type: {metadata_type}")
+    # logger.debug("compare_simple_type: inspector_type: %s, metadata_type: %s", inspector_type, metadata_type)
     # Scenario 1.a: model defined BOOLEAN, database stored TINYINT(1)
     if (isinstance(metadata_type, BOOLEAN) and
         isinstance(inspector_type, TINYINT) and
@@ -132,7 +132,7 @@ def compare_complex_type(impl: DefaultImpl, inspector_type: sqltypes.TypeEngine,
         True if the types are different, False if the types are the same.
     """
     # First check if they are the exact same type class
-    # logger.debug(f"compare_complex_type with inspector_type: {inspector_type}, metadata_type: {metadata_type}.")
+    # logger.debug("compare_complex_type with inspector_type: %s, metadata_type: %s.", inspector_type, metadata_type)
     if not isinstance(metadata_type, datatype.StructuredType):
         # For simple types and other types, use compare_simple_type by composing fake columns
         conn_col = Column("fake_conn_col", inspector_type)
@@ -141,7 +141,7 @@ def compare_complex_type(impl: DefaultImpl, inspector_type: sqltypes.TypeEngine,
 
     # Now, the type should be StructuredType (complex data type)
     if type(inspector_type) is not type(metadata_type):
-        logger.debug(f"compare_complex_type with different classes: inspector_type: {inspector_type}, metadata_type: {metadata_type}.")
+        logger.debug("compare_complex_type with different classes: inspector_type: %s, metadata_type: %s.", inspector_type, metadata_type)
         return True  # Different classes
 
     if isinstance(inspector_type, ARRAY):
@@ -151,14 +151,14 @@ def compare_complex_type(impl: DefaultImpl, inspector_type: sqltypes.TypeEngine,
     if isinstance(inspector_type, MAP):
         # We know metadata_type is also MAP
         if compare_complex_type(impl, inspector_type.key_type, metadata_type.key_type):
-            logger.debug(f"compare_complex_type with different key types of MAP: inspector_type: {inspector_type}, metadata_type: {metadata_type}.")
+            logger.debug("compare_complex_type with different key types of MAP: inspector_type: %s, metadata_type: %s.", inspector_type, metadata_type)
             return True
         return compare_complex_type(impl, inspector_type.value_type, metadata_type.value_type)
 
     if isinstance(inspector_type, STRUCT):
         # We know metadata_type is also STRUCT
         if len(inspector_type.field_tuples) != len(metadata_type.field_tuples):
-            logger.debug(f"compare_complex_type with different number of fields of STRUCT: inspector_type: {inspector_type}, metadata_type: {metadata_type}.")
+            logger.debug("compare_complex_type with different number of fields of STRUCT: inspector_type: %s, metadata_type: %s.", inspector_type, metadata_type)
             return True  # Different number of fields
 
         # Compare field names and types in order. StarRocks STRUCTs are order-sensitive.
@@ -166,10 +166,10 @@ def compare_complex_type(impl: DefaultImpl, inspector_type: sqltypes.TypeEngine,
             inspector_type.field_tuples, metadata_type.field_tuples
         ):
             if name1 != name2:
-                logger.debug(f"compare_complex_type with different field names of STRUCT: inspector_type: {inspector_type}, metadata_type: {metadata_type}.")
+                logger.debug("compare_complex_type with different field names of STRUCT: inspector_type: %s, metadata_type: %s.", inspector_type, metadata_type)
                 return True
             if compare_complex_type(impl, type1_sub, type2_sub):
-                logger.debug(f"compare_complex_type with different field types of STRUCT: inspector_type: {inspector_type}, metadata_type: {metadata_type}.")
+                logger.debug("compare_complex_type with different field types of STRUCT: inspector_type: %s, metadata_type: %s.", inspector_type, metadata_type)
                 return True
         return False
 
@@ -326,11 +326,11 @@ def _compare_views(
         if table.info.get(TableObjectInfoKey.TABLE_KIND) == TableKind.VIEW
     }
 
-    logger.debug(f"view_name_to_table keys: {view_name_to_table.keys()}")
+    logger.debug("view_name_to_table keys: %s", view_name_to_table.keys())
 
     # Added views (in metadata but not in database)
     added_views = metadata_view_names.difference(conn_view_names)
-    logger.debug(f"Added views (in metadata but not in DB): {added_views}")
+    logger.debug("Added views (in metadata but not in DB): %s", added_views)
     for s, vname in added_views:
         qualified_view_name = "%s.%s" % (s, vname) if s else vname
         metadata_view = view_name_to_table[(s, vname)]
@@ -343,9 +343,9 @@ def _compare_views(
     removal_metadata = sa_schema.MetaData()
 
     dropped_views = conn_view_names.difference(metadata_view_names)
-    logger.debug(f"Dropped views (in DB but not in metadata): {dropped_views}")
+    logger.debug("Dropped views (in DB but not in metadata): %s", dropped_views)
     for s, vname in dropped_views:
-        logger.debug(f"Processing dropped view: schema={s}, name={vname}")
+        logger.debug("Processing dropped view: schema=%s, name=%s", s, vname)
         name = sa_schema._get_table_key(vname, s)
         exists = name in removal_metadata.tables
         # Create a View object (not Table) since we know it's a view
@@ -365,7 +365,7 @@ def _compare_views(
     # Use a separate MetaData for reflected views
     existing_metadata = sa_schema.MetaData()
     existing_views = conn_view_names.intersection(metadata_view_names)
-    logger.debug(f"Existing views (in both DB and metadata): {existing_views}")
+    logger.debug("Existing views (in both DB and metadata): %s", existing_views)
 
     for s, vname in existing_views:
         # Use reflect_table to get the full view object from database
@@ -387,9 +387,9 @@ def _compare_views(
         metadata_view = view_name_to_table[(s, vname)]
         conn_view = existing_metadata.tables[name]
 
-        logger.debug(f"Comparing existing view: {name}")
+        logger.debug("Comparing existing view: %s", name)
         if autogen_context.run_object_filters(metadata_view, vname, "view", False, conn_view):
-            logger.debug(f"Dispatching compare_view for {name}")
+            logger.debug("Dispatching compare_view for %s", name)
             # Dispatch to compare_view for detailed comparison
             comparators.dispatch("view")(
                 autogen_context,
@@ -423,14 +423,14 @@ def compare_view(
         )
         return
     qualifed_view_name = utils.gen_simple_qualified_name(view_name, schema)
-    logger.debug(f"compare_view: view_name={qualifed_view_name!r}")
+    logger.debug("compare_view: view_name=%r", qualifed_view_name)
 
     # Extract dialect_options for comparison
     conn_view_attributes = extract_dialect_options_as_case_insensitive(conn_view)
     meta_view_attributes = extract_dialect_options_as_case_insensitive(metadata_view)
 
     logger.debug(
-        "View-specific attributes comparison for view '%s': "
+        "View-specific attributes comparison for view %r: "
         "Detected in database: %s. Found in metadata: %s.",
         qualifed_view_name,
         conn_view_attributes,
@@ -1068,7 +1068,7 @@ def _compare_mv_refresh(
                 reverse_properties=None,
             )
         )
-        logger.debug(f"Detected refresh change for materialized view {qualified_mv_name!r}")
+        logger.debug("Detected refresh change for materialized view %r", qualified_mv_name)
 
 
 def _compare_mv_properties(
@@ -1099,7 +1099,7 @@ def _compare_mv_properties(
                 reverse_properties=properties_for_reverse if properties_for_reverse else None,
             )
         )
-        logger.debug(f"Detected properties change for materialized view {qualified_mv_name!r}")
+        logger.debug("Detected properties change for materialized view %r", qualified_mv_name)
 
 
 @comparators_dispatch_for_starrocks("materialized_view")
@@ -1132,14 +1132,14 @@ def compare_materialized_view(
         )
         return
 
-    logger.debug(f"Compare materialized view: mv_name={mv_name}, schema={schema}")
+    logger.debug("Compare materialized view: mv_name=%r, schema=%r", mv_name, schema)
 
     # Extract dialect_options for comparison using case-insensitive helper
     conn_mv_attributes = extract_dialect_options_as_case_insensitive(conn_mv)
     meta_mv_attributes = extract_dialect_options_as_case_insensitive(metadata_mv)
 
     logger.debug(
-        "MV-specific attributes comparison for materialized view '%s': "
+        "MV-specific attributes comparison for materialized view %r: "
         "Detected in database: %s. Found in metadata: %s.",
         mv_name,
         conn_mv_attributes,
@@ -1198,7 +1198,7 @@ def compare_materialized_view(
     if ops_after > ops_before:
         qualified_mv_name = utils.gen_simple_qualified_name(mv_name, schema)
         num_changes = ops_after - ops_before
-        logger.debug(f"Materialized view {qualified_mv_name!r} comparison complete: {num_changes} ALTER operation(s) generated")
+        logger.debug("Materialized view %r comparison complete: %d ALTER operation(s) generated", qualified_mv_name, num_changes)
 
 @comparators_dispatch_for_starrocks("table")
 def check_table_kind_for_view_mv(
@@ -1278,25 +1278,25 @@ def compare_starrocks_table(
     if conn_table is None:
         # Table exists in metadata but not in DB; this is a CREATE TABLE.
         # Alembic handles CreateTableOp separately. Our comparator should do nothing.
-        logger.debug(f"compare_starrocks_table: conn_table is None for '{metadata_table.name}', skipping.")
+        logger.debug("compare_starrocks_table: conn_table is None for %r, skipping.", metadata_table.name)
         return
     if metadata_table is None:
         # Table exists in DB but not in metadata; this is a DROP TABLE.
         # Alembic handles DropTableOp separately. Our comparator should do nothing.
-        logger.debug(f"compare_starrocks_table: metadata_table is None for '{conn_table.name}', skipping.")
+        logger.debug("compare_starrocks_table: metadata_table is None for %r, skipping.", conn_table.name)
         return
 
-    logger.debug(f"Compare StarRocks table: conn_table: {conn_table!r}, metadata_table: {metadata_table!r}")
+    logger.debug("Compare StarRocks table: conn_table: %r, metadata_table: %r", conn_table, metadata_table)
     # Get the system run_mode for proper default value comparison
     run_mode = autogen_context.dialect.run_mode
-    logger.debug(f"compare starrocks table. table: {table_name}, schema:{schema}, run_mode: {run_mode}")
+    logger.debug("compare starrocks table. table: %s, schema:%s, run_mode: %s", table_name, schema, run_mode)
 
     # Extract dialect_options for comparison using case-insensitive helper
     conn_table_attributes = extract_dialect_options_as_case_insensitive(conn_table)
     meta_table_attributes = extract_dialect_options_as_case_insensitive(metadata_table)
 
     logger.debug(
-        "StarRocks-specific attributes comparison for table '%s': "
+        "StarRocks-specific attributes comparison for table %r: "
         "Detected in database: %s. Found in metadata: %s.",
         conn_table.name,
         conn_table_attributes,
@@ -1338,7 +1338,7 @@ def compare_starrocks_table(
     if ops_after > ops_before:
         table_fqn = utils.gen_simple_qualified_name(table_name, schema)
         num_changes = ops_after - ops_before
-        logger.debug(f"Table {table_fqn!r} comparison complete: {num_changes} ALTER operation(s) generated")
+        logger.debug("Table %r comparison complete: %d ALTER operation(s) generated", table_fqn, num_changes)
 
     return False
 
@@ -1356,7 +1356,7 @@ def _compare_table_engine(
     """
     meta_engine = meta_table_attributes.get(TableInfoKey.ENGINE)
     conn_engine = conn_table_attributes.get(TableInfoKey.ENGINE)
-    logger.debug(f"Compares table ENGINE. meta_engine: {meta_engine}, conn_engine: {conn_engine}")
+    logger.debug("Compares table ENGINE. meta_engine: %s, conn_engine: %s", meta_engine, conn_engine)
 
     # if not meta_engine:
     #     logger.error(f"Engine info should be specified in metadata to change for table {table_name} in schema {schema}.")
@@ -1389,7 +1389,7 @@ def _compare_table_key(
     """
     conn_key: Optional[ReflectedTableKeyInfo] = _get_table_key_type(conn_table_attributes)
     meta_key: Optional[ReflectedTableKeyInfo] = _get_table_key_type(meta_table_attributes)
-    logger.debug(f"Compares table KEY. conn_key: {conn_key}, meta_key: {meta_key}")
+    logger.debug("Compares table KEY. conn_key: %s, meta_key: %s", conn_key, meta_key)
 
     if isinstance(conn_key, str):
         conn_key = StarRocksTableDefinitionParser.parse_key_clause(conn_key)
@@ -1400,7 +1400,7 @@ def _compare_table_key(
     # Actually, the conn key must not be None, because it is inspected from database.
     normalized_conn: Optional[str] = TableAttributeNormalizer.normalize_key(conn_key)
     normalized_meta: Optional[str] = TableAttributeNormalizer.normalize_key(meta_key)
-    logger.debug(f"Compares table KEY. normalized_conn: {normalized_conn!r}, normalized_meta: {normalized_meta!r}")
+    logger.debug("Compares table KEY. normalized_conn: %r, normalized_meta: %r", normalized_conn, normalized_meta)
 
     if _compare_single_table_attribute(
         table_name,
@@ -1468,9 +1468,9 @@ def _is_equal_key_with_defaults(
     if default_value is None:
         return conn_value is None
 
-    # Normalize by converting to uppercase and removing extra spaces
-    conn_norm = conn_value.upper()
-    default_norm = default_value.upper()
+    # Normalize by converting to lowercase and removing extra spaces
+    conn_norm = conn_value.lower()
+    default_norm = default_value.lower()
 
     # Check if conn_value starts with the default_value, ignoring case and spaces
     return conn_norm.startswith(default_norm)
@@ -1565,7 +1565,7 @@ def _compare_table_partition(
     """Compare partition changes and add AlterTablePartitionOp if needed."""
     conn_partition = conn_table_attributes.get(TableInfoKey.PARTITION_BY)
     meta_partition = meta_table_attributes.get(TableInfoKey.PARTITION_BY)
-    logger.debug(f"Compares table PARTITION_BY. conn_partition: {conn_partition}, meta_partition: {meta_partition}")
+    logger.debug("Compares table PARTITION_BY. conn_partition: %s, meta_partition: %s", conn_partition, meta_partition)
 
     # if not meta_partition:
     #     logger.error(f"Partition info should be specified in metadata for table {table_name} in schema {schema}.")
@@ -1647,7 +1647,7 @@ def _compare_table_distribution(
     # Normalize both strings for comparison (handles backticks)
     normalized_conn: Optional[str] = TableAttributeNormalizer.normalize_distribution_string(conn_distribution)
     normalized_meta: Optional[str] = TableAttributeNormalizer.normalize_distribution_string(meta_distribution)
-    logger.debug(f"Compares table DISTRIBUTED_BY. normalized_conn: {normalized_conn}, normalized_meta: {normalized_meta}")
+    logger.debug("Compares table DISTRIBUTED_BY. normalized_conn: %s, normalized_meta: %s", normalized_conn, normalized_meta)
 
     # Use generic comparison logic with default distribution
     changed = _compare_single_table_attribute(
@@ -1694,7 +1694,7 @@ def _compare_table_order_by(
     # Normalize both for comparison (handles backticks and list vs string)
     normalized_conn: Optional[str] = TableAttributeNormalizer.normalize_order_by_string(conn_order) if conn_order else None
     normalized_meta: Optional[str] = TableAttributeNormalizer.normalize_order_by_string(meta_order) if meta_order else None
-    logger.debug(f"Compares table ORDERY BY. normalized_conn: {normalized_conn}, normalized_meta: {normalized_meta}")
+    logger.debug("Compares table ORDERY BY. normalized_conn: %s, normalized_meta: %s", normalized_conn, normalized_meta)
 
     # if ORDER BY is not set, we directly recoginize it as no change
     if not normalized_meta:
@@ -1753,11 +1753,11 @@ def _compare_table_properties_impl(
     """
     conn_properties: Dict[str, str] = conn_table_attributes.get(TableInfoKey.PROPERTIES, {})
     meta_properties: Dict[str, str] = meta_table_attributes.get(TableInfoKey.PROPERTIES, {})
-    logger.debug(f"Compares {object_label.lower()} PROPERTIES. conn_properties: {conn_properties}, meta_properties: {meta_properties}")
+    logger.debug("Compares %s PROPERTIES. conn_properties: %s, meta_properties: %s", object_label.lower(), conn_properties, meta_properties)
 
     normalized_conn = CaseInsensitiveDict(conn_properties)
     normalized_meta = CaseInsensitiveDict(meta_properties)
-    # logger.debug(f"PROPERTIES. normalized_conn: {normalized_conn}, normalized_meta: {normalized_meta}")
+    # logger.debug("PROPERTIES. normalized_conn: %s, normalized_meta: %s", normalized_conn, normalized_meta)
 
     properties_to_set = {}
     properties_for_reverse = {}
@@ -1781,10 +1781,10 @@ def _compare_table_properties_impl(
         effective_meta_str = meta_str if meta_str is not None else default_str
 
         if effective_conn_str == effective_meta_str:
-            logger.debug(f"Property no changes. key: {key}, effective_conn_str: {effective_conn_str}, effective_meta_str: {effective_meta_str}")
+            logger.debug("Property no changes. key: %s, effective_conn_str: %s, effective_meta_str: %s", key, effective_conn_str, effective_meta_str)
             continue
 
-        logger.debug(f"Property changes. key: {key}, effective_conn_str: {effective_conn_str}, effective_meta_str: {effective_meta_str}")
+        logger.debug("Property changes. key: %s, effective_conn_str: %s, effective_meta_str: %s", key, effective_conn_str, effective_meta_str)
         if meta_value is None:
             if default_value is None:
                 # Scenario 1: Implicit deletion of a property with no default.
@@ -1812,7 +1812,7 @@ def _compare_table_properties_impl(
             if add_default_prefix and TablePropertyForFuturePartitions.contains(key)
             else key
         )
-        # logger.debug(f"Newly changed property. prop_key: '{prop_key}', target_val_upgrade: '{target_val_upgrade}'")
+        # logger.debug("Newly changed property. prop_key: %r, target_val_upgrade: %r", prop_key, target_val_upgrade)
         properties_to_set[prop_key] = target_val_upgrade
         # A meaningful change has been detected for this property.
         logger.info(
@@ -1854,7 +1854,7 @@ def _compare_table_properties(
                 reverse_properties=properties_for_reverse,
             )
         )
-        logger.debug(f"Detected properties change for table {table_fqn!r}")
+        logger.debug("Detected properties change for table %r", table_fqn)
 
 
 def _compare_single_table_attribute(
@@ -2012,7 +2012,7 @@ def compare_starrocks_column_agg_type(
     meta_opts = extract_dialect_options_as_case_insensitive(metadata_col)
     conn_agg_type: Union[str, None] = conn_opts.get(ColumnAggInfoKey.AGG_TYPE)
     meta_agg_type: Union[str, None] = meta_opts.get(ColumnAggInfoKey.AGG_TYPE)
-    # logger.debug(f"Compares column AGG_TYPE. conn_agg_type: {conn_agg_type}, meta_agg_type: {meta_agg_type}")
+    # logger.debug("Compares column AGG_TYPE. conn_agg_type: %s, meta_agg_type: %s", conn_agg_type, meta_agg_type)
 
     if meta_agg_type != conn_agg_type:
         # Update the alter_column_op with the new aggregate type. useless now

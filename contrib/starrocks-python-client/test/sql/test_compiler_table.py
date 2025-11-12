@@ -133,7 +133,7 @@ class TestCreateTableCompiler:
                     Column('k1', Integer),
                     Column('v1', Integer, **{ColumnAggInfoKeyWithPrefix.AGG_TYPE: ColumnAggType.SUM}),
                     Column('v2', String(50), **{ColumnAggInfoKeyWithPrefix.AGG_TYPE: ColumnAggType.REPLACE}),
-                    starrocks_aggregate_key='k1')
+                    starrocks_AGGREGATE_KEY='k1')
         sql = self._compile_table(tbl)
         expected = """
             CREATE TABLE agg_tbl(

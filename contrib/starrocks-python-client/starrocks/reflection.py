@@ -221,7 +221,7 @@ class StarRocksTableDefinitionParser(object):
                 "name": None,
             }],
         )
-        logger.debug(f"reflected table info for table: {table.TABLE_NAME}, info: {reflected_table_info}")
+        logger.debug("reflected table info for table: %r, info: '%s'", table.TABLE_NAME, reflected_table_info)
         return reflected_table_info
 
     def _parse_column(self, column: _DecodingRow, **kwargs: Any) -> dict:
@@ -233,8 +233,8 @@ class StarRocksTableDefinitionParser(object):
             column: A row from `information_schema.columns`.
             kwargs: Additional keyword arguments, with prefix `starrocks_`, passed to the dialect.
                 currently only support:
-                    - starrocks_IS_AGG_KEY: Whether the column is a key column.
-                    - starrocks_AGG_TYPE: The aggregate type of the column.
+                    - starrocks_is_agg_key: Whether the column is a key column.
+                    - starrocks_agg_type: The aggregate type of the column.
 
         Returns:
             A dictionary with column information expected by sqlalchemy.
@@ -278,7 +278,7 @@ class StarRocksTableDefinitionParser(object):
                 type_ = column.COLUMN_TYPE
 
             util.warn(
-                "Did not recognize type '%s' of column '%s'" % (type_, column.COLUMN_NAME)
+                "Did not recognize type '%s' of column %r" % (type_, column.COLUMN_NAME)
             )
             return sqltypes.NullType
 
@@ -434,7 +434,7 @@ class StarRocksTableDefinitionParser(object):
         if not table_row:
             return opts
         if table_row.TABLE_COMMENT:
-            logger.debug(f"table.TABLE_COMMENT: {table_row.TABLE_COMMENT}")
+            logger.debug("table.TABLE_COMMENT: %s", table_row.TABLE_COMMENT)
             opts[TableInfoKeyWithPrefix.COMMENT] = table_row.TABLE_COMMENT
         return opts
 
@@ -444,26 +444,26 @@ class StarRocksTableDefinitionParser(object):
         This logic is shared between table and materialized view reflection.
         """
         table_fqn = utils.gen_simple_qualified_name(table_name, schema)
-        logger.debug(f"parse general table options for table: {table_fqn}.")
+        logger.debug("parse general table options for table: %r.", table_fqn)
 
         opts = {}
         if partition_clause := table_config.get(TableConfigKey.PARTITION_CLAUSE):
-            logger.debug(f"table_config.{TableConfigKey.PARTITION_CLAUSE}: {partition_clause}")
+            logger.debug("table_config.%s: %s", TableConfigKey.PARTITION_CLAUSE, partition_clause)
             opts[TableInfoKeyWithPrefix.PARTITION_BY] = self.parse_partition_clause(partition_clause)
 
         distribute_key = table_config.get(TableConfigKey.DISTRIBUTE_KEY)
         distribute_type = table_config.get(TableConfigKey.DISTRIBUTE_TYPE)
         if distribute_key or distribute_type:
-            logger.debug(f"table_config.{TableConfigKey.DISTRIBUTE_KEY}: {distribute_key}")
-            logger.debug(f"table_config.{TableConfigKey.DISTRIBUTE_TYPE}: {distribute_type}")
+            logger.debug("table_config.%s: %s", TableConfigKey.DISTRIBUTE_KEY, distribute_key)
+            logger.debug("table_config.%s: %s", TableConfigKey.DISTRIBUTE_TYPE, distribute_type)
             opts[TableInfoKeyWithPrefix.DISTRIBUTED_BY] = str(self._get_distribution_info(table_config))
 
         if sort_key := table_config.get(TableConfigKey.SORT_KEY):
-            logger.debug(f"table_config.{TableConfigKey.SORT_KEY}: {sort_key}")
+            logger.debug("table_config.%s: %s", TableConfigKey.SORT_KEY, sort_key)
             opts[TableInfoKeyWithPrefix.ORDER_BY] = sort_key
 
         if properties := table_config.get(TableConfigKey.PROPERTIES):
-            logger.debug(f"table_config.{TableConfigKey.PROPERTIES}: {properties}")
+            logger.debug("table_config.%s: %s", TableConfigKey.PROPERTIES, properties)
             try:
                 opts[TableInfoKeyWithPrefix.PROPERTIES] = dict(json.loads(properties or "{}").items())
             except json.JSONDecodeError:
@@ -493,13 +493,13 @@ class StarRocksTableDefinitionParser(object):
         """
         opts = self._parse_common_table_options(table)
         table_fqn = utils.gen_simple_qualified_name(table_name, schema)
-        logger.debug(f"parse table options for table: {table_fqn}.")
+        logger.debug("parse table options for table: %r.", table_fqn)
 
         # Set partition, distribution, sort key, properties
         opts.update(self._parse_general_table_options(table_name, schema, table_config))
 
         if table_engine := table_config.get(TableConfigKey.TABLE_ENGINE):
-            logger.debug(f"table_config.{TableConfigKey.TABLE_ENGINE}: {table_engine}")
+            logger.debug("table_config.%s: %s", TableConfigKey.TABLE_ENGINE, table_engine)
             # if table_engine.upper() != TableEngine.OLAP:
             #     raise NotImplementedError(f"Table engine {table_engine} is not supported now.")
             opts[TableInfoKeyWithPrefix.ENGINE] = table_engine.upper()
@@ -507,7 +507,7 @@ class StarRocksTableDefinitionParser(object):
         # Get key type from information_schema.tables_config.TABLE_MODEL,
         # and key columns from information_schema.columns.COLUMN_KEY
         if table_model := table_config.get(TableConfigKey.TABLE_MODEL):
-            logger.debug(f"table_config.{TableConfigKey.TABLE_MODEL}: {table_model}")
+            logger.debug("table_config.%s: %s", TableConfigKey.TABLE_MODEL, table_model)
             # convert to key string, such as "PRIMARY_KEY", not PRIMARY KEY"
             key_str = TableInfoKey.MODEL_TO_KEY_MAP.get(table_model)
             if key_str:
@@ -584,10 +584,10 @@ class StarRocksTableDefinitionParser(object):
 
         if match:
             security_type = match.group(1).upper()
-            # logger.debug(f"Parsed SECURITY: {security_type} from CREATE VIEW: {create_view_sql[:200]}")
+            # logger.debug("Parsed SECURITY: %s from CREATE VIEW: %s", security_type, create_view_sql[:200])
             return security_type
         else:
-            logger.debug(f"No SECURITY match in CREATE VIEW: {create_view_sql[:200] if create_view_sql else 'None'}")
+            logger.debug("No SECURITY match in CREATE VIEW: %s", create_view_sql[:200] if create_view_sql else 'None')
 
         return None
 
@@ -610,7 +610,7 @@ class StarRocksTableDefinitionParser(object):
         """
         ddl = mv_row.MATERIALIZED_VIEW_DEFINITION.strip()
         mv_fqn = utils.gen_simple_qualified_name(mv_row.TABLE_NAME, mv_row.TABLE_SCHEMA)
-        logger.debug(f"mv create ddl for {mv_fqn}: {ddl}")
+        logger.debug("mv create ddl for %r: %s", mv_fqn, ddl)
 
         mv_name, schema = mv_row.TABLE_NAME, mv_row.TABLE_SCHEMA
         # 1. Parse the DDL to get properties that are only available there.
@@ -666,7 +666,7 @@ class StarRocksTableDefinitionParser(object):
             refresh_text_match = self._MV_REFRESH_PATTERN.search(clauses_str)
             if refresh_text_match:
                 refresh_clause_str = refresh_text_match.group(0).strip()
-                logger.debug(f"mv: {mv_name}, refresh_clause: {refresh_clause_str!r}")
+                logger.debug("mv: %r, refresh_clause: %r", mv_name, refresh_clause_str)
                 parsed_refresh = parse_mv_refresh_clause(refresh_clause_str)
                 state.table_options[TableInfoKeyWithPrefix.REFRESH] = ReflectedRefreshInfo(
                     moment=parsed_refresh.get("refresh_moment"),

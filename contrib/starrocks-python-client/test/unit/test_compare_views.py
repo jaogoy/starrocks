@@ -769,7 +769,7 @@ class TestViewExceptions:
         # Should not raise any exception
         view = View('user_view', m, definition=stmt)
         assert view.definition is not None
-        assert 'SELECT' in view.definition.upper()
+        assert 'select' in view.definition.lower()
 
     def test_view_columns_parameter_compatibility(self):
         """Test that both columns parameter styles work correctly."""

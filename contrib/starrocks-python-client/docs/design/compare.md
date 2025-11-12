@@ -87,7 +87,7 @@ The `sqlalchemy-starrocks` dialect hooks into this dispatch process by registeri
 
 ### Accessing Dialect-Specific Options
 
-A key implementation detail is how SQLAlchemy handles dialect-specific keyword arguments (like `starrocks_PARTITION_BY`). Whether a `Table` object is created by the user (e.g., `Table('my_table', metadata, starrocks_PARTITION_BY=...)`, or ORM style) or reflected from the database by the inspector, SQLAlchemy normalizes these options.
+A key implementation detail is how SQLAlchemy handles dialect-specific keyword arguments (like `starrocks_partition_by`). Whether a `Table` object is created by the user (e.g., `Table('my_table', metadata, starrocks_partition_by=...)`, or ORM style) or reflected from the database by the inspector, SQLAlchemy normalizes these options.
 
 All `starrocks_` prefixed arguments are collected and stored in a dictionary accessible via `table.dialect_options['starrocks']`.
 
@@ -112,6 +112,6 @@ This provides the custom comparator functions with a single, consistent location
 
 - **`compare_view(...)`**: Registered for the `"view"` type. It compares the `SELECT` definition of views.
 - **`compare_mv(...)`**: Registered for the `"materialized_view"` type.
-- **`compare_starrocks_column(...)`**: Registered for the `"column"` type. It retrieves StarRocks-specific column-level attributes from the `column.dialect_options['starrocks']` dictionary, like `starrocks_AGG_TYPE` (aggregate type) for `AGGREGATE KEY` tables. Other column properties are still handled by Alembic's generic comparator.
+- **`compare_starrocks_column(...)`**: Registered for the `"column"` type. It retrieves StarRocks-specific column-level attributes from the `column.dialect_options['starrocks']` dictionary, like `starrocks_agg_type` (aggregate type) for `AGGREGATE KEY` tables. Other column properties are still handled by Alembic's generic comparator.
 
 By implementing these functions, the dialect ensures that StarRocks-specific schema features are correctly compared during the `autogenerate` process.

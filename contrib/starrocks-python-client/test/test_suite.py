@@ -304,8 +304,8 @@ class StarRocksReflectionTest(fixtures.TestBase):
         if key_type == "PRIMARY":
             for c in key_columns:
                 eq_(reflected_table.columns[c].nullable, False)
-        eq_(reflected_table.dialect_options["starrocks"][f"{key_type.upper()}_KEY"], f"{', '.join([f'{c}' for c in key_columns])}")
-        eq_(reflected_table.dialect_options["starrocks"]["DISTRIBUTED_BY"], "HASH(`id`)")
+        eq_(reflected_table.dialect_options["starrocks"][f"{key_type.lower()}_key"], f"{', '.join([f'{c}' for c in key_columns])}")
+        eq_(reflected_table.dialect_options["starrocks"][TableInfoKey.DISTRIBUTED_BY], "HASH(`id`)")
 
     @testing.combinations(["id"], ["id", "data"], argnames="partition_by")
     def test_partition_by_columns_reflection(self, connection, metadata, partition_by):

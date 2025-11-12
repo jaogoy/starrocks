@@ -75,11 +75,11 @@ class TableInfoKey:
     """Centralizes starrocks_ prefixed kwargs for Table objects. Clean names without prefix."""
 
     # Individual key kwargs for clarity
-    KEY = 'KEY'  # Not in the options, but used for comparison
-    PRIMARY_KEY = 'PRIMARY_KEY'
-    DUPLICATE_KEY = 'DUPLICATE_KEY'
-    AGGREGATE_KEY = 'AGGREGATE_KEY'
-    UNIQUE_KEY = 'UNIQUE_KEY'
+    KEY = 'key'  # Not in the options, but used for comparison
+    PRIMARY_KEY = 'primary_key'
+    DUPLICATE_KEY = 'duplicate_key'
+    AGGREGATE_KEY = 'aggregate_key'
+    UNIQUE_KEY = 'unique_key'
 
     # Key type kwargs and their mapping to DDL strings
     KEY_KWARG_MAP = {
@@ -100,17 +100,17 @@ class TableInfoKey:
     }
 
     # Other table-level kwargs
-    ENGINE = 'ENGINE'
-    COMMENT = 'COMMENT'
-    PARTITION_BY = 'PARTITION_BY'
-    DISTRIBUTED_BY = 'DISTRIBUTED_BY'
-    BUCKETS = 'BUCKETS'
-    ORDER_BY = 'ORDER_BY'
-    PROPERTIES = 'PROPERTIES'
+    ENGINE = 'engine'
+    COMMENT = 'comment'
+    PARTITION_BY = 'partition_by'
+    DISTRIBUTED_BY = 'distributed_by'
+    BUCKETS = 'buckets'
+    ORDER_BY = 'order_by'
+    PROPERTIES = 'properties'
     # for view only
-    SECURITY = 'SECURITY'
+    SECURITY = 'security'
     # for MV only
-    REFRESH = 'REFRESH'
+    REFRESH = 'refresh'
 
 
 TableInfoKey.ALL = {
@@ -125,8 +125,8 @@ class ColumnAggInfoKey:
     - AGG_TYPE: specify the aggregate function for value columns (see ColumnAggType).
     """
 
-    IS_AGG_KEY = "IS_AGG_KEY"
-    AGG_TYPE = "AGG_TYPE"
+    IS_AGG_KEY = "is_agg_key"
+    AGG_TYPE = "agg_type"
 
 
 ColumnAggInfoKey.ALL = {
@@ -138,10 +138,10 @@ class TableInfoKeyWithPrefix:
     """Centralizes starrocks_ prefixed kwargs for Table objects. Full prefixed names."""
 
     # Individual key kwargs for clarity
-    PRIMARY_KEY = 'starrocks_PRIMARY_KEY'
-    DUPLICATE_KEY = 'starrocks_DUPLICATE_KEY'
-    AGGREGATE_KEY = 'starrocks_AGGREGATE_KEY'
-    UNIQUE_KEY = 'starrocks_UNIQUE_KEY'
+    PRIMARY_KEY = 'starrocks_primary_key'
+    DUPLICATE_KEY = 'starrocks_duplicate_key'
+    AGGREGATE_KEY = 'starrocks_aggregate_key'
+    UNIQUE_KEY = 'starrocks_unique_key'
 
     # Key type kwargs and their mapping to DDL strings
     KEY_KWARG_MAP = {
@@ -152,17 +152,17 @@ class TableInfoKeyWithPrefix:
     }
 
     # Other table-level kwargs
-    ENGINE = 'starrocks_ENGINE'
-    COMMENT = 'starrocks_COMMENT'
-    PARTITION_BY = 'starrocks_PARTITION_BY'
-    DISTRIBUTED_BY = 'starrocks_DISTRIBUTED_BY'
-    BUCKETS = 'starrocks_BUCKETS'
-    ORDER_BY = 'starrocks_ORDER_BY'
-    PROPERTIES = 'starrocks_PROPERTIES'
+    ENGINE = 'starrocks_engine'
+    COMMENT = 'starrocks_comment'
+    PARTITION_BY = 'starrocks_partition_by'
+    DISTRIBUTED_BY = 'starrocks_distributed_by'
+    BUCKETS = 'starrocks_buckets'
+    ORDER_BY = 'starrocks_order_by'
+    PROPERTIES = 'starrocks_properties'
     # for view only
-    SECURITY = 'starrocks_SECURITY'
+    SECURITY = 'starrocks_security'
     # for MV only
-    REFRESH = 'starrocks_REFRESH'
+    REFRESH = 'starrocks_refresh'
 
 
 TableInfoKeyWithPrefix.ALL = {
@@ -197,8 +197,8 @@ class ColumnAggInfoKeyWithPrefix:
     - AGG_TYPE: specify the aggregate function for value columns (see ColumnAggType).
     """
 
-    IS_AGG_KEY = "starrocks_IS_AGG_KEY"
-    AGG_TYPE = "starrocks_AGG_TYPE"
+    IS_AGG_KEY = "starrocks_is_agg_key"
+    AGG_TYPE = "starrocks_agg_type"
 
 
 ColumnAggInfoKeyWithPrefix.ALL = {

@@ -32,10 +32,16 @@ logger = logging.getLogger(__name__)
 
 def _extract_starrocks_dialect_kwargs(kwargs: dict) -> dict:
     """
-    Return only StarRocks dialect kwargs that start with the SRKwargsPrefix (e.g., 'starrocks_').
-    Non-prefixed kwargs are filtered out and not stored as dialect kwargs.
+    Return only StarRocks dialect kwargs that start with the SRKwargsPrefix (e.g., 'starrocks_'),
+    and normalize the suffix (after the prefix) to lowercase.
+
+    Notes:
+    - The 'starrocks_' prefix is required to be lowercase and matched case-sensitively.
+    - The attribute part after the prefix is normalized to lowercase, so both
+      'starrocks_PARTITION_BY' and 'starrocks_partition_by' are accepted and stored as
+      'starrocks_partition_by'.
     """
-    return {k: v for k, v in kwargs.items() if isinstance(k, str) and k.startswith(SRKwargsPrefix)}
+    return {k.lower(): v for k, v in kwargs.items() if k.startswith(SRKwargsPrefix)}
 
 
 def _columns_dicts_to_column_objects(columns: Union[List[Dict], None]) -> List:
@@ -280,7 +286,7 @@ class DropViewOp(ops.MigrateOperation):
         self.reverse_definition = reverse_definition
         self.reverse_columns = reverse_columns
         self.reverse_comment = reverse_comment
-        self.kwargs = kwargs
+        self.kwargs = _extract_starrocks_dialect_kwargs(kwargs)
 
     def to_view(self, metadata: Optional[MetaData] = None) -> "View":
         """Create a View object for DROP VIEW operation.

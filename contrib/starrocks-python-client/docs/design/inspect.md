@@ -34,7 +34,7 @@ For information that is not available in `information_schema` (such as StarRocks
 
 For `AGGREGATE KEY` tables, the aggregate type of each column is not available in `information_schema`. The dialect discovers this information by parsing the `Type` field from the output of `SHOW FULL COLUMNS FROM <table>`.
 
-This parsed aggregate type is then passed into the constructor for the reflected `Column` object as a `starrocks_AGG_TYPE` keyword argument. Because `Column` is also a `DialectKWArgs` object (like a `Table`), SQLAlchemy automatically normalizes this into the `column.dialect_options['starrocks']` dictionary, making it available for the `compare` process.
+This parsed aggregate type is then passed into the constructor for the reflected `Column` object as a `starrocks_agg_type` keyword argument. Because `Column` is also a `DialectKWArgs` object (like a `Table`), SQLAlchemy automatically normalizes this into the `column.dialect_options['starrocks']` dictionary, making it available for the `compare` process.
 
 ### Parsing DDL into Structured Objects
 

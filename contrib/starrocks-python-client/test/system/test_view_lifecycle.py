@@ -193,7 +193,7 @@ def test_alter_view_comment_and_security(
         'user',
         AlteredBase.metadata,
         Column('id', INTEGER, primary_key=True),
-        starrocks_PROPERTIES={'replication_num': '1'}
+        starrocks_properties={'replication_num': '1'}
     )
     View(
         'user_view',
@@ -294,7 +294,7 @@ def test_drop_view(database: str, alembic_env: AlembicTestEnv, sr_engine):
         'user',
         Base.metadata,
         Column('id', INTEGER, primary_key=True),
-        starrocks_PROPERTIES={'replication_num': '1'}
+        starrocks_properties={'replication_num': '1'}
     )
     View('user_view', Base.metadata, definition='SELECT id FROM user')
     alembic_env.harness.generate_autogen_revision(metadata=Base.metadata, message="Initial")

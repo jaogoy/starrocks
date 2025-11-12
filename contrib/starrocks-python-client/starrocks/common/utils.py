@@ -73,7 +73,7 @@ class CaseInsensitiveDict(dict):
 
 
 def extract_dialect_options_as_case_insensitive(
-    table: sa_schema.Table
+    table: Union[sa_schema.Table, sa_schema.Column]
 ) -> CaseInsensitiveDict:
     """
     Extract StarRocks dialect-specific options and return as a CaseInsensitiveDict.
