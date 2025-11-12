@@ -403,7 +403,7 @@ class PageViewAggregates(Base):
 
 ## Integration with Alembic
 
-The `sqlalchemy-starrocks` dialect integrates with Alembic to support autogeneration of schema migrations. When you run `alembic revision --autogenerate`, it will compare both the table-level and column-level attributes (mainly for `starrocks_` prefixed attributes) against the database and generate the appropriate DDL.
+The `starrocks-sqlalchemy` dialect integrates with Alembic to support autogeneration of schema migrations. When you run `alembic revision --autogenerate`, it will compare both the table-level and column-level attributes (mainly for `starrocks_` prefixed attributes) against the database and generate the appropriate DDL.
 
 **To ensure Alembic correctly recognizes StarRocks column types during autogeneration, you need to configure your `env.py` file and model definitions as follows:**
 

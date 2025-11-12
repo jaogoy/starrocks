@@ -700,6 +700,7 @@ def test_alter_table_column_only(database: str, alembic_env: AlembicTestEnv, sr_
     wait_for_alter_table_column_or_optimization(sr_engine, "t_alter_only", "COLUMN")
     # 4. Verify in DB and then downgrade
     inspector = inspect(sr_engine)
+    inspector.clear_cache()
     columns = inspector.get_columns("t_alter_only")
     for col in columns:
         if col['name'] == 'col_to_modify':

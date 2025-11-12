@@ -1,23 +1,23 @@
 # Defining and Managing Views with SQLAlchemy and Alembic
 
-This document describes how to define, create, and manage database views in StarRocks using the `sqlalchemy-starrocks` dialect and Alembic.
+This document describes how to define, create, and manage database views in StarRocks using the `starrocks-sqlalchemy` dialect and Alembic.
 
 ## Defining a View
 
-To define a view, you use the `starrocks.sql.schema.View` object. This object captures the name, schema, and definition of the view.
+To define a view, you use the `starrocks.schema.View` object. This object captures the name, schema, and definition of the view.
 
 ### Syntax
 
 ```python
-from starrocks.sql.schema import View
 from sqlalchemy import MetaData, Column, select
+from starrocks.schema import View
 from starrocks.datatype import INTEGER, VARCHAR
 
 metadata = MetaData()
 
 # Basic view
-my_view = View(
-    "my_view",
+basic_view = View(
+    "basic_view",
     metadata,
     definition="SELECT id, name, salary FROM employees WHERE department = 'Sales'",
     schema="my_schema",
@@ -34,7 +34,7 @@ detailed_view = View(
     definition="SELECT product, SUM(amount), date FROM sales GROUP BY product, date",
     schema="my_schema",
     comment="A view to aggregate sales data by product.",
-    security="INVOKER",
+    starrocks_security="INVOKER",
 )
 
 # View with column aliases (simplified styles)
@@ -68,10 +68,16 @@ secure_view = View(
 # View from SQLAlchemy Selectable
 users = Table('users', metadata, Column('id', INTEGER), Column('name', VARCHAR(50)))
 stmt = select(users.c.id, users.c.name).where(users.c.id > 100)
-active_users_view = View("active_users", metadata, definition=stmt)
+active_users_view = View(
+    "active_users",
+    metadata,
+    definition=stmt
+)
 ```
 
 The `View` object is the primary way to define a database view in your Python code. Once defined, the view is automatically registered with the `metadata.tables` collection.
+
+> Info: `View` is simply a wrapper of `Table`.
 
 ### `View` Parameters
 
@@ -84,13 +90,13 @@ The `View` object is the primary way to define a database view in your Python co
 - **`columns`** (`Optional[List[str | dict]]`): Alternative way to specify column aliases. Three formats supported:
   - List of strings: `['col1', 'col2']` - column names only
   - List of dicts: `[{'name': 'col1', 'comment': 'Comment'}, ...]` - column names with optional comments
-  - Not specified: column names inferred from SELECT statement
+  - Not specified: column names inferred from `Column`s if specified in `*args`.
 - **`starrocks_security`** (`Optional[str]`): Defines the SQL security context. Can be set to `'INVOKER'` or `'NONE'`.
-  > **Note**: StarRocks does **not** support `'DEFINER'`. Only `'INVOKER'` and `'NONE'` are supported.
+  > **Note**: StarRocks does **not** support `'DEFINER'`. Only `'INVOKER'` and `'NONE'` are supported now.
 
 ## Alembic Integration
 
-The `sqlalchemy-starrocks` dialect allows you to manage views within your Alembic migrations. There are two primary workflows: using autogenerate or writing migrations manually.
+The `starrocks-sqlalchemy` dialect allows you to manage views within your Alembic migrations. There are two primary workflows: using autogenerate or writing migrations manually.
 
 Alembic's `--autogenerate` feature is supported for views. When you define a `View` object and associate it with your `MetaData` object, Alembic will detect it and automatically generate the `create_view` and `drop_view` operations in your migration scripts.
 
@@ -100,7 +106,7 @@ This approach is ideal for keeping your view definitions in your Python codebase
 
 1. **Define a `View` Object**: As shown in the syntax example above, define your `View` and associate it with your `MetaData` object.
 
-2. **Generate the Migration**: Run `alembic revision --autogenerate -m "add detailed_sales_view"`. Alembic will detect the new view and automatically generate a migration script containing `op.create_view()` for the `upgrade` and `op.drop_view()` for the `downgrade`.
+2. **Generate the Migration**: Run `alembic revision --autogenerate -m "add detailed_sales_view"`. Alembic will detect the new view and automatically generate a migration script containing `op.create_view()` for the `upgrade` and `op.drop_view()` for the `downgrade`, or `op.alter_view()` when a same-named view exists with mutable differences.
 
 ### Method 2: Manually Writing Migration Scripts
 
@@ -112,15 +118,14 @@ from alembic import op
 from starrocks.alembic import ops
 
 def upgrade():
-    view = ops.CreateViewOp(
-        "my_view",
+    op.create_view(
+        "basic_view",
         "SELECT id, name, salary FROM employees WHERE department = 'Sales'",
         schema="my_schema"
     )
-    op.create_view(view)
 
 def downgrade():
-    op.drop_view(ops.DropViewOp("my_view", schema="my_schema"))
+    op.drop_view("basic_view", schema="my_schema")
 ```
 
 When you run `alembic upgrade head`, Alembic will execute this script to create the view.
@@ -131,17 +136,24 @@ No matter whether using `--autogenerate` to create the `upgrade`/`downgrade` scr
 
 ## Important Considerations
 
-### Temporary Note on Object Registration
-
-Please be aware that the current method for registering a `View` with SQLAlchemy's `MetaData` is by using `metadata.add_object(my_view)`. This approach is a temporary solution and may be subject to change in future versions as the integration with SQLAlchemy's core reflection mechanisms is improved.
-
 ### `information_schema.views` and SECURITY TYPE
 
 Please be aware of the following limitation when working with `information_schema.views`:
 
-- Currently, `information_schema.views` does not return information for views that have their `SECURITY` type set to `INVOKER`.
-- Information is only returned for views where the `SECURITY` type is set to `NONE`.
+Currently, `information_schema.views` does not return information for views that have their `SECURITY` type set to `INVOKER`.
+So, we extract the SECURITY info from MV definition now.
 
 ### Modifying the SECURITY TYPE
 
 The `ALTER VIEW` statement in StarRocks **does not** support changing the `SECURITY` type of an existing view. If you need to change the security type, you must drop and recreate the view with the desired `SECURITY` type.
+
+### ALTER Support and Limitations
+
+- Only the following attribute can be altered for a View:
+  - **definition** (the SELECT statement). Column aliases change is allowed only together with definition.
+- The following attributes are not supported to be altered by StarRocks:
+  - comment
+  - security
+  - columns-only change (without definition change)
+
+Autogenerate will warn or raise for immutable changes instead of producing ALTER statements. Decide explicitly (usually DROP + CREATE) for those cases.

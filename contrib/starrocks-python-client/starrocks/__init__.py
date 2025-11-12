@@ -45,7 +45,7 @@ from .datatype import (
     VARBINARY,
     VARCHAR,
 )
-from .sql import schema
+from .sql import schema  # noqa: F401
 
 
 __all__ = (
@@ -55,6 +55,4 @@ __all__ = (
     "CHAR", "VARCHAR", "STRING", "BINARY", "VARBINARY",
     "HLL", "BITMAP", "PERCENTILE",
     "ARRAY", "MAP", "STRUCT", "JSON",
-
-    "schema",
 )

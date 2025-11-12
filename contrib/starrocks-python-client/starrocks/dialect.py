@@ -56,7 +56,6 @@ from starrocks.common.params import (
     ColumnAggInfoKey,
     ColumnAggInfoKeyWithPrefix,
     DialectName,
-    SRKwargsPrefix,
     TableInfoKey,
     TableInfoKeyWithPrefix,
     TableKind,

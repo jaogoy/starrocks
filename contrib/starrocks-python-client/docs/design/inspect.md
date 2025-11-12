@@ -1,6 +1,6 @@
 # Database Introspection Design
 
-This document outlines the design of the database introspection (or reflection) process in the `sqlalchemy-starrocks` dialect. Introspection is the process of examining a live database to determine the schema of its tables, views, and other objects.
+This document outlines the design of the database introspection (or reflection) process in the `starrocks-sqlalchemy` dialect. Introspection is the process of examining a live database to determine the schema of its tables, views, and other objects.
 
 ## Strategy
 

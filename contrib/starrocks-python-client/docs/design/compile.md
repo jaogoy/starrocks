@@ -1,6 +1,6 @@
 # DDL Compilation Design
 
-This document describes the DDL (Data Definition Language) compilation process in the `sqlalchemy-starrocks` dialect. Compilation is the process of converting SQLAlchemy's abstract schema objects (like `Table`, `Column`, `View`, and `Materialized View`) into StarRocks-specific SQL strings.
+This document describes the DDL (Data Definition Language) compilation process in the `starrocks-sqlalchemy` dialect. Compilation is the process of converting SQLAlchemy's abstract schema objects (like `Table`, `Column`, `View`, and `Materialized View`) into StarRocks-specific SQL strings.
 
 ## `StarRocksDDLCompiler`
 
@@ -17,9 +17,9 @@ The `ddl_compiler` is registered with the dialect and is automatically invoked b
   - **Aggregate Types**: For `AGGREGATE KEY` tables, it appends the aggregate function (e.g., `SUM`, `REPLACE`) to the column definition based on the attributes in `column.dialect_options['starrocks']`.
   - **StarRocks Data Types**: It ensures that StarRocks-specific data types like `BITMAP` and `HLL` are compiled correctly.
 
-- **`visit_create_view(self, create)`**: A custom visitor that compiles a `starrocks.sql.schema.View` object into a `CREATE VIEW` statement.
+- **`visit_create_view(self, create)`**: A custom visitor that compiles a `starrocks.schema.View` object into a `CREATE VIEW` statement.
 
-- **`visit_create_materialized_view(self, create)`**: A custom visitor that compiles a `starrocks.sql.schema.MaterializedView` object into a `CREATE MATERIALIZED VIEW` statement.
+- **`visit_create_materialized_view(self, create)`**: A custom visitor that compiles a `starrocks.schema.MaterializedView` object into a `CREATE MATERIALIZED VIEW` statement.
 
 ## How it Works
 

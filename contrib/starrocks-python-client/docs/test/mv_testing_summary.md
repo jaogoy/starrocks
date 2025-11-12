@@ -2,17 +2,16 @@
 
 ## Overall Status
 
-**Test Coverage**: 0/TBD tests (0%)
 **Status**: In-Development
 
 **Test Distribution**:
 
-- Schema & Compiler: TBD tests
-- Unit Tests (Compare): TBD tests
-- Unit Tests (Render): TBD tests
-- Integration (Reflection): TBD tests
-- Integration (Autogenerate): TBD tests
-- System (Lifecycle): TBD tests
+- Schema & Compiler
+- Unit Tests (Compare)
+- Unit Tests (Render)
+- Integration (Reflection)
+- Integration (Autogenerate)
+- System (Lifecycle)
 
 **Feature Coverage**:
 
@@ -31,7 +30,7 @@
 | Schema & Compiler    | `test/sql/test_compiler_mv.py`              | SQL Compilation     |
 | Unit - Ops & Compare | `test/unit/test_compare_mvs.py`             | Autogenerate Logic  |
 | Unit - Render        | `test/unit/test_render_mvs.py`              | Script Rendering    |
-| Reflection           | `test/integration/test_reflection_mvs.py`   | Database Reflection |
+| Reflection           | `test/integration/test_reflection_mv.py`    | Database Reflection |
 | Integration          | `test/integration/test_autogenerate_mvs.py` | End-to-End          |
 | System               | `test/system/test_mv_lifecycle.py`          | Lifecycle Testing   |
 
@@ -123,7 +122,7 @@
 
 **Simple Cases**:
 
-- Definition change (triggers DROP/CREATE)
+- Definition change (NotImplementedError)
 
 **Coverage Cases** (Detecting attribute changes):
 
@@ -133,7 +132,7 @@
   - Partition by change
   - Distributed by change
   - Order by change
-- Comment change (should be ignored with a warning, as StarRocks does not support `ALTER MV ... COMMENT`)
+- Comment change (NotImplementedError, as StarRocks does not support `ALTER MV ... COMMENT`)
 
 ### No Change
 

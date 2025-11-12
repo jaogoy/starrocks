@@ -36,8 +36,8 @@ def main() -> None:
     with engine.connect() as conn:
         # Desired metadata state
         target_metadata = MetaData()
-        v = View("quickstart_view", "SELECT 1 AS c")
-        target_metadata.info.setdefault("views", {})[(v, None)] = v
+        # Register the view directly by binding it to metadata
+        View("quickstart_view", target_metadata, definition="SELECT 1 AS c")
 
         # Autogenerate against current DB
         mc = MigrationContext.configure(connection=conn)

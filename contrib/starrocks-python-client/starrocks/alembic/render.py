@@ -15,7 +15,7 @@
 import logging
 from typing import Any
 
-from alembic.autogenerate import render as alembic_render, renderers
+from alembic.autogenerate import renderers
 from alembic.autogenerate.api import AutogenContext
 from sqlalchemy.types import TypeEngine
 

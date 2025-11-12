@@ -232,6 +232,9 @@ To run the integration and system tests, you must have a running StarRocks clust
 
    ```SQL
    CREATE DATABASE IF NOT EXISTS test;
+
+   -- set it if you're testing cases on small shared-nothing clusters
+   ADMIN SET FRONTEND CONFIG ("default_replication_num" = "1");
    ```
 
 2. **Configure the connection URL:**

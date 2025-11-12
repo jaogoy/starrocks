@@ -153,7 +153,7 @@ Views support three ways to define columns (names and optional comments):
 
 ```python
 from sqlalchemy import MetaData, Column, select
-from starrocks.sql.schema import View, MaterializedView
+from starrocks.schema import View, MaterializedView
 from starrocks.datatype import INTEGER, VARCHAR
 
 metadata = MetaData()

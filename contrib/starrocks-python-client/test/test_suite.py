@@ -23,6 +23,7 @@ from sqlalchemy.testing import fixtures
 from sqlalchemy.testing.assertions import AssertsCompiledSQL, eq_
 # from sqlalchemy.testing.suite import *  # noqa: F403, I001
 
+from starrocks.common.params import TableInfoKey
 from starrocks.datatype import INTEGER, VARCHAR
 from test import test_utils
 
@@ -221,20 +222,20 @@ class StarRocksReflectionTest(fixtures.TestBase):
             eq_(reflected_table.columns[c].nullable, True)
             eq_(reflected_table.columns[c].default, None)
             eq_(reflected_table.columns[c].autoincrement, None)
-        logger.debug(f"reflected 'COMMENT': {reflected_table.dialect_options['starrocks']['COMMENT']}")
-        eq_(reflected_table.dialect_options["starrocks"]["COMMENT"], None)
+        logger.debug(f"reflected 'COMMENT': {reflected_table.dialect_options['starrocks']['comment']}")
+        eq_(reflected_table.dialect_options["starrocks"]["comment"], None)
         eq_(reflected_table.comment, None)
-        logger.debug(f"reflected 'DISTRIBUTED_BY': {reflected_table.dialect_options['starrocks']['DISTRIBUTED_BY']}")
-        # eq_(reflected_table.dialect_options["starrocks"]["DISTRIBUTED_BY"], "RANDOM")
-        logger.debug(f"reflected 'ENGINE': {reflected_table.dialect_options['starrocks']['ENGINE']}")
-        eq_(reflected_table.dialect_options["starrocks"]["ENGINE"], "OLAP")
+        logger.debug(f"reflected 'DISTRIBUTED_BY': {reflected_table.dialect_options['starrocks']['distributed_by']}")
+        # eq_(reflected_table.dialect_options["starrocks"]["distributed_by"], "RANDOM")
+        logger.debug(f"reflected 'ENGINE': {reflected_table.dialect_options['starrocks']['engine']}")
+        eq_(reflected_table.dialect_options["starrocks"]["engine"], "OLAP")
         # eq_(reflected_table.dialect_options["starrocks"]["key_desc"], "DUPLICATE KEY(`id`, `data`)")
-        logger.debug(f"reflected 'ORDER_BY': {reflected_table.dialect_options['starrocks']['ORDER_BY']}")
-        eq_(reflected_table.dialect_options["starrocks"]["ORDER_BY"], "`id`, `data`")
-        logger.debug(f"reflected 'PARTITION_BY': {reflected_table.dialect_options['starrocks']['PARTITION_BY']}")
-        eq_(reflected_table.dialect_options["starrocks"]["PARTITION_BY"], None)
-        logger.debug(f"reflected 'PROPERTIES': {reflected_table.dialect_options['starrocks']['PROPERTIES']}")
-        assert reflected_table.dialect_options["starrocks"]["PROPERTIES"]["compression"] == "LZ4"
+        logger.debug(f"reflected 'ORDER_BY': {reflected_table.dialect_options['starrocks']['order_by']}")
+        eq_(reflected_table.dialect_options["starrocks"]["order_by"], "`id`, `data`")
+        logger.debug(f"reflected 'PARTITION_BY': {reflected_table.dialect_options['starrocks']['partition_by']}")
+        eq_(reflected_table.dialect_options["starrocks"]["partition_by"], None)
+        logger.debug(f"reflected 'PROPERTIES': {reflected_table.dialect_options['starrocks']['properties']}")
+        assert reflected_table.dialect_options["starrocks"]["properties"]["compression"] == "LZ4"
 
     def test_comment_reflection(self, connection, metadata):
         tn = "test_starrocks_reflection_comment"

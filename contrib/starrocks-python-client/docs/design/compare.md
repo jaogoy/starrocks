@@ -1,6 +1,6 @@
 # Alembic Schema Comparison Design
 
-This document outlines the design of the schema comparison (or "diffing") process used by Alembic's `autogenerate` feature, focusing on the dispatch mechanism and how the `sqlalchemy-starrocks` dialect extends it.
+This document outlines the design of the schema comparison (or "diffing") process used by Alembic's `autogenerate` feature, focusing on the dispatch mechanism and how the `starrocks-sqlalchemy` dialect extends it.
 
 ## Alembic's `autogenerate` Workflow
 
@@ -22,7 +22,7 @@ This makes it critical for a dialect's comparator to first check if it's operati
 
 ### The `comparators_dispatch_for_starrocks` Decorator
 
-To solve this, the `sqlalchemy-starrocks` dialect uses a custom decorator, `comparators_dispatch_for_starrocks`. This is a wrapper around Alembic's standard `@comparators.dispatch_for` that adds a crucial check at the beginning of each comparator function:
+To solve this, the `starrocks-sqlalchemy` dialect uses a custom decorator, `comparators_dispatch_for_starrocks`. This is a wrapper around Alembic's standard `@comparators.dispatch_for` that adds a crucial check at the beginning of each comparator function:
 
 ```python
 if autogen_context.dialect.name != "starrocks":
@@ -81,7 +81,7 @@ Here is a flowchart illustrating the nested dispatch process:
 
 ## StarRocks Dialect Extensions
 
-The `sqlalchemy-starrocks` dialect hooks into this dispatch process by registering its own set of comparators in the `starrocks.alembic.compare` module.
+The `starrocks-sqlalchemy` dialect hooks into this dispatch process by registering its own set of comparators in the `starrocks.alembic.compare` module.
 
 > To remove the impaction on other type of databases when there are several Alembic plugins be use, we use a custom decorator, which will only handle for StarRocks dialect.
 

@@ -1,8 +1,6 @@
 # Alembic Integration for Schema Management
 
-Alembic is a database migration tool for SQLAlchemy that allows you to manage changes to your database schema over time. This StarRocks dialect extends Alembic to support automated schema migrations for Tables, Views, and Materialized Views.
-
-> Views and Materialized Views will be supported in the near future.
+Alembic is a database migration tool for SQLAlchemy that allows you to manage changes to your database schema over time. This StarRocks dialect extends Alembic to support automated schema migrations for Tables, Views, and Materialized Views. Views and Materialized Views are supported via autogenerate when you configure `include_object_for_view_mv` (or `combine_include_object`) and `render_item=render_column_type`.
 
 ## 1. Create and configure your Alembic project
 
@@ -221,7 +219,7 @@ Define Views and Materialized Views using the provided `View` and `MaterializedV
 ```python
 # models_view.py
 from sqlalchemy import Column, MetaData
-from starrocks.sql.schema import View, MaterializedView
+from starrocks.schema import View, MaterializedView
 from starrocks.datatype import INTEGER, VARCHAR
 
 from . import models
