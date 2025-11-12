@@ -217,6 +217,7 @@ class ReflectedCKInfo(TypedDict):
 class ReflectedTableKeyInfo:
     """
     Stores structed reflection information about a table' key/type.
+    Such as `PRIMARY KEY (id, name)`, `UNIQUE KEY (id, name)`, `DUPLICATE KEY (id, name)`.
 
     Attributes:
         type: The key type string (e.g., 'PRIMARY KEY', 'UNIQUE KEY', 'DUPLICATE KEY').

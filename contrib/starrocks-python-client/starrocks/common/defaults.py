@@ -14,7 +14,9 @@
 
 from __future__ import annotations
 
-from typing import List, Optional, Union
+from typing import Optional, Union
+
+from sqlalchemy.engine import reflection as sa_reflection
 
 from starrocks.common.params import TableInfoKeyWithPrefix
 from starrocks.common.types import SystemRunMode, TableDistribution, TableEngine, TableType, ViewSecurityType
@@ -22,7 +24,7 @@ from starrocks.common.utils import TableAttributeNormalizer
 from starrocks.engine.interfaces import ReflectedMVState, ReflectedTableKeyInfo, ReflectedViewState
 
 
-class ReflectionTableDefaults:
+class ReflectionTableDefaults(sa_reflection.ReflectionDefaults):
     """StarRocks table reflection default values management."""
 
     # StarRocks default properties that are automatically set
@@ -53,26 +55,22 @@ class ReflectionTableDefaults:
     # engine -> key -> comment -> partition -> distribution -> order by -> properties
 
     @classmethod
-    def normalize_engine(cls, engine: Optional[str]) -> str:
-        """Normalize engine: None, empty, or OLAP are all treated as OLAP."""
-        if engine is None or engine == '':
-            return cls.engine()
-        return TableAttributeNormalizer.normalize_engine(engine)
-
-    @classmethod
-    def normalize_key(cls, key: Optional[str]) -> str:
-        """Normalize key: None, empty, or DUPLICATE KEY are all treated as DUPLICATE KEY."""
-        if key is None or key == '':
-            return cls.key()
-        return TableAttributeNormalizer.normalize_key(key)
-
-    @classmethod
     def engine(cls) -> str:
         return TableEngine.OLAP
 
     @classmethod
+    def normalize_engine(cls, engine: Optional[str]) -> str:
+        """Normalize engine: None, empty, or OLAP are all treated as OLAP."""
+        return TableAttributeNormalizer.normalize_engine(engine) if engine else cls.engine()
+
+    @classmethod
     def key(cls) -> str:
         return TableType.DUPLICATE_KEY
+
+    @classmethod
+    def normalize_key(cls, key: Optional[str]) -> str:
+        """Normalize key: None, empty, or DUPLICATE KEY are all treated as DUPLICATE KEY."""
+        return TableAttributeNormalizer.normalize_key(key) if key else cls.key()
 
     @classmethod
     def reflected_key_info(cls) -> ReflectedTableKeyInfo:
@@ -92,13 +90,8 @@ class ReflectionTableDefaults:
         return TableDistribution.RANDOM
 
     @classmethod
-    def distribution_columns(cls) -> Optional[Union[List[str], str]]:
-        """Get default distribution keys. such as id, name."""
-        return None
-
-    @classmethod
     def buckets(cls) -> int:
-        """Get default buckets count. such as 8."""
+        """Get default buckets count."""
         return 0
 
     @classmethod
@@ -121,7 +114,6 @@ class ReflectionTableDefaults:
             return cls._DEFAULT_PROPERTIES_SHARED_DATA
         else:
             return cls._DEFAULT_PROPERTIES_SHARED_NOTHING
-
 
 
 class ReflectionViewDefaults(ReflectionTableDefaults):

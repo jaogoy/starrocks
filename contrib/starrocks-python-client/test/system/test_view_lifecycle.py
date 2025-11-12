@@ -27,6 +27,7 @@ from starrocks.datatype import INTEGER, STRING, VARCHAR
 from starrocks.sql.schema import View
 from test.system.conftest import AlembicTestEnv
 from test.system.test_table_lifecycle import EMPTY_DOWNGRADE_STR, EMPTY_UPGRADE_STR, ScriptContentParser
+from test.unit.test_render import _normalize_py_call
 
 
 logger = logging.getLogger(__name__)
@@ -105,7 +106,7 @@ def test_create_view_with_columns(database: str, alembic_env: AlembicTestEnv, sr
     # 3. Verify the script and upgrade
     script_content = ScriptContentParser.check_script_content(alembic_env, 1, "create_view_with_columns")
     upgrade_content = ScriptContentParser.extract_upgrade_content(script_content)
-    assert "op.create_view('user_view'" in upgrade_content
+    assert "op.create_view('user_view'" in _normalize_py_call(upgrade_content)
     assert "'comment': 'User name'" in upgrade_content
     assert "'name': 'name'" in upgrade_content
     assert "'name': 'email'" in upgrade_content
@@ -262,9 +263,9 @@ def test_alter_view_definition(database: str, alembic_env: AlembicTestEnv, sr_en
     assert "op.alter_view('user_view'" in upgrade_content
     assert "SELECT id, name FROM user" in upgrade_content
     downgrade_content = ScriptContentParser.extract_downgrade_content(script_content)
-    assert "op.alter_view('user_view'" in downgrade_content
+    assert "op.alter_view('user_view'" in _normalize_py_call(downgrade_content)
     # Normalize only the view definition inside the downgrade content
-    view_def_match = re.search(r"op\.alter_view\('user_view',\s*'(.*?)'", downgrade_content, re.DOTALL)
+    view_def_match = re.search(r"op\.alter_view\(\s*'user_view',\s*'(.*?)'", downgrade_content, re.DOTALL)
     assert view_def_match is not None
     view_def = view_def_match.group(1)
     logger.info(f"view_def: {view_def}")
@@ -312,9 +313,9 @@ def test_drop_view(database: str, alembic_env: AlembicTestEnv, sr_engine):
     # 3. Verify and apply DROP
     script_content = ScriptContentParser.check_script_content(alembic_env, 1, "drop_view")
     upgrade_content = ScriptContentParser.extract_upgrade_content(script_content)
-    assert "op.drop_view('user_view')" in upgrade_content
+    assert "op.drop_view('user_view')" in _normalize_py_call(upgrade_content)
     downgrade_content = ScriptContentParser.extract_downgrade_content(script_content)
-    assert "op.create_view('user_view'" in downgrade_content
+    assert "op.create_view('user_view'" in _normalize_py_call(downgrade_content)
 
     alembic_env.harness.upgrade("head")
     inspector = inspect(sr_engine)
@@ -427,10 +428,10 @@ def test_create_view_with_schema(database: str, alembic_env: AlembicTestEnv, sr_
     # 3. Verify the script and upgrade
     script_content = ScriptContentParser.check_script_content(alembic_env, 1, "create_view_with_schema")
     upgrade_content = ScriptContentParser.extract_upgrade_content(script_content)
-    assert "op.create_view('user_view'" in upgrade_content
+    assert "op.create_view('user_view'" in _normalize_py_call(upgrade_content)
     assert f"schema='{database}'" in upgrade_content
     downgrade_content = ScriptContentParser.extract_downgrade_content(script_content)
-    assert "op.drop_view('user_view'" in downgrade_content
+    assert "op.drop_view('user_view'" in _normalize_py_call(downgrade_content)
     assert f"schema='{database}'" in downgrade_content
 
     alembic_env.harness.upgrade("head")
@@ -487,13 +488,15 @@ def test_multiple_views_in_one_migration(database: str, alembic_env: AlembicTest
     # 4. Verify script contains all operations
     script_content = ScriptContentParser.check_script_content(alembic_env, 1, "multiple_ops")
     upgrade_content = ScriptContentParser.extract_upgrade_content(script_content)
-    assert "op.create_view('view3'" in upgrade_content
-    assert "op.alter_view('view1'" in upgrade_content
-    assert "op.drop_view('view2'" in upgrade_content
+    normalized_upgrade_content = _normalize_py_call(upgrade_content)
+    assert "op.create_view('view3'" in normalized_upgrade_content
+    assert "op.alter_view('view1'" in normalized_upgrade_content
+    assert "op.drop_view('view2'" in normalized_upgrade_content
     downgrade_content = ScriptContentParser.extract_downgrade_content(script_content)
-    assert "op.drop_view('view3'" in downgrade_content
-    assert "op.alter_view('view1'" in downgrade_content
-    assert "op.create_view('view2'" in downgrade_content
+    normalized_downgrade_content = _normalize_py_call(downgrade_content)
+    assert "op.drop_view('view3'" in normalized_downgrade_content
+    assert "op.alter_view('view1'" in normalized_downgrade_content
+    assert "op.create_view('view2'" in normalized_downgrade_content
 
     # 5. Apply upgrade and verify all changes
     alembic_env.harness.upgrade("head")

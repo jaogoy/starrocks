@@ -14,7 +14,7 @@
 
 from functools import wraps
 import logging
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Type, Union
 import warnings
 
 from alembic.autogenerate import comparators
@@ -30,6 +30,7 @@ from sqlalchemy.sql.schema import Table
 from starrocks import datatype
 from starrocks.alembic.ops import (
     AlterMaterializedViewOp,
+    AlterTablePropertiesOp,
     AlterViewOp,
     CreateMaterializedViewOp,
     CreateViewOp,
@@ -425,8 +426,8 @@ def compare_view(
     logger.debug(f"compare_view: view_name={qualifed_view_name!r}")
 
     # Extract dialect_options for comparison
-    conn_view_attributes = extract_dialect_options_as_case_insensitive(conn_view.dialect_options)
-    meta_view_attributes = extract_dialect_options_as_case_insensitive(metadata_view.dialect_options)
+    conn_view_attributes = extract_dialect_options_as_case_insensitive(conn_view)
+    meta_view_attributes = extract_dialect_options_as_case_insensitive(metadata_view)
 
     logger.debug(
         "View-specific attributes comparison for view '%s': "
@@ -1067,7 +1068,7 @@ def _compare_mv_refresh(
                 reverse_properties=None,
             )
         )
-        logger.info(f"Detected refresh change for materialized view {qualified_mv_name!r}")
+        logger.debug(f"Detected refresh change for materialized view {qualified_mv_name!r}")
 
 
 def _compare_mv_properties(
@@ -1075,30 +1076,30 @@ def _compare_mv_properties(
     schema: Optional[str],
     mv_name: str,
     conn_mv_attributes: Dict[str, Any],
-    meta_mv_attributes: Dict[str, Any]
+    meta_mv_attributes: Dict[str, Any],
+    run_mode: str,
 ) -> None:
     """
     Compare MV properties and add AlterMaterializedViewOp if changed.
 
     This is a mutable attribute that can be altered using ALTER MATERIALIZED VIEW.
     """
-    conn_properties = conn_mv_attributes.get(TableInfoKey.PROPERTIES)
-    meta_properties = meta_mv_attributes.get(TableInfoKey.PROPERTIES)
-    logger.debug("Compare mv properties: conn_properties=%s, meta_properties=%s", conn_properties, meta_properties)
-
-    if conn_properties != meta_properties:
+    properties_to_set, properties_for_reverse = _compare_table_properties_impl(
+        schema, mv_name, conn_mv_attributes, meta_mv_attributes, run_mode,
+        default_cls=ReflectionMVDefaults, object_label="Materialized view", add_default_prefix=False)
+    if properties_to_set:
         qualified_mv_name = utils.gen_simple_qualified_name(mv_name, schema)
         ops_list.append(
             AlterMaterializedViewOp(
                 view_name=mv_name,
                 schema=schema,
                 refresh=None,
-                properties=meta_properties,
+                properties=properties_to_set,
                 reverse_refresh=None,
-                reverse_properties=conn_properties,
+                reverse_properties=properties_for_reverse if properties_for_reverse else None,
             )
         )
-        logger.info(f"Detected properties change for materialized view {qualified_mv_name!r}")
+        logger.debug(f"Detected properties change for materialized view {qualified_mv_name!r}")
 
 
 @comparators_dispatch_for_starrocks("materialized_view")
@@ -1120,6 +1121,7 @@ def compare_materialized_view(
 
     Note: For immutable attributes, this will raise NotImplementedError if changes are detected,
     as StarRocks does not support altering these attributes.
+    It will generate multiple AlterOps if there are several different attribute changes.
     """
     # Handle MV creation and deletion scenarios (should not happen here)
     if conn_mv is None or metadata_mv is None:
@@ -1133,8 +1135,8 @@ def compare_materialized_view(
     logger.debug(f"Compare materialized view: mv_name={mv_name}, schema={schema}")
 
     # Extract dialect_options for comparison using case-insensitive helper
-    conn_mv_attributes = extract_dialect_options_as_case_insensitive(conn_mv.dialect_options)
-    meta_mv_attributes = extract_dialect_options_as_case_insensitive(metadata_mv.dialect_options)
+    conn_mv_attributes = extract_dialect_options_as_case_insensitive(conn_mv)
+    meta_mv_attributes = extract_dialect_options_as_case_insensitive(metadata_mv)
 
     logger.debug(
         "MV-specific attributes comparison for materialized view '%s': "
@@ -1188,14 +1190,15 @@ def compare_materialized_view(
 
     # Mutable attributes (will generate AlterMaterializedViewOp if changed):
     _compare_mv_refresh(upgrade_ops.ops, schema, mv_name, conn_mv_attributes, meta_mv_attributes)
-    _compare_mv_properties(upgrade_ops.ops, schema, mv_name, conn_mv_attributes, meta_mv_attributes)
+    run_mode = autogen_context.dialect.run_mode
+    _compare_mv_properties(upgrade_ops.ops, schema, mv_name, conn_mv_attributes, meta_mv_attributes, run_mode)
 
     # Log summary if any operations were generated
     ops_after = len(upgrade_ops.ops)
     if ops_after > ops_before:
         qualified_mv_name = utils.gen_simple_qualified_name(mv_name, schema)
         num_changes = ops_after - ops_before
-        logger.info(f"Materialized view {qualified_mv_name!r} comparison complete: {num_changes} ALTER operation(s) generated")
+        logger.debug(f"Materialized view {qualified_mv_name!r} comparison complete: {num_changes} ALTER operation(s) generated")
 
 @comparators_dispatch_for_starrocks("table")
 def check_table_kind_for_view_mv(
@@ -1286,11 +1289,11 @@ def compare_starrocks_table(
     logger.debug(f"Compare StarRocks table: conn_table: {conn_table!r}, metadata_table: {metadata_table!r}")
     # Get the system run_mode for proper default value comparison
     run_mode = autogen_context.dialect.run_mode
-    logger.info(f"compare starrocks table. table: {table_name}, schema:{schema}, run_mode: {run_mode}")
+    logger.debug(f"compare starrocks table. table: {table_name}, schema:{schema}, run_mode: {run_mode}")
 
     # Extract dialect_options for comparison using case-insensitive helper
-    conn_table_attributes = extract_dialect_options_as_case_insensitive(conn_table.dialect_options)
-    meta_table_attributes = extract_dialect_options_as_case_insensitive(metadata_table.dialect_options)
+    conn_table_attributes = extract_dialect_options_as_case_insensitive(conn_table)
+    meta_table_attributes = extract_dialect_options_as_case_insensitive(metadata_table)
 
     logger.debug(
         "StarRocks-specific attributes comparison for table '%s': "
@@ -1333,9 +1336,9 @@ def compare_starrocks_table(
     # Log summary if any operations were generated
     ops_after = len(upgrade_ops.ops)
     if ops_after > ops_before:
-        qualified_table_name = utils.gen_simple_qualified_name(table_name, schema)
+        table_fqn = utils.gen_simple_qualified_name(table_name, schema)
         num_changes = ops_after - ops_before
-        logger.info(f"Table {qualified_table_name!r} comparison complete: {num_changes} ALTER operation(s) generated")
+        logger.debug(f"Table {table_fqn!r} comparison complete: {num_changes} ALTER operation(s) generated")
 
     return False
 
@@ -1721,14 +1724,16 @@ def _compare_table_order_by(
         )
 
 
-def _compare_table_properties(
-    ops_list: List[AlterTableOp],
+def _compare_table_properties_impl(
     schema: Optional[str],
     table_name: str,
     conn_table_attributes: Dict[str, Any],
     meta_table_attributes: Dict[str, Any],
     run_mode: str,
-) -> None:
+    default_cls: Union[Type[ReflectionTableDefaults], Type[ReflectionMVDefaults]] = ReflectionTableDefaults,
+    object_label: str = "Table",
+    add_default_prefix: bool = True,
+) -> Tuple[Dict[str, str], Dict[str, str]]:
     """Compare properties changes and add AlterTablePropertiesOp if needed.
 
     - If a property is specified in metadata, it is compared with the database.
@@ -1736,28 +1741,34 @@ def _compare_table_properties(
       a change is detected.
     - The generated operation will set only the properties that have changed.
       Because some of the properties are not supported to be changed.
+
+    Args:
+        add_default_prefix: Whether to add the default prefix to the property name.
+            If True, the property name will be prefixed with 'default.'.
+            If False, the property name will not be prefixed.
+            This is used to control the behavior of the generated operation.
+            If the property is a future partition property, it should be prefixed.
+            If the property is a past partition property, it should not be prefixed.
+            The default value is True.
     """
     conn_properties: Dict[str, str] = conn_table_attributes.get(TableInfoKey.PROPERTIES, {})
     meta_properties: Dict[str, str] = meta_table_attributes.get(TableInfoKey.PROPERTIES, {})
-    logger.debug(f"Compares table PROPERTIES. conn_properties: {conn_properties}, meta_properties: {meta_properties}")
+    logger.debug(f"Compares {object_label.lower()} PROPERTIES. conn_properties: {conn_properties}, meta_properties: {meta_properties}")
 
     normalized_conn = CaseInsensitiveDict(conn_properties)
     normalized_meta = CaseInsensitiveDict(meta_properties)
     # logger.debug(f"PROPERTIES. normalized_conn: {normalized_conn}, normalized_meta: {normalized_meta}")
 
-    if normalized_conn == normalized_meta:
-        return
-
     properties_to_set = {}
     properties_for_reverse = {}
 
-    all_keys = set(normalized_conn.keys()) | set(normalized_meta.keys())
-    full_table_name = f"{schema}.{table_name}" if schema else table_name
+    all_keys = set([k.lower() for k in normalized_conn.keys() | normalized_meta.keys()])
+    full_name = utils.gen_simple_qualified_name(table_name, schema)
 
     for key in all_keys:
         conn_value = normalized_conn.get(key)
         meta_value = normalized_meta.get(key)
-        default_value = ReflectionTableDefaults.properties(run_mode).get(key)
+        default_value = default_cls.properties(run_mode).get(key)
 
         # Convert all to strings for comparison to avoid type issues (e.g., int vs str)
         conn_str = str(conn_value) if conn_value is not None else None
@@ -1779,8 +1790,8 @@ def _compare_table_properties(
                 # Scenario 1: Implicit deletion of a property with no default.
                 if conn_value is not None:
                     logger.warning(
-                        f"Table '{full_table_name}': Property '{key}' exists in the database with value '{conn_value}' "
-                        f"but is not specified in metadata and no default is defined in ReflectionTableDefaults."
+                        f"{object_label} '{full_name}': Property '{key}' exists in the database with value '{conn_value}' "
+                        f"but is not specified in metadata and no default is defined in {default_cls.__name__}."
                         f"Implicit deletion is not recommended. "
                         f"To manage this property, please specify it explicitly in your metadata. "
                         f"No ALTER TABLE SET operation will be generated for this property."
@@ -1789,7 +1800,7 @@ def _compare_table_properties(
             else:
                 # Scenario 2: Implicit reset to default.
                 logger.warning(
-                    f"Table '{full_table_name}': Property '{key}' has non-default value '{conn_value}' in database "
+                    f"{object_label} '{full_name}': Property '{key}' has non-default value '{conn_value}' in database "
                     f"but is not specified in metadata. An ALTER TABLE SET operation will be generated to "
                     f"reset it to its default value '{default_value}'. "
                     f"Consider explicitly setting default properties in your metadata to avoid ambiguity."
@@ -1798,14 +1809,14 @@ def _compare_table_properties(
         target_val_upgrade = meta_str if meta_str is not None else default_str
         prop_key = (
             TablePropertyForFuturePartitions.wrap(key)
-            if TablePropertyForFuturePartitions.contains(key)
+            if add_default_prefix and TablePropertyForFuturePartitions.contains(key)
             else key
         )
         # logger.debug(f"Newly changed property. prop_key: '{prop_key}', target_val_upgrade: '{target_val_upgrade}'")
         properties_to_set[prop_key] = target_val_upgrade
         # A meaningful change has been detected for this property.
         logger.info(
-            f"Detected property change for table {full_table_name!r}: "
+            f"Detected property change for {object_label.lower()} {full_name!r}: "
             f"{key!r} changed from {effective_conn_str!r} to {effective_meta_str!r}"
         )
         if prop_key != key:
@@ -1819,9 +1830,22 @@ def _compare_table_properties(
         target_val_downgrade = conn_str if conn_str is not None else default_str
         properties_for_reverse[prop_key] = target_val_downgrade
 
-    if properties_to_set:
-        from starrocks.alembic.ops import AlterTablePropertiesOp
+    return properties_to_set, properties_for_reverse
 
+
+def _compare_table_properties(
+    ops_list: List[AlterTableOp],
+    schema: Optional[str],
+    table_name: str,
+    conn_table_attributes: Dict[str, Any],
+    meta_table_attributes: Dict[str, Any],
+    run_mode: str,
+) -> None:
+    properties_to_set, properties_for_reverse = _compare_table_properties_impl(
+        schema, table_name, conn_table_attributes, meta_table_attributes, run_mode,
+        default_cls=ReflectionTableDefaults, object_label="Table")
+    if properties_to_set:
+        table_fqn = utils.gen_simple_qualified_name(table_name, schema)
         ops_list.append(
             AlterTablePropertiesOp(
                 table_name,
@@ -1830,6 +1854,7 @@ def _compare_table_properties(
                 reverse_properties=properties_for_reverse,
             )
         )
+        logger.debug(f"Detected properties change for table {table_fqn!r}")
 
 
 def _compare_single_table_attribute(
@@ -1876,7 +1901,7 @@ def _compare_single_table_attribute(
     meta_str = str(meta_value) if meta_value is not None else None
     default_str = str(default_value) if default_value is not None else None
 
-    qualified_table_name = utils.gen_simple_qualified_name(table_name, schema)
+    table_fqn = utils.gen_simple_qualified_name(table_name, schema)
     attribute_name: str = attribute_name.upper().replace('_', ' ')
 
     if meta_str is not None:
@@ -1884,12 +1909,12 @@ def _compare_single_table_attribute(
         if meta_str != (conn_str or default_str):
             # Case 1: meta specified, different from conn -> has change
             logger.debug(
-                f"{object_label} {qualified_table_name!r}, Attribute '{attribute_name}' "
+                f"{object_label} {table_fqn!r}, Attribute '{attribute_name}' "
                 f"has changed from '{conn_str or '(not set)'}' to '{meta_str}' "
                 f"with default value '{default_str}'")
             if meta_value.lower() == (conn_str or default_str or '').lower():
                 logger.warning(
-                    f"{object_label} {qualified_table_name!r}: Attribute '{attribute_name}' has a case-only difference: "
+                    f"{object_label} {table_fqn!r}: Attribute '{attribute_name}' has a case-only difference: "
                     f"'{conn_value}' (database) vs '{meta_value}' (metadata). "
                     f"Consider making them consistent for clarity."
                     f"No ALTER statement will be generated automatically."
@@ -1899,7 +1924,7 @@ def _compare_single_table_attribute(
                 # This attribute doesn't support ALTER operations
                 error_msg = (
                     f"StarRocks does not support 'ALTER {ddl_object} {attribute_name}'. "
-                    f"{object_label} {qualified_table_name!r} has {attribute_name.upper()} '{conn_str or '(not set)'}' in database "
+                    f"{object_label} {table_fqn!r} has {attribute_name.upper()} '{conn_str or '(not set)'}' in database "
                     f"but '{meta_str}' in metadata. "
                     f"Please update your metadata to match the database."
                 )
@@ -1907,7 +1932,7 @@ def _compare_single_table_attribute(
                 raise NotImplementedError(error_msg)
             # Log the detected change at INFO level
             logger.info(
-                f"Detected {object_label.lower()} attribute change for {qualified_table_name!r}: {attribute_name} changed "
+                f"Detected {object_label.lower()} attribute change for {table_fqn!r}: {attribute_name} changed "
                 f"from {conn_str or '(not set)'!r} to {meta_str!r}")
             return True
         # Case 2: meta specified, same as conn -> no change
@@ -1921,7 +1946,7 @@ def _compare_single_table_attribute(
             # If custom comparison function is provided, use it for default comparison
             if equal_to_default_cmp_func and equal_to_default_cmp_func(conn_value, default_value):
                 logger.debug(
-                    f"{object_label} {qualified_table_name!r}: Attribute '{attribute_name}' in database is considered "
+                    f"{object_label} {table_fqn!r}: Attribute '{attribute_name}' in database is considered "
                     f"equal to default '{default_str}' via custom comparison function."
                 )
                 return False
@@ -1929,7 +1954,7 @@ def _compare_single_table_attribute(
             # Case 4: meta not specified, conn is non-default -> log error, NO automatic change
             if conn_str.lower() == (default_str or '').lower():
                 logger.warning(
-                    f"{object_label} {qualified_table_name!r}: Attribute '{attribute_name}' has a case-only difference: "
+                    f"{object_label} {table_fqn!r}: Attribute '{attribute_name}' has a case-only difference: "
                     f"'{conn_str}' (database) vs '{default_str}' (default). "
                     f"Consider making them consistent for clarity. "
                     f"No ALTER statement will be generated automatically."
@@ -1937,7 +1962,7 @@ def _compare_single_table_attribute(
                 pass
             else:
                 error_msg = (
-                    f"{object_label} {qualified_table_name!r}: Attribute '{attribute_name}' "
+                    f"{object_label} {table_fqn!r}: Attribute '{attribute_name}' "
                     f"in database has non-default value '{conn_str}' (default: '{default_str}'), "
                     f"but not specified in metadata. Please specify this attribute explicitly "
                     "in your table definition to avoid unexpected behavior. "
@@ -1983,8 +2008,8 @@ def compare_starrocks_column_agg_type(
         raise ArgumentError("Both conn column and meta column should not be None.")
 
     # Extract dialect_options for comparison using case-insensitive helper
-    conn_opts = extract_dialect_options_as_case_insensitive(conn_col.dialect_options)
-    meta_opts = extract_dialect_options_as_case_insensitive(metadata_col.dialect_options)
+    conn_opts = extract_dialect_options_as_case_insensitive(conn_col)
+    meta_opts = extract_dialect_options_as_case_insensitive(metadata_col)
     conn_agg_type: Union[str, None] = conn_opts.get(ColumnAggInfoKey.AGG_TYPE)
     meta_agg_type: Union[str, None] = meta_opts.get(ColumnAggInfoKey.AGG_TYPE)
     # logger.debug(f"Compares column AGG_TYPE. conn_agg_type: {conn_agg_type}, meta_agg_type: {meta_agg_type}")
@@ -2027,9 +2052,9 @@ def compare_starrocks_column_autoincrement(
     # Because we can't inpsect the autoincrement, we can't do the check of difference.
     if conn_col.autoincrement != metadata_col.autoincrement and \
             "auto" != metadata_col.autoincrement:
-        qualified_table_name = utils.gen_simple_qualified_name(tname, schema)
+        table_fqn = utils.gen_simple_qualified_name(tname, schema)
         logger.warning(
-            f"Detected AUTO_INCREMENT change for column '{qualified_table_name}.{cname}'. "
+            f"Detected AUTO_INCREMENT change for column '{table_fqn}.{cname}'. "
             f"conn_col.autoincrement: {conn_col.autoincrement}, "
             f"metadata_col.autoincrement: {metadata_col.autoincrement}. "
             f"No ALTER statement will be generated automatically, "

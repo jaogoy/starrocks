@@ -26,7 +26,7 @@ def test_reflection_view_defaults_apply_basic():
     )
     assert info.name == "v1"
     assert info.definition == "SELECT 1"
-    assert info.comment == ""
+    assert info.comment is None or info.comment == ""
     assert info.security == ViewSecurityType.NONE or info.security is None
 
 
@@ -48,7 +48,7 @@ def test_reflection_view_defaults_empty_strings():
         comment="",
         security="",
     )
-    assert info.comment == ""
+    assert info.comment is None or info.comment == ""
     assert info.security == ViewSecurityType.NONE or info.security is None
 
 

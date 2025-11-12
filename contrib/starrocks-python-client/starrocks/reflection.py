@@ -29,7 +29,6 @@ from sqlalchemy.schema import Table
 from starrocks.common.consts import TableConfigKey
 from starrocks.common.params import (
     ColumnAggInfoKeyWithPrefix,
-    DialectName,
     SRKwargsPrefix,
     TableInfoKey,
     TableInfoKeyWithPrefix,
@@ -111,12 +110,14 @@ class StarRocksInspector(Inspector):
         """
         Override to set VIEW/MV specific attributes.
         """
-        # 1. Call parent class (will call get_pk_constraints, etc., which will trigger _setup_parser)
-        super().reflect_table(table, include_columns, exclude_columns, resolve_fks, _extend_on, _reflect_info)
-
-        # 2. Get table_kind and parsed_state (from cache)
+        # 1. Get table_kind and parsed_state, which will trigger _setup_parser)
         parsed_state = self.dialect._parsed_state_or_create(self.bind, table.name, table.schema, info_cache=self.info_cache)
         table_kind = parsed_state.table_kind
+        logger.debug("reflect %s: %s, parsed_state: %s.", table_kind.lower(), table.name, parsed_state)
+
+        # 2. Call parent class (will call get_pk_constraints, etc., which will use cached parsed_state)
+        #    And, it will set all dialect options from parsed_state, including for a View or a Mv or a Table.
+        super().reflect_table(table, include_columns, exclude_columns, resolve_fks, _extend_on, _reflect_info)
 
         # 3. Set info['table_kind']
         table.info[TableObjectInfoKey.TABLE_KIND] = table_kind
@@ -135,13 +136,13 @@ class StarRocksInspector(Inspector):
         ReflectedColumn dictionaries from view_state.columns.
         """
         table.info[TableObjectInfoKey.DEFINITION] = view_state.definition
-        if view_state.security:
-            table.dialect_options.setdefault(DialectName, {})[TableInfoKey.SECURITY] = view_state.security
+        # if view_state.security:
+        #     table.dialect_options.setdefault(DialectName, {})[TableInfoKey.SECURITY] = view_state.security
 
     def _reflect_mv_attributes(self, table, mv_state: ReflectedMVState):
         """Set MV specific attributes from ReflectedMVState"""
         table.info[TableObjectInfoKey.DEFINITION] = mv_state.definition
-        table.dialect_options.setdefault(DialectName, {}).update(mv_state.table_options)
+        # table.dialect_options.setdefault(DialectName, {}).update(mv_state.table_options)
 
 
 @log.class_logger
@@ -608,7 +609,8 @@ class StarRocksTableDefinitionParser(object):
             A ReflectedMVState object.
         """
         ddl = mv_row.MATERIALIZED_VIEW_DEFINITION.strip()
-        logger.debug(f"mv create ddl for {mv_row.TABLE_SCHEMA}.{mv_row.TABLE_NAME}: {ddl}")
+        mv_fqn = utils.gen_simple_qualified_name(mv_row.TABLE_NAME, mv_row.TABLE_SCHEMA)
+        logger.debug(f"mv create ddl for {mv_fqn}: {ddl}")
 
         mv_name, schema = mv_row.TABLE_NAME, mv_row.TABLE_SCHEMA
         # 1. Parse the DDL to get properties that are only available there.
@@ -618,14 +620,17 @@ class StarRocksTableDefinitionParser(object):
         except Exception as e:
             self.logger.warning(f"Failed to parse DDL for MV '{mv_row.TABLE_SCHEMA}.{mv_row.TABLE_NAME}', reflection may be incomplete: {e}")
             parsed_state = ReflectedMVState(table_name=mv_row.TABLE_NAME, definition=ddl)
+        logger.debug("partial parsed mv state. mv: %s, state: %s", mv_fqn, parsed_state)
 
         # 2. Augment/overwrite with more reliable info from other sources.
         parsed_state.table_options.update(self._parse_common_table_options(table_row))
 
         if config_row:
-            physical_options = self._parse_general_table_options(mv_name, schema, table_config=config_row)
-            parsed_state.table_options.update(physical_options)
+            general_options = self._parse_general_table_options(mv_name, schema, table_config=config_row)
+            logger.debug("parsed general table options for mv: %s, options: %s", mv_fqn, general_options)
+            parsed_state.table_options.update(general_options)
 
+        logger.debug("parsed mv state. mv: %s, state: %s", mv_fqn, parsed_state)
         return parsed_state
 
     def _parse_mv_ddl(
@@ -672,11 +677,12 @@ class StarRocksTableDefinitionParser(object):
             # Fallback to simple regex if lark parsing fails
             self._parse_mv_refresh_with_regex(clauses_str, state)
 
-        properties_match = self._MV_PROPERTIES_PATTERN.search(clauses_str)
-        if properties_match:
-            # Use string instead of dictionary now.
-            # state.mv_options.properties = self._parse_properties(properties_match.group(1))
-            state.table_options[TableInfoKeyWithPrefix.PROPERTIES] = properties_match.group(1).strip()
+        # NOTE: currently, it uses properties from information_schema.tables_config, not from the DDL.
+        # properties_match = self._MV_PROPERTIES_PATTERN.search(clauses_str)
+        # if properties_match:
+        #     # Use string instead of dictionary now.
+        #     # state.mv_options.properties = self._parse_properties(properties_match.group(1))
+        #     state.table_options[TableInfoKeyWithPrefix.PROPERTIES] = properties_match.group(1).strip()
 
         return state
 

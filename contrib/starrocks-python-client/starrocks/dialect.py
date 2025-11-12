@@ -486,7 +486,7 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
         import warnings
         table_opts: List[str] = []
 
-        opts = utils.extract_dialect_options_as_case_insensitive(table.dialect_options)
+        opts = utils.extract_dialect_options_as_case_insensitive(table)
         logger.debug(f"table original opts for table: {table.name}, schema: {table.schema}, opts: {opts!r}")
 
         # ENGINE
@@ -542,7 +542,7 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
 
         # Handle MV-specific REFRESH clause
         if refresh := opts.get(TableInfoKey.REFRESH):
-            table_opts.append(f"REFRESH {refresh}")
+            table_opts.append(f"REFRESH {str(refresh)}")
 
         # Properties
         properties = opts.get(TableInfoKey.PROPERTIES)
@@ -906,6 +906,7 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
 
         Args:
             create: CreateView DDL element or CreateTable element where table_kind='VIEW'
+                the table may be not a View object, so we treat it as a normal Table.
             **kw: Additional compilation kwargs
 
         Returns:
@@ -917,8 +918,7 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
         definition = table.info.get(TableObjectInfoKey.DEFINITION)
         if not definition:
             raise exc.CompileError("View definition is required")
-        dialect_options = table.dialect_options.get(DialectName, {})
-        security = dialect_options.get(TableInfoKey.SECURITY)
+        security = utils.get_dialect_option(table, TableInfoKey.SECURITY)
 
         or_replace_clause = "OR REPLACE " if create.or_replace else ""
         if_not_exists_clause = "IF NOT EXISTS " if create.if_not_exists else ""
@@ -1523,7 +1523,8 @@ class StarRocksDialect(MySQLDialect_pymysql):
             **kw: Any,
     ) -> ReflectedTableComment:
         """Get the table comment from the parsed state.
-        Overrides the mysql's implementation, which will use 'mysql_comment' as the key.
+        Overrides the mysql's implementation, which will use 'mysql_comment' as the key,
+        here the `comment` supports lower case only.
         """
         parsed_state = self._parsed_state_or_create(connection, table_name, schema, **kw)
         comment = parsed_state.table_options.get(TableInfoKeyWithPrefix.COMMENT, None)

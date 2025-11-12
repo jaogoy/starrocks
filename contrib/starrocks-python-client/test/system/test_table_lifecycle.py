@@ -220,8 +220,8 @@ def test_create_table_simple(database: str, alembic_env: AlembicTestEnv, sr_engi
         is_true(inspector.has_table("user"))
         table_opts = inspector.get_table_options("user")
         logger.info("table_opts: %s", table_opts)
-        eq_(table_opts["starrocks_PRIMARY_KEY"], "id")
-        eq_(table_opts["starrocks_DISTRIBUTED_BY"], "HASH(`id`)")
+        eq_(table_opts[TableInfoKeyWithPrefix.PRIMARY_KEY], "id")
+        eq_(table_opts[TableInfoKeyWithPrefix.DISTRIBUTED_BY], "HASH(`id`)")
 
 
 def test_idempotency_comprehensive(database: str, alembic_env: AlembicTestEnv, sr_engine: Engine):

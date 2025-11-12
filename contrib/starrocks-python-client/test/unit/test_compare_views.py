@@ -98,7 +98,7 @@ class TestAutogenerateViews:
         op = upgrade_ops.ops[0]
         assert isinstance(op, CreateViewOp)
         eq_(op.view_name, 'my_secure_view')
-        eq_(op.security, 'INVOKER')
+        eq_(op.kwargs['starrocks_security'], 'INVOKER')
 
     def test_create_view_with_columns(self):
         """CREATE: View with columns."""
@@ -148,7 +148,7 @@ class TestAutogenerateViews:
         assert isinstance(op, CreateViewOp)
         eq_(op.view_name, 'full_view')
         eq_(op.comment, 'Full view with all attributes')
-        eq_(op.security, 'INVOKER')
+        eq_(op.kwargs['starrocks_security'], 'INVOKER')
         assert op.columns is not None
         eq_(len(op.columns), 2)
 

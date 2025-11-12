@@ -290,7 +290,7 @@ class TestCompareColumnAutoIncrementIntegration:
             # Should detect no changes but log warning
             assert not result
             assert any(
-                "Detected AUTO_INCREMENT is changed" in str(r.getMessage())
+                "Detected AUTO_INCREMENT change" in str(r.getMessage())
                 and r.levelname == "WARNING"
                 for r in caplog.records
             )

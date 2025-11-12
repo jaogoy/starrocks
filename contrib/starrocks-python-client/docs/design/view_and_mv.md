@@ -379,6 +379,26 @@ class MaterializedView(Table):
     # ... Other properties similar
 ```
 
+#### MV `_init_existing` and Parameter Validation (Important)
+
+MaterializedView should handle MV-specific parameters when `extend_existing=True`, and optionally validate inputs like `starrocks_refresh`.
+
+```python
+class MaterializedView(Table):
+    def _init_existing(self, *args, **kwargs):
+        """Handle MV-specific parameters during extend_existing."""
+        refresh = kwargs.pop('starrocks_refresh', None)
+        ...  # and other attributes
+
+        opts = self.dialect_options.setdefault('starrocks', {})
+        if refresh is not None:
+            opts['refresh'] = refresh
+        ...  # and other attributes
+
+        # Delegate remaining updates (definition, columns, comment, etc.)
+        super()._init_existing(*args, **kwargs)
+```
+
 **Pros**:
 
 - Fully utilizes Table's parameter handling mechanism, resulting in concise code.
@@ -466,7 +486,7 @@ class Table:
 
 **Scenario 1: Creating New Table**
 
-```
+```plain text
 table = Table('users', metadata, Column('id', Integer))
     ↓
 Table.__new__()
@@ -487,7 +507,7 @@ Done
 
 **Scenario 2: Getting Existing Table**
 
-```
+```plain text
 table = Table('users', metadata)
     ↓
 Table._new()
@@ -502,7 +522,7 @@ Done
 
 **Scenario 3: Updating Existing Table (extend_existing=True)**
 
-```
+```plain text
 table = Table('users', metadata, Column('name', Integer), extend_existing=True)
     ↓
 Table._new()
@@ -1351,6 +1371,12 @@ def _compile_create_view_from_table(self, table, create, **kw):
     sql += f"AS\n{definition}"
     return sql
 ```
+
+**Additional Compiler Notes**:
+
+- Use case-insensitive extraction for dialect options to avoid casing issues:
+  - Prefer a helper like `extract_dialect_options_as_case_insensitive(table)` instead of reading `table.dialect_options` directly.
+- Reuse `post_create_table(...)` to append common clauses (COMMENT, PARTITION BY, DISTRIBUTED BY, ORDER BY, PROPERTIES, REFRESH for MV) for consistent SQL composition.
 
 ### 5.4 Compare Layer Key Points
 

@@ -27,19 +27,10 @@ from starrocks.alembic.render import (
     _create_view,
     _drop_view,
 )
+from test.unit.test_render import _normalize_py_call
 
 
 logger = logging.getLogger(__name__)
-
-
-def normalize_whitespace(s):
-    """Normalize whitespace for comparison (collapse multiple spaces/newlines to single space)."""
-    str = ' '.join(s.split())\
-        .replace(' , ', ', ').replace(' ,', ',') \
-        .replace(' (', '(').replace(' )', ')') \
-        .replace(' {', '{').replace(' }', '}') \
-        .replace(' [', '[').replace(' ]', ']')
-    return str
 
 
 class TestViewRendering:
@@ -48,38 +39,38 @@ class TestViewRendering:
 
     def test_render_create_view_basic(self):
         """Simple: Basic CREATE VIEW rendering."""
-        op = CreateViewOp("v1", "SELECT 1", schema=None, comment=None, security=None)
+        op = CreateViewOp("v1", "SELECT 1", schema=None, comment=None, starrocks_security=None)
         rendered = _create_view(self.ctx, op)
         expected = "op.create_view('v1', 'SELECT 1')"
-        assert normalize_whitespace(rendered) == normalize_whitespace(expected)
+        assert _normalize_py_call(rendered) == _normalize_py_call(expected)
 
     def test_render_create_view_with_schema(self):
         """Coverage: CREATE VIEW with schema attribute."""
         op = CreateViewOp("v1", "SELECT 1", schema="myschema")
         rendered = _create_view(self.ctx, op)
         expected = "op.create_view('v1', 'SELECT 1', schema='myschema')"
-        assert normalize_whitespace(rendered) == normalize_whitespace(expected)
+        assert _normalize_py_call(rendered) == _normalize_py_call(expected)
 
     def test_render_create_view_with_comment(self):
         """Coverage: CREATE VIEW with comment attribute."""
         op = CreateViewOp("v1", "SELECT 1", comment="Test view")
         rendered = _create_view(self.ctx, op)
         expected = "op.create_view('v1', 'SELECT 1', comment='Test view')"
-        assert normalize_whitespace(rendered) == normalize_whitespace(expected)
+        assert _normalize_py_call(rendered) == _normalize_py_call(expected)
 
     def test_render_create_view_with_security(self):
         """Coverage: CREATE VIEW with security attribute (DEFINER/INVOKER)."""
         # Test INVOKER
-        op = CreateViewOp("v1", "SELECT 1", security="INVOKER")
+        op = CreateViewOp("v1", "SELECT 1", starrocks_security="INVOKER")
         rendered = _create_view(self.ctx, op)
-        expected = "op.create_view('v1', 'SELECT 1', security='INVOKER')"
-        assert normalize_whitespace(rendered) == normalize_whitespace(expected)
+        expected = "op.create_view('v1', 'SELECT 1', starrocks_security='INVOKER')"
+        assert _normalize_py_call(rendered) == _normalize_py_call(expected)
 
         # Test DEFINER
-        op2 = CreateViewOp("v2", "SELECT 2", security="DEFINER")
+        op2 = CreateViewOp("v2", "SELECT 2", starrocks_security="DEFINER")
         rendered2 = _create_view(self.ctx, op2)
-        expected2 = "op.create_view('v2', 'SELECT 2', security='DEFINER')"
-        assert normalize_whitespace(rendered2) == normalize_whitespace(expected2)
+        expected2 = "op.create_view('v2', 'SELECT 2', starrocks_security='DEFINER')"
+        assert _normalize_py_call(rendered2) == _normalize_py_call(expected2)
 
     def test_render_create_view_with_columns(self):
         """Coverage: CREATE VIEW with columns attribute."""
@@ -100,7 +91,7 @@ class TestViewRendering:
             {'name': 'email', 'comment': 'Email address'}
         ])
         """
-        assert normalize_whitespace(rendered) == normalize_whitespace(expected)
+        assert _normalize_py_call(rendered) == _normalize_py_call(expected)
 
     def test_render_create_view_complex(self):
         """Complex: CREATE VIEW with all attributes combined."""
@@ -109,24 +100,25 @@ class TestViewRendering:
             "SELECT id, name FROM users",
             schema="myschema",
             comment="User view",
-            security="INVOKER",
             columns=[
                 {'name': 'id'},
                 {'name': 'name', 'comment': 'User name'}
-            ]
+            ],
+            starrocks_security="INVOKER",
         )
         rendered = _create_view(self.ctx, op)
         expected = """
         op.create_view('v1', 'SELECT id, name FROM users',
             schema='myschema',
             comment='User view',
-            security='INVOKER',
             columns=[
                 {'name': 'id'},
                 {'name': 'name', 'comment': 'User name'}
-            ])
+            ],
+            starrocks_security='INVOKER'
+            )
         """
-        assert normalize_whitespace(rendered) == normalize_whitespace(expected)
+        assert _normalize_py_call(rendered) == _normalize_py_call(expected)
 
     def test_render_drop_view_basic(self):
         """Simple: Basic DROP VIEW rendering."""
@@ -139,42 +131,42 @@ class TestViewRendering:
         op = DropViewOp("v1", schema="myschema", if_exists=False)
         rendered = _drop_view(self.ctx, op)
         expected = "op.drop_view('v1', schema='myschema')"
-        assert normalize_whitespace(rendered) == normalize_whitespace(expected)
+        assert _normalize_py_call(rendered) == _normalize_py_call(expected)
 
     def test_render_drop_view_with_if_exists(self):
         """Coverage: DROP VIEW with if_exists attribute."""
         op = DropViewOp("v1", schema=None, if_exists=True)
         rendered = _drop_view(self.ctx, op)
         expected = "op.drop_view('v1', if_exists=True)"
-        assert normalize_whitespace(rendered) == normalize_whitespace(expected)
+        assert _normalize_py_call(rendered) == _normalize_py_call(expected)
 
     def test_render_drop_view_complex(self):
         """Complex: DROP VIEW with all attributes combined."""
         op = DropViewOp("v1", schema="myschema", if_exists=True)
         rendered = _drop_view(self.ctx, op)
         expected = "op.drop_view('v1', schema='myschema', if_exists=True)"
-        assert normalize_whitespace(rendered) == normalize_whitespace(expected)
+        assert _normalize_py_call(rendered) == _normalize_py_call(expected)
 
     def test_render_alter_view_basic(self):
         """Simple: Basic ALTER VIEW rendering (definition only)."""
         op = AlterViewOp("v1", "SELECT 2", schema=None, comment=None, security=None)
         rendered = _alter_view(self.ctx, op)
         expected = "op.alter_view('v1', 'SELECT 2')"
-        assert normalize_whitespace(rendered) == normalize_whitespace(expected)
+        assert _normalize_py_call(rendered) == _normalize_py_call(expected)
 
     def test_render_alter_view_with_comment(self):
         """Coverage: ALTER VIEW with comment attribute."""
         op = AlterViewOp("v1", definition=None, comment="Modified comment")
         rendered = _alter_view(self.ctx, op)
         expected = "op.alter_view('v1', comment='Modified comment')"
-        assert normalize_whitespace(rendered) == normalize_whitespace(expected)
+        assert _normalize_py_call(rendered) == _normalize_py_call(expected)
 
     def test_render_alter_view_with_security(self):
         """Coverage: ALTER VIEW with security attribute."""
         op = AlterViewOp("v1", definition=None, security="DEFINER")
         rendered = _alter_view(self.ctx, op)
         expected = "op.alter_view('v1', security='DEFINER')"
-        assert normalize_whitespace(rendered) == normalize_whitespace(expected)
+        assert _normalize_py_call(rendered) == _normalize_py_call(expected)
 
     def test_render_alter_view_partial_attrs(self):
         """Coverage: ALTER VIEW with multiple but not all attributes (key scenario)."""
@@ -187,7 +179,7 @@ class TestViewRendering:
         )
         rendered = _alter_view(self.ctx, op)
         expected = "op.alter_view('v1', schema='myschema', comment='Modified comment')"
-        assert normalize_whitespace(rendered) == normalize_whitespace(expected)
+        assert _normalize_py_call(rendered) == _normalize_py_call(expected)
 
     def test_render_alter_view_complex(self):
         """Complex: ALTER VIEW with all attributes combined."""
@@ -205,7 +197,7 @@ class TestViewRendering:
             comment='Modified view',
             security='DEFINER')
         """
-        assert normalize_whitespace(rendered) == normalize_whitespace(expected)
+        assert _normalize_py_call(rendered) == _normalize_py_call(expected)
 
     def test_render_view_with_special_chars(self):
         """Complex: Rendering view with special characters in definition and schema."""
@@ -222,7 +214,7 @@ class TestViewRendering:
             f"schema={repr(op.schema)})"
         ]
         expected = "".join(expected_list)
-        assert normalize_whitespace(rendered) == normalize_whitespace(expected)
+        assert _normalize_py_call(rendered) == _normalize_py_call(expected)
 
     def test_render_view_with_single_quotes(self):
         """Coverage: View definition with single quotes."""
@@ -232,7 +224,7 @@ class TestViewRendering:
         )
         rendered = _create_view(self.ctx, op)
         expected = f"op.create_view('view_quotes', {repr(op.definition)})"
-        assert normalize_whitespace(rendered) == normalize_whitespace(expected)
+        assert _normalize_py_call(rendered) == _normalize_py_call(expected)
 
     def test_render_view_with_backslashes(self):
         """Coverage: View definition with backslashes."""
@@ -242,7 +234,7 @@ class TestViewRendering:
         )
         rendered = _create_view(self.ctx, op)
         expected = f"op.create_view('view_backslash', {repr(op.definition)})"
-        assert normalize_whitespace(rendered) == normalize_whitespace(expected)
+        assert _normalize_py_call(rendered) == _normalize_py_call(expected)
 
     def test_render_view_multiline_definition(self):
         """Coverage: View definition with newlines (multi-line SQL)."""
@@ -256,7 +248,7 @@ WHERE id > 0"""
         )
         rendered = _create_view(self.ctx, op)
         expected = f"op.create_view('view_multiline', {repr(op.definition)})"
-        assert normalize_whitespace(rendered) == normalize_whitespace(expected)
+        assert _normalize_py_call(rendered) == _normalize_py_call(expected)
 
     def test_render_view_with_mixed_special_chars(self):
         """Complex: View with mixed special characters (quotes, backslashes, newlines)."""
@@ -271,7 +263,7 @@ FROM users"""
         )
         rendered = _create_view(self.ctx, op)
         expected = f"op.create_view('view_mixed', {repr(op.definition)})"
-        assert normalize_whitespace(rendered) == normalize_whitespace(expected)
+        assert _normalize_py_call(rendered) == _normalize_py_call(expected)
 
     def test_create_view_reverse(self):
         """Reverse: CreateViewOp reverses to DropViewOp."""
@@ -314,14 +306,14 @@ FROM users"""
             schema=None,
             reverse_definition="SELECT 1",
             reverse_comment="Test view",
-            reverse_security="INVOKER"
+            starrocks_security="INVOKER"
         )
         reverse_op = drop_op.reverse()
         assert isinstance(reverse_op, CreateViewOp)
         assert reverse_op.view_name == "v1"
         assert reverse_op.definition == "SELECT 1"
         assert reverse_op.comment == "Test view"
-        assert reverse_op.security == "INVOKER"
+        assert reverse_op.kwargs['starrocks_security'] == "INVOKER"
 
         # Test with columns
         drop_op_with_cols = DropViewOp(
@@ -329,7 +321,7 @@ FROM users"""
             schema=None,
             reverse_definition="SELECT id, name FROM users",
             reverse_comment="User view",
-            reverse_security="INVOKER",
+            starrocks_security="INVOKER",
             reverse_columns=[
                 {'name': 'id', 'comment': None},
                 {'name': 'name', 'comment': 'User name'}
@@ -344,3 +336,4 @@ FROM users"""
         assert reverse_op_with_cols.columns[0]['name'] == 'id'
         assert reverse_op_with_cols.columns[1]['name'] == 'name'
         assert reverse_op_with_cols.columns[1]['comment'] == 'User name'
+        assert reverse_op_with_cols.kwargs['starrocks_security'] == "INVOKER"

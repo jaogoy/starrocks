@@ -199,7 +199,7 @@ class TestReflectionViewsIntegration:
                 assert 'users' in normalized_def
 
                 # Verify security attribute is correctly reflected from SHOW CREATE VIEW
-                security = get_dialect_option(view_table.dialect_options, TableInfoKey.SECURITY)
+                security = get_dialect_option(view_table, TableInfoKey.SECURITY)
                 assert security == 'INVOKER', f"Expected security='INVOKER', got '{security}'"
                 logger.info("Reflected view with security: table_kind=%s, security=%s",
                            view_table.info.get('table_kind'), security)
@@ -600,7 +600,7 @@ class TestReflectionViewsIntegration:
                 ) == TableAttributeNormalizer.normalize_sql(expected_def)
 
                 # 3. Verify dialect-specific options (security is now correctly reflected from SHOW CREATE VIEW)
-                security = get_dialect_option(view_table.dialect_options, TableInfoKey.SECURITY)
+                security = get_dialect_option(view_table, TableInfoKey.SECURITY)
                 assert security == "INVOKER", f"Expected security='INVOKER', got '{security}'"
 
                 # 4. Verify reflected columns (name and comment)
@@ -732,7 +732,7 @@ class TestReflectionViewsIntegration:
                 assert view_table.comment == "Comprehensive view with all attributes for testing"
 
                 # 3. Verify security attribute is correctly reflected from SHOW CREATE VIEW
-                security = get_dialect_option(view_table.dialect_options, TableInfoKey.SECURITY)
+                security = get_dialect_option(view_table, TableInfoKey.SECURITY)
                 assert security == 'INVOKER', f"Expected security='INVOKER', got '{security}'"
                 logger.info(f"Security attribute: {security}")
 

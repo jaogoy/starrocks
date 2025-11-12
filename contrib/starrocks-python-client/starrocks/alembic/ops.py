@@ -22,10 +22,8 @@ from sqlalchemy import MetaData, Table
 
 from starrocks.common.params import (
     SRKwargsPrefix,
-    TableInfoKey,
     TableObjectInfoKey,
 )
-from starrocks.common.utils import get_dialect_option
 from starrocks.sql.schema import MaterializedView, View, extract_view_columns
 
 
@@ -185,7 +183,6 @@ class CreateViewOp(ops.MigrateOperation):
         schema: Optional[str] = None,
         columns: Union[List[Dict], None] = None,
         comment: Optional[str] = None,
-        security: Optional[str] = None,
         or_replace: bool = False,
         if_not_exists: bool = False,
         **kwargs,
@@ -195,7 +192,6 @@ class CreateViewOp(ops.MigrateOperation):
         self.schema = schema
         self.columns = columns
         self.comment = comment
-        self.security = security
         self.or_replace = or_replace
         self.if_not_exists = if_not_exists
         self.kwargs = _extract_starrocks_dialect_kwargs(kwargs)
@@ -208,23 +204,18 @@ class CreateViewOp(ops.MigrateOperation):
             schema=self.schema,
             columns=self.columns,
             comment=self.comment,
-            starrocks_security=self.security,
             **self.kwargs,
         )
 
     @classmethod
     def from_view(cls, view: Table) -> "CreateViewOp":
         """Create Op from a View object (which is a Table)."""
-        # Use case-insensitive lookup for security (handles both user-created and reflected views)
-        security = get_dialect_option(view.dialect_options, TableInfoKey.SECURITY)
-        logger.debug(f"CreateViewOp.from_view: view_name={view.name}, security={security}")
         return cls(
             view.name,
             definition=view.info.get(TableObjectInfoKey.DEFINITION),
             schema=view.schema,
             columns=extract_view_columns(view),
             comment=view.comment,
-            security=security,
             **view.dialect_kwargs,
         )
 
@@ -237,7 +228,6 @@ class CreateViewOp(ops.MigrateOperation):
         schema: Optional[str] = None,
         columns: Union[List[Dict], None] = None,
         comment: Optional[str] = None,
-        security: Optional[str] = None,
         or_replace: bool = False,
         if_not_exists: bool = False,
         **kwargs,
@@ -248,7 +238,6 @@ class CreateViewOp(ops.MigrateOperation):
             schema=schema,
             columns=columns,
             comment=comment,
-            security=security,
             or_replace=or_replace,
             if_not_exists=if_not_exists,
             **kwargs,
@@ -267,7 +256,7 @@ class CreateViewOp(ops.MigrateOperation):
         return (
             f"CreateViewOp(view_name={self.view_name!r}, schema={self.schema!r}, "
             f"definition=({self.definition!r}), columns={self.columns!r}, comment={self.comment!r}, "
-            f"security={self.security}, or_replace={self.or_replace}, "
+            f"or_replace={self.or_replace}, "
             f"if_not_exists={self.if_not_exists}, kwargs=({self.kwargs!r}), "
             f"kwargs={self.kwargs!r}"
         )
@@ -283,7 +272,6 @@ class DropViewOp(ops.MigrateOperation):
         reverse_definition: Optional[str] = None,
         reverse_columns: Optional[List[Dict]] = None,
         reverse_comment: Optional[str] = None,
-        reverse_security: Optional[str] = None,
         **kwargs,
     ):
         self.view_name = view_name
@@ -292,7 +280,6 @@ class DropViewOp(ops.MigrateOperation):
         self.reverse_definition = reverse_definition
         self.reverse_columns = reverse_columns
         self.reverse_comment = reverse_comment
-        self.reverse_security = reverse_security
         self.kwargs = kwargs
 
     def to_view(self, metadata: Optional[MetaData] = None) -> "View":
@@ -312,15 +299,12 @@ class DropViewOp(ops.MigrateOperation):
     @classmethod
     def from_view(cls, view: Table) -> "DropViewOp":
         """Create DropViewOp from a View object (which is a Table)."""
-        # Use case-insensitive lookup for security (handles both user-created and reflected views)
-        security = get_dialect_option(view.dialect_options, TableInfoKey.SECURITY)
         return cls(
             view.name,
             schema=view.schema,
             reverse_definition=view.info.get(TableObjectInfoKey.DEFINITION),
             reverse_columns=extract_view_columns(view),
             reverse_comment=view.comment,
-            reverse_security=security,
             **view.dialect_kwargs,
         )
 
@@ -345,10 +329,9 @@ class DropViewOp(ops.MigrateOperation):
             schema=self.schema,
             columns=self.reverse_columns,
             comment=self.reverse_comment,
-            security=self.reverse_security,
             **self.kwargs,
         )
-        logger.debug("reverse DropViewOp for %s, with op: (%s)", self.view_name, op)
+        # logger.debug("reverse DropViewOp for %s, with op: (%s)", self.view_name, op)
         return op
 
     def __str__(self) -> str:
@@ -356,7 +339,6 @@ class DropViewOp(ops.MigrateOperation):
             f"DropViewOp(view_name={self.view_name!r}, schema={self.schema!r}, "
             f"if_exists={self.if_exists}, reverse_definition=({self.reverse_definition!r}), "
             f"reverse_comment=({self.reverse_comment!r}), "
-            f"reverse_security={self.reverse_security}, "
             f"reverse_columns={self.reverse_columns!r}), "
             f"kwargs=({self.kwargs!r})"
         )
@@ -671,6 +653,10 @@ class AlterTableEngineOp(ops.AlterTableOp):
             reverse_engine=self.engine,
         )
 
+    def __str__(self) -> str:
+        return (f"AlterTableEngineOp(table_name={self.table_name!r}, "
+               f"engine={self.engine!r}, schema={self.schema!r}, "
+               f"reverse_engine={self.reverse_engine!r})")
 
 @Operations.register_operation("alter_table_key")
 class AlterTableKeyOp(ops.AlterTableOp):
@@ -725,6 +711,11 @@ class AlterTableKeyOp(ops.AlterTableOp):
             reverse_key_columns=self.key_columns,
         )
 
+    def __str__(self) -> str:
+        return (f"AlterTableKeyOp(table_name={self.table_name!r}, "
+               f"key_type={self.key_type!r}, key_columns={self.key_columns!r}, "
+               f"schema={self.schema!r}, reverse_key_type={self.reverse_key_type!r}, "
+               f"reverse_key_columns={self.reverse_key_columns!r})")
 
 @Operations.register_operation("alter_table_partition")
 class AlterTablePartitionOp(ops.AlterTableOp):
@@ -783,6 +774,10 @@ class AlterTablePartitionOp(ops.AlterTableOp):
             reverse_partition_method=self.partition_method,
         )
 
+    def __str__(self) -> str:
+        return (f"AlterTablePartitionOp(table_name={self.table_name!r}, "
+               f"partition_method={self.partition_method!r}, schema={self.schema!r}, "
+               f"reverse_partition_method={self.reverse_partition_method!r})")
 
 @Operations.register_operation("alter_table_distribution")
 class AlterTableDistributionOp(ops.AlterTableOp):
@@ -853,6 +848,12 @@ class AlterTableDistributionOp(ops.AlterTableOp):
             reverse_buckets=self.buckets,
         )
 
+    def __str__(self) -> str:
+        return (f"AlterTableDistributionOp(table_name={self.table_name!r}, "
+               f"distribution_method={self.distribution_method!r}, buckets={self.buckets!r}, "
+               f"schema={self.schema!r}, reverse_distribution_method={self.reverse_distribution_method!r}, "
+               f"reverse_buckets={self.reverse_buckets!r})")
+
 
 @Operations.register_operation("alter_table_order")
 class AlterTableOrderOp(ops.AlterTableOp):
@@ -892,6 +893,10 @@ class AlterTableOrderOp(ops.AlterTableOp):
             reverse_order_by=self.order_by,
         )
 
+    def __str__(self) -> str:
+        return (f"AlterTableOrderOp(table_name={self.table_name!r}, "
+               f"order_by={self.order_by!r}, schema={self.schema!r}, "
+               f"reverse_order_by={self.reverse_order_by!r})")
 
 
 @Operations.register_operation("alter_table_properties")
@@ -931,3 +936,8 @@ class AlterTablePropertiesOp(ops.AlterTableOp):
             schema=self.schema,
             reverse_properties=self.properties,
         )
+
+    def __str__(self) -> str:
+        return (f"AlterTablePropertiesOp(table_name={self.table_name!r}, "
+               f"properties={self.properties!r}, schema={self.schema!r}, "
+               f"reverse_properties={self.reverse_properties!r})")

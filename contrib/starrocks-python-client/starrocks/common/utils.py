@@ -15,6 +15,7 @@
 import re
 from typing import Any, Dict, Iterator, List, Mapping, Optional, Tuple, Union
 
+from sqlalchemy import schema as sa_schema
 from sqlalchemy.exc import StatementError
 
 from starrocks.common.params import DialectName
@@ -72,7 +73,7 @@ class CaseInsensitiveDict(dict):
 
 
 def extract_dialect_options_as_case_insensitive(
-    dialect_options: Dict[str, Any],
+    table: sa_schema.Table
 ) -> CaseInsensitiveDict:
     """
     Extract StarRocks dialect-specific options and return as a CaseInsensitiveDict.
@@ -87,15 +88,15 @@ def extract_dialect_options_as_case_insensitive(
         CaseInsensitiveDict with non-None values
 
     Example:
-        >>> opts = extract_dialect_options_as_case_insensitive(table.dialect_options)
+        >>> opts = extract_dialect_options_as_case_insensitive(table)
         >>> security = opts.get('SECURITY')  # Works with any case
     """
-    raw_opts = dialect_options.get(DialectName, {})
+    raw_opts = table.dialect_options.get(DialectName, {})
     return CaseInsensitiveDict({k: v for k, v in raw_opts.items() if v is not None})
 
 
 def get_dialect_option(
-    dialect_options: Dict[str, Any],
+    table: sa_schema.Table,
     key: str,
     default: Optional[Any] = None,
 ) -> Any:
@@ -106,7 +107,7 @@ def get_dialect_option(
     Useful when you only need to retrieve a single option value.
 
     Args:
-        dialect_options: The dialect_options dict (e.g., Table.dialect_options)
+        Table: in which there is the dialect_options dict (e.g., Table.dialect_options)
         key: The option key to retrieve (case-insensitive)
         default: Default value if key not found
 
@@ -115,9 +116,9 @@ def get_dialect_option(
 
     Example:
         >>> from starrocks.common.params import TableInfoKey
-        >>> security = get_dialect_option(table.dialect_options, TableInfoKey.SECURITY)
+        >>> security = get_dialect_option(table, TableInfoKey.SECURITY)
     """
-    opts = extract_dialect_options_as_case_insensitive(dialect_options)
+    opts = extract_dialect_options_as_case_insensitive(table)
     return opts.get(key, default)
 
 

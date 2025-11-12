@@ -13,9 +13,9 @@
 # limitations under the License.
 
 import logging
-from typing import Any, Final
+from typing import Any
 
-from alembic.autogenerate import renderers
+from alembic.autogenerate import render as alembic_render, renderers
 from alembic.autogenerate.api import AutogenContext
 from sqlalchemy.types import TypeEngine
 
@@ -35,20 +35,20 @@ from .ops import (
 logger = logging.getLogger("starrocks.alembic.render")
 
 
-op_param_indent: Final[str] = " " * 4
-op_param_indent_with_line: Final[str] = "\n" + op_param_indent
-op_param_separator: Final[str] = "," + op_param_indent_with_line
-op_close_paren_indent: Final[str] = "\n"
+INDENT = " " * 4
 
 
-def _render_op_call(op_name: str, args: list[str]) -> str:
-    """Render an operation call, deciding between single-line and multi-line formatting."""
-    if len(args) <= 2:
-        # Simple case, render on a single line
-        return f"op.{op_name}({', '.join(args)})"
+def _render_op_call(autogen_context: AutogenContext, op_name: str, args: list[str]) -> str:
+    """Render an operation call, with Alembic prefix and standard 4-space indent per line.
+    """
+    # prefix = alembic_render._alembic_autogenerate_prefix(autogen_context)
+    prefix = "op."
+    size = sum(len(a) for a in args)
+    if len(args) <= 2 or size <= 80:
+        return f"{prefix}{op_name}({', '.join(args)})"
     else:
-        # Complex case, render on multiple lines
-        return f"op.{op_name}({op_param_separator.join(args)}{op_close_paren_indent})"
+        args_block = ",\n".join(f"{INDENT}{a}" for a in args)
+        return f"{prefix}{op_name}(\n{args_block}\n)"
 
 
 def render_column_type(type_: str, obj: Any, autogen_context: AutogenContext):
@@ -142,7 +142,7 @@ def _alter_view(autogen_context: AutogenContext, op: AlterViewOp) -> str:
     if op.security is not None:
         args.append(f"security={op.security!r}")
 
-    call = f"op.alter_view({(op_param_separator).join(args)}{op_close_paren_indent})"
+    call = _render_op_call(autogen_context, "alter_view", args)
     logger.debug("render alter_view: %s", call)
     return call
 
@@ -157,14 +157,16 @@ def _create_view(autogen_context: AutogenContext, op: CreateViewOp) -> str:
         args.append(f"schema={op.schema!r}")
     if op.comment:
         args.append(f"comment={op.comment!r}")
-    if op.security:
-        args.append(f"security={op.security!r}")
     if op.columns:
         # Render columns as a list of dicts
-        # Use repr() for clean formatting
         args.append(f"columns={op.columns!r}")
 
-    call = f"op.create_view({(op_param_separator).join(args)}{op_close_paren_indent})"
+    # Render dialect-specific kwargs (e.g., starrocks_security)
+    for key, value in op.kwargs.items():
+        if value is not None:
+            args.append(f"{key}={value!r}")
+
+    call = _render_op_call(autogen_context, "create_view", args)
     logger.debug("render create_view: %s", call)
     return call
 
@@ -177,7 +179,7 @@ def _drop_view(autogen_context: AutogenContext, op: DropViewOp) -> str:
     if op.if_exists:
         args.append(f"if_exists={op.if_exists!r}")
 
-    call = f"op.drop_view({', '.join(args)})"
+    call = _render_op_call(autogen_context, "drop_view", args)
     logger.debug("render drop_view: %s", call)
     return call
 
@@ -207,7 +209,7 @@ def _create_materialized_view(autogen_context: AutogenContext, op: CreateMateria
         if value is not None:
             args.append(f"{key}={value!r}")
 
-    call = _render_op_call("create_materialized_view", args)
+    call = _render_op_call(autogen_context, "create_materialized_view", args)
     logger.debug("render create_materialized_view: %s", call)
     return call
 
@@ -235,7 +237,7 @@ def _alter_materialized_view(autogen_context: AutogenContext, op: AlterMateriali
     if op.reverse_properties is not None:
         args.append(f"reverse_properties={op.reverse_properties!r}")
 
-    call = _render_op_call("alter_materialized_view", args)
+    call = _render_op_call(autogen_context, "alter_materialized_view", args)
     logger.debug("render alter_materialized_view: %s", call)
     return call
 
@@ -248,7 +250,7 @@ def _drop_materialized_view(autogen_context: AutogenContext, op: DropMaterialize
     if op.if_exists:
         args.append(f"if_exists={op.if_exists!r}")
 
-    call = f"op.drop_materialized_view({', '.join(args)})"
+    call = _render_op_call(autogen_context, "drop_materialized_view", args)
     logger.debug("render drop_materialized_view: %s", call)
     return call
 
@@ -265,7 +267,7 @@ def _render_alter_table_distribution(autogen_context: AutogenContext, op: AlterT
     if op.schema:
         args.append(f"schema={op.schema!r}")
 
-    return f"op.alter_table_distribution({', '.join(args)})"
+    return _render_op_call(autogen_context, "alter_table_distribution", args)
 
 
 @renderers.dispatch_for(AlterTableOrderOp)
@@ -278,7 +280,7 @@ def _render_alter_table_order(autogen_context: AutogenContext, op: AlterTableOrd
     if op.schema:
         args.append(f"schema={op.schema!r}")
 
-    return f"op.alter_table_order({', '.join(args)})"
+    return _render_op_call(autogen_context, "alter_table_order", args)
 
 
 @renderers.dispatch_for(AlterTablePropertiesOp)
@@ -291,4 +293,4 @@ def _render_alter_table_properties(autogen_context: AutogenContext, op: AlterTab
     if op.schema:
         args.append(f"schema={op.schema!r}")
 
-    return f"op.alter_table_properties({', '.join(args)})"
+    return _render_op_call(autogen_context, "alter_table_properties", args)

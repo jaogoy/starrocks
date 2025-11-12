@@ -60,7 +60,10 @@ def _normalize_py_call(s: str) -> str:
     # strip whitespace and collapse multiple spaces, ignore line breaks
     s = re.sub(r"\s+", " ", s).strip()
     s = re.sub(r" , ", ", ", s)
+    s = re.sub(r"\( ", "(", s)
     s = re.sub(r" \)", ")", s)
+    s = re.sub(r"\[ ", "[", s)
+    s = re.sub(r" \]", "]", s)
     return s
 
 
@@ -100,7 +103,8 @@ class TestTableRendering:
         ctx = Mock()
         op = AlterTableOrderOp("t1", "k1, k2", schema="s1")
         rendered = _render_alter_table_order(ctx, op)
-        assert rendered == "op.alter_table_order('t1', 'k1, k2', schema='s1')"
+        expected = "op.alter_table_order('t1', 'k1, k2', schema='s1')"
+        assert _normalize_py_call(rendered) == _normalize_py_call(expected)
 
         op = AlterTableOrderOp("t1", "k1", schema=None)
         rendered = _render_alter_table_order(ctx, op)
@@ -110,8 +114,9 @@ class TestTableRendering:
         ctx = Mock()
         op = AlterTablePropertiesOp("t1", {"replication_num": "1", "storage_medium": "SSD"}, schema="s1")
         rendered = _render_alter_table_properties(ctx, op)
+        rendered = _normalize_py_call(rendered)
         # repr() on dict is order-sensitive in older pythons, so check keys/values
-        assert "op.alter_table_properties('t1', " in rendered
+        assert _normalize_py_call("op.alter_table_properties('t1', ") in rendered
         assert "'replication_num': '1'" in rendered
         assert "'storage_medium': 'SSD'" in rendered
         assert "schema='s1'" in rendered
@@ -124,7 +129,8 @@ class TestTableRendering:
         # With schema and no properties
         op = AlterTablePropertiesOp("t1", {}, schema="s1")
         rendered = _render_alter_table_properties(ctx, op)
-        assert "op.alter_table_properties('t1', {}, schema='s1')" in rendered
+        expected = "op.alter_table_properties('t1', {}, schema='s1')"
+        assert _normalize_py_call(rendered) == _normalize_py_call(expected)
 
         # With no properties and no schema
         op = AlterTablePropertiesOp("t1", {}, schema=None)

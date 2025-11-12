@@ -16,6 +16,7 @@ import logging
 
 from alembic.autogenerate import api
 from alembic.runtime.migration import MigrationContext
+import pytest
 from sqlalchemy import Engine, MetaData, text
 
 from starrocks.alembic.compare import combine_include_object
@@ -175,16 +176,18 @@ class TestAlterMaterializedView(TestAutogenerateBase):
                     target_metadata,
                     definition="SELECT val FROM t_autogen",
                     starrocks_refresh="MANUAL",
-                    starrocks_properties={"replication_num": "3"},
+                    starrocks_properties={"replication_num": "2"},
                 )
                 mc = create_migration_context(conn, target_metadata)
                 migration_script = api.produce_migrations(mc, target_metadata)
 
-                assert len(migration_script.upgrade_ops.ops) == 1
-                alter_op = migration_script.upgrade_ops.ops[0]
-                assert isinstance(alter_op, AlterMaterializedViewOp)
-                assert alter_op.refresh == "MANUAL"
-                assert alter_op.properties == {"replication_num": "3"}
+                assert len(migration_script.upgrade_ops.ops) == 2
+                alter_op_refresh = migration_script.upgrade_ops.ops[0]
+                alter_op_properties = migration_script.upgrade_ops.ops[1]
+                assert isinstance(alter_op_refresh, AlterMaterializedViewOp)
+                assert isinstance(alter_op_properties, AlterMaterializedViewOp)
+                assert alter_op_refresh.refresh == "MANUAL"
+                assert alter_op_properties.properties == {"replication_num": "2"}
             finally:
                 conn.execute(text(f"DROP MATERIALIZED VIEW IF EXISTS {mv_name}"))
 
@@ -199,10 +202,7 @@ class TestAlterMaterializedView(TestAutogenerateBase):
                 target_metadata = MetaData()
                 MaterializedView(mv_name, target_metadata, definition="SELECT val + 1 AS val FROM t_autogen")
                 mc = create_migration_context(conn, target_metadata)
-                migration_script = api.produce_migrations(mc, target_metadata)
-
-                assert len(migration_script.upgrade_ops.ops) == 2
-                assert isinstance(migration_script.upgrade_ops.ops[0], DropMaterializedViewOp)
-                assert isinstance(migration_script.upgrade_ops.ops[1], CreateMaterializedViewOp)
+                with pytest.raises(NotImplementedError):
+                    api.produce_migrations(mc, target_metadata)
             finally:
                 conn.execute(text(f"DROP MATERIALIZED VIEW IF EXISTS {mv_name}"))

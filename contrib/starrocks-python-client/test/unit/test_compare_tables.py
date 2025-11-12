@@ -160,6 +160,7 @@ class TestRealTableObjects:
         result = upgrade_ops.ops
 
         # No changes should be detected
+        logger.info(f"result: {result[0] if result else 'no operations'}")
         assert result == []
 
     def test_real_table_with_table_args(self):

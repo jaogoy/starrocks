@@ -26,11 +26,7 @@ from starrocks.alembic.render import (
     _create_materialized_view,
     _drop_materialized_view,
 )
-
-
-def normalize_whitespace(s):
-    """Normalize whitespace for comparison."""
-    return " ".join(s.split())
+from test.unit.test_render import _normalize_py_call
 
 
 class TestMaterializedViewRendering:
@@ -100,7 +96,7 @@ class TestMaterializedViewRendering:
             starrocks_properties={'replication_num': '1'}
         )
         """
-        assert normalize_whitespace(rendered) == normalize_whitespace(expected)
+        assert _normalize_py_call(rendered) == _normalize_py_call(expected)
 
     # ========================================================================
     # DROP MATERIALIZED VIEW Rendering
@@ -148,7 +144,7 @@ class TestMaterializedViewRendering:
             properties={'k': 'v'}
         )
         """
-        assert normalize_whitespace(rendered) == normalize_whitespace(expected)
+        assert _normalize_py_call(rendered) == _normalize_py_call(expected)
 
     # ========================================================================
     # Reverse Operations
