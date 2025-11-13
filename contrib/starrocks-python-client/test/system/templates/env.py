@@ -88,8 +88,11 @@ def run_migrations_online() -> None:
         poolclass=pool.NullPool,
     )
 
-    # Allow custom include_object to be passed via config attributes
-    custom_include_object = context.config.attributes.get("include_object", None)
+    # Allow custom include_object / include_schemas / include_name to be passed via config attributes
+    custom_attrs = context.config.attributes
+    custom_include_object = custom_attrs.get("include_object", None)
+    include_schemas = custom_attrs.get("include_schemas", False)
+    include_name = custom_attrs.get("include_name", None)
     include_object_func = custom_include_object if custom_include_object else include_object_for_view_mv
 
     with connectable.connect() as connection:
@@ -101,6 +104,8 @@ def run_migrations_online() -> None:
             # user_module_prefix='sr.',
             render_item=render_column_type,
             include_object=include_object_func,
+            include_schemas=include_schemas,
+            include_name=include_name,
         )
 
         with context.begin_transaction():

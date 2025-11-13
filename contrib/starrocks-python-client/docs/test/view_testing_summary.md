@@ -435,9 +435,9 @@ AlterViewOp(
     definition=None,           # Not changed → None
     comment='New comment',     # Changed → set value
     security=None,             # Not changed → None
-    reverse_view_definition=None,
-    reverse_view_comment='Old comment',
-    reverse_view_security=None,
+    reverse_definition=None,
+    reverse_comment='Old comment',
+    reverse_security=None,
 )
 ```
 

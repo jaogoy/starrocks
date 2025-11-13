@@ -128,8 +128,7 @@ def _alter_view(autogen_context: AutogenContext, op: AlterViewOp) -> str:
     """Render an AlterViewOp for autogenerate."""
     args = [f"{op.view_name!r}"]
 
-    # Only include definition if it's not None
-    if op.definition is not None:
+    if op.definition:
         args.append(f"{op.definition!r}")
 
     if op.schema:
@@ -137,10 +136,20 @@ def _alter_view(autogen_context: AutogenContext, op: AlterViewOp) -> str:
     if op.columns:
         # Render columns as a list of dicts
         args.append(f"columns={op.columns!r}")
-    if op.comment is not None:
+    if op.comment or op.reverse_comment:
         args.append(f"comment={op.comment!r}")
-    if op.security is not None:
+    if op.security or op.reverse_security:
         args.append(f"security={op.security!r}")
+
+    # render reverse values for downgrade if present
+    if op.reverse_definition:
+        args.append(f"reverse_definition={op.reverse_definition!r}")
+    if op.reverse_columns:
+        args.append(f"reverse_columns={op.reverse_columns!r}")
+    if op.reverse_comment or op.comment:
+        args.append(f"reverse_comment={op.reverse_comment!r}")
+    if op.reverse_security or op.security:
+        args.append(f"reverse_security={op.reverse_security!r}")
 
     call = _render_op_call(autogen_context, "alter_view", args)
     logger.debug("render alter_view: %s", call)
@@ -226,15 +235,15 @@ def _alter_materialized_view(autogen_context: AutogenContext, op: AlterMateriali
     if op.schema:
         args.append(f"schema={op.schema!r}")
 
-    if op.refresh is not None:
+    if op.refresh or op.reverse_refresh:
         args.append(f"refresh={op.refresh!r}")
-    if op.properties is not None:
+    if op.properties or op.reverse_properties:
         args.append(f"properties={op.properties!r}")
 
     # Render reverse values for downgrade if present
-    if op.reverse_refresh is not None:
+    if op.reverse_refresh or op.refresh:
         args.append(f"reverse_refresh={op.reverse_refresh!r}")
-    if op.reverse_properties is not None:
+    if op.reverse_properties or op.properties:
         args.append(f"reverse_properties={op.reverse_properties!r}")
 
     call = _render_op_call(autogen_context, "alter_materialized_view", args)
@@ -262,7 +271,7 @@ def _render_alter_table_distribution(autogen_context: AutogenContext, op: AlterT
         f"{op.table_name!r}",
         f"{op.distribution_method!r}",
     ]
-    if op.buckets is not None:
+    if op.buckets:
         args.append(f"buckets={op.buckets}")
     if op.schema:
         args.append(f"schema={op.schema!r}")

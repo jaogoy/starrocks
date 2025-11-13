@@ -86,19 +86,75 @@ def run_migrations_online() -> None:
         ...
 ```
 
+#### Working with multiple schemas
+
+If your project uses multiple schemas (databases in StarRocks or MySQL), you must tell Alembic which schemas/names to include; otherwise, autogenerate may ignore schema-qualified objects.
+
+- Set `include_schemas=True` in both `run_migrations_offline()` and `run_migrations_online()`.
+- Provide an `include_name` callback to filter which schemas should be included in both `run_migrations_offline()` and `run_migrations_online()`.
+- You can still use `include_object` (or the combined filter shown below) for object-level filtering; `include_name` works at the name/schema level.
+
+> See [Alembic include_schema](https://alembic.sqlalchemy.org/en/latest/api/runtime.html#alembic.runtime.environment.EnvironmentContext.configure.params.include_name) for more information.
+>
+> **Note**: Make sure you have added `None` in the allowed schemas, where `None` is the current defult schema. And it's also recommended to add the default schema name in the allowed schemas.
+
+Example:
+
+```python
+# alembic/env.py
+from starrocks.alembic import render_column_type, include_object_for_view_mv
+from starrocks.alembic.starrocks import StarRocksImpl
+from myapps import models
+
+target_metadata = models.Base.metadata
+
+# Only include these schemas during autogenerate
+ALLOWED_SCHEMAS = {None, "my_schema", "another_schema"}
+
+def include_name(name, type_, parent_names):
+    if type_ == "schema":
+        return name in ALLOWED_SCHEMAS
+    return True
+
+def run_migrations_offline() -> None:
+    ...
+    context.configure(
+        # ... other parameters ...
+        render_item=render_column_type,
+        include_schemas=True,
+        include_name=include_name,
+        include_object=include_object_for_view_mv,
+    )
+    ...
+
+def run_migrations_online() -> None:
+    ...
+    with connectable.connect() as connection:
+        context.configure(
+            # ... other parameters ...
+            render_item=render_column_type,
+            include_schemas=True,
+            include_name=include_name,
+            include_object=include_object_for_view_mv,
+        )
+        ...
+```
+
 ### Advanced: Custom Object Filtering
 
 If you need to add custom filtering logic to control which database objects Alembic should process during autogeneration (e.g., excluding temporary tables, test tables, or certain schemas), you can use the `combine_include_object` helper function.
 
 #### Why is this needed?
 
-The `include_object_for_view_mv` callback is required for proper View/MV support. If you want to add your own filtering rules on top of this, you must combine them properly rather than replacing the callback entirely.
+The `include_object_for_view_mv` callback is required for proper View/MV support. If you want to add your own filtering rules on top of this, you must combine them properly rather than replacing the callback entirely. And it's easy to using `combine_include_object`.
+
+Normally, you only need to set `include_object=include_object_for_view_mv` without further object filtering.
 
 #### Example: Excluding temporary objects
 
 ```python
 # alembic/env.py
-from starrocks.alembic import render_column_type, combine_include_object
+from starrocks.alembic import combine_include_object, include_object_for_view_mv, render_column_type
 from starrocks.alembic.starrocks import StarRocksImpl
 
 from myapps import models
@@ -310,6 +366,11 @@ def downgrade():
   - Definition changes: emits `op.alter_view(...)` or `op.alter_materialized_view(...)`.
 - **StarRocks Limitation:** `ALTER VIEW` only supports redefining the `AS SELECT` clause. It does not support changing `COMMENT` or `SECURITY` directly. If only `COMMENT`/`SECURITY` change, no operation is emitted; if the definition also changes, those attributes are ignored and only `ALTER VIEW` is generated.
 - **Definition Comparison:** View/MV definition comparison uses normalization: remove identifier backticks, strip comments, collapse whitespace, and compare case-insensitively. But, it's still recommended to give the definition with a good and unified SQL style.
+
+#### Caveats: SQL rewriting and quoted strings
+
+- StarRocks may rewrite SQL for Views/Materialized Views (e.g., implicit casts, function normalization, expression reformatting). Even with normalization, this can still lead to unexpected diffs during autogenerate. When that happens, adjust the `definition` in your metadata to exactly match the definition stored in the database, then rerun autogenerate to avoid noisy diffs.
+- Any attributes that contain complex or quoted strings (e.g., `properties`, `comments`, partition expressions) may experience similar discrepancies. If you see unexpected diffs, manually reconcile your model values with the database values.
 
 ## 4. Modifying Existing Tables and Applying a New Migration
 

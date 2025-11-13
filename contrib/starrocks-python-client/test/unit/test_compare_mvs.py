@@ -23,14 +23,14 @@ from alembic.testing import eq_
 import pytest
 from sqlalchemy import MetaData, Table
 
-from starrocks.alembic.compare import compare_materialized_view
+from starrocks.alembic.compare import _compare_mv
 from starrocks.alembic.ops import AlterMaterializedViewOp, CreateMaterializedViewOp, DropMaterializedViewOp
 from starrocks.common.params import DialectName, TableInfoKey, TableKind, TableObjectInfoKey
 from starrocks.sql.schema import MaterializedView
 
 
 class TestCompareMaterializedView:
-    """Test compare_materialized_view function directly."""
+    """Test _compare_mv function directly."""
 
     def setup_method(self, method):
         self.mock_autogen_context = Mock()
@@ -85,7 +85,7 @@ class TestCompareMaterializedView:
         conn_mv = self._create_reflected_mv("my_mv", definition="SELECT 1", refresh="ASYNC")
         meta_mv = MaterializedView("my_mv", MetaData(), definition="SELECT 1", starrocks_refresh="MANUAL")
 
-        compare_materialized_view(self.mock_autogen_context, upgrade_ops, None, "my_mv", conn_mv, meta_mv)
+        _compare_mv(self.mock_autogen_context, upgrade_ops, None, "my_mv", conn_mv, meta_mv)
 
         eq_(len(upgrade_ops.ops), 1)
         op = upgrade_ops.ops[0]
@@ -107,7 +107,7 @@ class TestCompareMaterializedView:
             "my_mv", MetaData(), definition="SELECT 1", starrocks_properties={"replication_num": "3"}
         )
 
-        compare_materialized_view(self.mock_autogen_context, upgrade_ops, None, "my_mv", conn_mv, meta_mv)
+        _compare_mv(self.mock_autogen_context, upgrade_ops, None, "my_mv", conn_mv, meta_mv)
 
         eq_(len(upgrade_ops.ops), 1)
         op = upgrade_ops.ops[0]
@@ -127,7 +127,7 @@ class TestCompareMaterializedView:
         meta_mv = MaterializedView("my_mv", MetaData(), definition="SELECT 2")
 
         with pytest.raises(NotImplementedError, match="does not support altering MV definition"):
-            compare_materialized_view(self.mock_autogen_context, upgrade_ops, None, "my_mv", conn_mv, meta_mv)
+            _compare_mv(self.mock_autogen_context, upgrade_ops, None, "my_mv", conn_mv, meta_mv)
 
     def test_modify_mv_partition_by_changed(self):
         """DROP/CREATE: Partition by changed."""
@@ -136,7 +136,7 @@ class TestCompareMaterializedView:
         meta_mv = MaterializedView("my_mv", MetaData(), definition="SELECT 1", starrocks_partition_by="dt")
 
         with pytest.raises(NotImplementedError, match="does not support 'ALTER MATERIALIZED VIEW PARTITION BY'"):
-            compare_materialized_view(self.mock_autogen_context, upgrade_ops, None, "my_mv", conn_mv, meta_mv)
+            _compare_mv(self.mock_autogen_context, upgrade_ops, None, "my_mv", conn_mv, meta_mv)
 
     def test_modify_mv_distributed_by_changed(self):
         """DROP/CREATE: Distributed by changed."""
@@ -145,7 +145,7 @@ class TestCompareMaterializedView:
         meta_mv = MaterializedView("my_mv", MetaData(), definition="SELECT 1", starrocks_distributed_by="RANDOM")
 
         with pytest.raises(NotImplementedError, match="does not support 'ALTER MATERIALIZED VIEW DISTRIBUTED BY'"):
-            compare_materialized_view(self.mock_autogen_context, upgrade_ops, None, "my_mv", conn_mv, meta_mv)
+            _compare_mv(self.mock_autogen_context, upgrade_ops, None, "my_mv", conn_mv, meta_mv)
 
     def test_modify_mv_order_by_changed(self):
         """DROP/CREATE: Order by changed."""
@@ -154,7 +154,7 @@ class TestCompareMaterializedView:
         meta_mv = MaterializedView("my_mv", MetaData(), definition="SELECT 1", starrocks_order_by="name")
 
         with pytest.raises(NotImplementedError, match="does not support 'ALTER MATERIALIZED VIEW ORDER BY'"):
-            compare_materialized_view(self.mock_autogen_context, upgrade_ops, None, "my_mv", conn_mv, meta_mv)
+            _compare_mv(self.mock_autogen_context, upgrade_ops, None, "my_mv", conn_mv, meta_mv)
 
     # ========================================================================
     # No-Change Tests
@@ -185,7 +185,7 @@ class TestCompareMaterializedView:
             starrocks_properties={"replication_num": "1"},
         )
 
-        compare_materialized_view(self.mock_autogen_context, upgrade_ops, None, "my_mv", conn_mv, meta_mv)
+        _compare_mv(self.mock_autogen_context, upgrade_ops, None, "my_mv", conn_mv, meta_mv)
 
         eq_(len(upgrade_ops.ops), 0)
 
@@ -195,6 +195,6 @@ class TestCompareMaterializedView:
         conn_mv = self._create_reflected_mv(name="my_mv", definition="SELECT 1 AS `val`")
         meta_mv = MaterializedView("my_mv", MetaData(), definition="select 1 as val")
 
-        compare_materialized_view(self.mock_autogen_context, upgrade_ops, None, "my_mv", conn_mv, meta_mv)
+        _compare_mv(self.mock_autogen_context, upgrade_ops, None, "my_mv", conn_mv, meta_mv)
 
         eq_(len(upgrade_ops.ops), 0)

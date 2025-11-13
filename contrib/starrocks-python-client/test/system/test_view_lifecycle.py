@@ -25,6 +25,7 @@ from starrocks.alembic.compare import TableAttributeNormalizer
 from starrocks.common.params import TableKind, TableObjectInfoKey
 from starrocks.datatype import INTEGER, STRING, VARCHAR
 from starrocks.sql.schema import View
+from test import test_utils
 from test.system.conftest import AlembicTestEnv
 from test.system.test_table_lifecycle import EMPTY_DOWNGRADE_STR, EMPTY_UPGRADE_STR, ScriptContentParser
 from test.unit.test_render import _normalize_py_call
@@ -216,15 +217,17 @@ def test_alter_view_comment_and_security(
     # 3. Verify ALTER is generated
     script_content = ScriptContentParser.check_script_content(alembic_env, 1, "alter_comment_and_security")
     upgrade_content = ScriptContentParser.extract_upgrade_content(script_content)
-    assert "op.alter_view('user_view'" in upgrade_content
-    assert "comment='Modified comment'" in upgrade_content
-    assert "security='INVOKER'" in upgrade_content
+    upgrade_content = test_utils.normalize_sql(upgrade_content)
+    assert 'op.alter_view("user_view"' in upgrade_content
+    assert 'comment="Modified comment"' in upgrade_content
+    assert 'security="INVOKER"' in upgrade_content
     assert "SELECT id FROM user" not in upgrade_content
 
     downgrade_content = ScriptContentParser.extract_downgrade_content(script_content)
-    assert "op.alter_view('user_view'" in downgrade_content
-    assert "comment='Initial comment'" in downgrade_content
-    assert "security='NONE'" in downgrade_content
+    downgrade_content = test_utils.normalize_sql(downgrade_content)
+    assert 'op.alter_view("user_view"' in downgrade_content
+    assert 'comment="Initial comment"' in downgrade_content
+    assert 'security="NONE"' in downgrade_content
     assert "SELECT id FROM user" not in downgrade_content
 
 
@@ -260,10 +263,14 @@ def test_alter_view_definition(database: str, alembic_env: AlembicTestEnv, sr_en
     # 3. Verify and apply ALTER
     script_content = ScriptContentParser.check_script_content(alembic_env, 1, "alter_view")
     upgrade_content = ScriptContentParser.extract_upgrade_content(script_content)
-    assert "op.alter_view('user_view'" in upgrade_content
-    assert "SELECT id, name FROM user" in upgrade_content
+    upgrade_content = TableAttributeNormalizer.normalize_sql(upgrade_content, remove_qualifiers=True)
+    upgrade_content = test_utils.normalize_sql(upgrade_content)
+    assert 'alter_view("user_view"' in upgrade_content
+    assert test_utils.normalize_sql("SELECT id, name FROM user".lower()) in upgrade_content
     downgrade_content = ScriptContentParser.extract_downgrade_content(script_content)
-    assert "op.alter_view('user_view'" in _normalize_py_call(downgrade_content)
+    normed_downgrade_content = TableAttributeNormalizer.normalize_sql(downgrade_content, remove_qualifiers=True)
+    normed_downgrade_content = test_utils.normalize_sql(normed_downgrade_content)
+    assert 'alter_view("user_view"' in normed_downgrade_content
     # Normalize only the view definition inside the downgrade content
     view_def_match = re.search(r"op\.alter_view\(\s*'user_view',\s*'(.*?)'", downgrade_content, re.DOTALL)
     assert view_def_match is not None
@@ -369,7 +376,7 @@ def test_columns_change_ignored(database: str, alembic_env: AlembicTestEnv, sr_e
         Column('name', VARCHAR(50), comment='Modified name'),  # Changed comment
         definition='SELECT id, name FROM user',  # Definition unchanged
     )
-    with pytest.raises(ValueError, match="StarRocks does not support altering view columns independently"):
+    with pytest.raises(NotImplementedError, match="StarRocks does not support altering view columns independently"):
         alembic_env.harness.generate_autogen_revision(metadata=AlteredBase.metadata, message="Modify column comment")
 
     # 3. Verify no ALTER is generated (only definition changes trigger ALTER)

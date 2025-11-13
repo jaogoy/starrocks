@@ -14,7 +14,7 @@
 
 import logging
 
-from sqlalchemy import Column, Table, inspect
+from sqlalchemy import Column, Table, inspect, text
 from sqlalchemy.orm import declarative_base
 
 from starrocks.common.utils import TableAttributeNormalizer
@@ -189,3 +189,92 @@ def test_mixed_schema_lifecycle(alembic_env: AlembicTestEnv, sr_engine):
     assert "v2" in views
     assert "mv1" in mv_names
     assert "mv2" not in mv_names
+
+
+def test_multi_schema_support(alembic_env: AlembicTestEnv, sr_engine):
+    """Tests that autogenerate correctly handles multiple schemas with filtering."""
+    schema_one = "alembic_schema_one"
+    schema_two = "alembic_schema_two"  # This schema should be ignored
+
+    with sr_engine.connect() as conn:
+        for s in [schema_one, schema_two]:
+            conn.execute(text(f"DROP SCHEMA IF EXISTS {s}"))
+            conn.execute(text(f"CREATE SCHEMA {s}"))
+
+        # Create an object in the ignored schema to ensure it's not picked up for a DROP operation
+        conn.execute(
+            text(f"CREATE TABLE {schema_two}.ignored_table (id INT) DISTRIBUTED BY HASH(id) PROPERTIES ('replication_num' = '1')")
+        )
+
+    # Store original config attributes to restore later
+    cfg = alembic_env.alembic_cfg
+    old_include_schemas = cfg.attributes.get("include_schemas")
+    old_include_name = cfg.attributes.get("include_name")
+
+    try:
+        # 1. Define metadata with objects in default and schema_one
+        Base = declarative_base()
+        Table("t_default", Base.metadata, Column("id", INTEGER), starrocks_properties={"replication_num": "1"})
+        Table("t_schema1", Base.metadata, Column("id", INTEGER), schema=schema_one, starrocks_properties={"replication_num": "1"})
+        View("v_schema1", Base.metadata, definition=f"SELECT id FROM {schema_one}.t_schema1", schema=schema_one)
+
+        # 2. Configure autogenerate with include_schemas and include_name via alembic_cfg.attributes
+        def include_name(name, type_, parent_names):
+            if type_ == "schema":
+                return name in [None, schema_one]  # None represents the default schema
+            else:
+                return True
+
+        cfg.attributes["include_schemas"] = True
+        cfg.attributes["include_name"] = include_name
+
+        # 3. Generate and verify script
+        alembic_env.harness.generate_autogen_revision(metadata=Base.metadata, message="Multi-schema support")
+        script_content = ScriptContentParser.check_script_content(alembic_env, 1, "multi_schema_support")
+        upgrade_content = ScriptContentParser.extract_upgrade_content(script_content)
+        upgrade_content = test_utils.normalize_sql(upgrade_content)
+
+        # Assertions for default schema object (no schema= parameter)
+        assert 'op.create_table("t_default"' in upgrade_content
+        assert 'create_table("t_default", schema=' not in upgrade_content
+
+        # Assertions for schema_one objects (MUST have schema= parameter)
+        assert f'op.create_table("t_schema1"' in upgrade_content
+        assert f'schema="{schema_one}"' in upgrade_content
+        assert f'op.create_view("v_schema1"' in upgrade_content
+
+        # Assertion to ensure ignored schema is not present
+        assert "ignored_table" not in upgrade_content
+        assert schema_two not in upgrade_content
+
+        # 4. Upgrade and verify DB state
+        alembic_env.harness.upgrade("head")
+        inspector = inspect(sr_engine)
+        assert "t_default" in inspector.get_table_names()  # default schema
+        assert "t_schema1" in inspector.get_table_names(schema=schema_one)
+        assert "v_schema1" in inspector.get_view_names(schema=schema_one)
+        assert "ignored_table" in inspector.get_table_names(schema=schema_two)
+
+        # 5. Downgrade and verify DB state
+        alembic_env.harness.downgrade("-1")
+        inspector.clear_cache()
+        assert "t_default" not in inspector.get_table_names()
+        assert "t_schema1" not in inspector.get_table_names(schema=schema_one)
+        assert "v_schema1" not in inspector.get_view_names(schema=schema_one)
+        assert "ignored_table" in inspector.get_table_names(schema=schema_two)
+
+    finally:
+        with sr_engine.connect() as conn:
+            for s in [schema_one, schema_two]:
+                conn.execute(text(f"DROP SCHEMA IF EXISTS {s}"))
+
+        # Restore original config attributes
+        if old_include_schemas is None:
+            cfg.attributes.pop("include_schemas", None)
+        else:
+            cfg.attributes["include_schemas"] = old_include_schemas
+
+        if old_include_name is None:
+            cfg.attributes.pop("include_name", None)
+        else:
+            cfg.attributes["include_name"] = old_include_name

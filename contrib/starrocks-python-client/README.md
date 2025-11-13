@@ -127,7 +127,46 @@ my_core_table = Table(
 metadata.create_all(engine)
 ```
 
-> For a complete guide on defining tables (Core and ORM), executing queries, and using advanced features, please see the **[SQLAlchemy Usage Guide](./docs/usage_guide/sqlalchemy.md)**.
+For a complete guide on defining tables (Core and ORM), executing queries, and using advanced features, please see the **[SQLAlchemy Usage Guide](./docs/usage_guide/sqlalchemy.md)**.
+
+For a detailed reference on all StarRocks-specific table attributes and data types, please see the **[Table Definition Reference](./docs/usage_guide/tables.md)**.
+
+### Example: Views and Materialized Views
+
+Create a View and a Materialized View using the StarRocks helpers. These behave like SQLAlchemy `Table` objects and are created with `metadata.create_all(engine)`.
+
+```python
+from sqlalchemy import MetaData, text
+from starrocks.sql.schema import View, MaterializedView
+
+metadata = MetaData()
+
+# Create a simple View (columns inferred from SELECT)
+user_view = View(
+    'user_view',
+    metadata,
+    definition='SELECT id, name FROM my_core_table WHERE name IS NOT NULL',
+    comment='Active users'
+)
+
+# Create a simple Materialized View (asynchronous refresh)
+user_stats_mv = MaterializedView(
+    'user_stats_mv',
+    metadata,
+    definition='SELECT id, COUNT(*) AS cnt FROM my_core_table GROUP BY id',
+    starrocks_refresh='ASYNC'
+)
+
+# Create the view and MV in the database
+metadata.create_all(engine)
+
+# Query the view or MV like normal tables
+with engine.connect() as conn:
+    rows = conn.execute(text("SELECT * FROM user_view LIMIT 5")).fetchall()
+    print(rows)
+```
+
+You can refer to **[Views Definition Reference](./docs/usage_guide/views.md)** and **[Materialized View Definition Reference](./docs/usage_guide/materialized_views.md)** for more detailed information.
 
 ### Alembic Integration for Schema Migrations
 
@@ -140,13 +179,30 @@ pip install "alembic>=1.16"
 alembic init alembic
 ```
 
-#### 2. Configure your Database URL
+#### 2. Configure your Database URL, Logging Info
 
 In `alembic.ini`, set the `sqlalchemy.url` to your StarRocks connection string.
 
 ```ini
 # alembic.ini
 sqlalchemy.url = starrocks://myname:pswd1234@localhost:9030/mydatabase
+```
+
+It's better to print the log from this `starrocks-sqlalchemy` when runing alembic command. You can add following logging configration in the `alembic.ini` file.
+
+```ini
+# alembic.ini
+[loggers]
+# Append starrocks model at the following line
+# keys = root,sqlalchemy,alembic
+keys = root,sqlalchemy,alembic,starrocks
+
+
+# Add following lines after `[logger_alembic]` section
+[logger_starrocks]
+level = INFO
+handlers =
+qualname = starrocks
 ```
 
 #### 3. Configure your Models for Autogeneration
@@ -188,8 +244,6 @@ alembic upgrade head
 ```
 
 For a full tutorial on advanced topics like data migrations, handling complex types, and managing views, please refer to the **[Alembic Integration Guide](./docs/usage_guide/alembic.md)**.
-
-For a detailed reference on all StarRocks-specific table attributes and data types, please see the **[Table Definition Reference](./docs/usage_guide/tables.md)**.
 
 ## Contributing
 

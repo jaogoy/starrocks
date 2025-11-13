@@ -36,7 +36,7 @@ from starrocks.common.params import (
     TableObjectInfoKey,
 )
 from starrocks.common.types import PartitionType
-from starrocks.common.utils import SQLParseError
+from starrocks.common.utils import SQLParseError, TableAttributeNormalizer
 
 from .common import utils
 from .drivers.parsers import parse_data_type, parse_mv_refresh_clause
@@ -371,8 +371,9 @@ class StarRocksTableDefinitionParser(object):
                 raise SQLParseError(f"Invalid partition clause, no columns specified: {partition_clause}")
         else:
             # If not RANGE or LIST, it's an expression-based partition
+            # normalize partition method to be without outer parentheses
             partition_type = PartitionType.EXPRESSION
-            partition_method = partition_clause
+            partition_method = TableAttributeNormalizer.remove_outer_parentheses(partition_clause)
 
         return ReflectedPartitionInfo(
             type=partition_type,

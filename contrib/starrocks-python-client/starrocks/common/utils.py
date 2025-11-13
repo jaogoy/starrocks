@@ -133,7 +133,6 @@ class TableAttributeNormalizer:
     # Matches spaces around closing parenthesis
     _CLOSE_PAREN_SPACE_PATTERN = re.compile(r'\s*(\)\s?)\s*')
     _COMMA_SPACE_PATTERN = re.compile(r'\s*,\s*')
-    _OUTER_PAREN_PATTERN = re.compile(r'^\s*\(\s*(.*?)\s*\)\s*$')
 
     @staticmethod
     def strip_identifier_backticks(sql: str) -> str:
@@ -297,8 +296,19 @@ class TableAttributeNormalizer:
     @staticmethod
     def remove_outer_parentheses(text: str) -> str:
         """Remove outer parentheses from text."""
-        match = TableAttributeNormalizer._OUTER_PAREN_PATTERN.match(text)
-        return match.group(1) if match else text.strip()
+        if not text:
+            return text
+        text = text.strip()
+        if text.startswith('(') and text.endswith(')'):
+            return text[1:-1].strip()
+        return text
+
+    @staticmethod
+    def simply_normalize_quotes(text: Optional[str]) -> Optional[str]:
+        """Simply normalize double quotes to single quotes."""
+        if not text:
+            return text
+        return text.replace('"', "'")
 
 
 def find_matching_parenthesis(text: str, start_index: int = 0) -> int:

@@ -1129,7 +1129,7 @@ context.configure(
 )
 
 @comparators_dispatch_for_starrocks("schema")
-def autogen_for_views(autogen_context, upgrade_ops, schemas):
+def _autogen_for_views(autogen_context, upgrade_ops, schemas):
     """Specifically handle views"""
     for schema in schemas:
         # Database views
@@ -1143,7 +1143,7 @@ def autogen_for_views(autogen_context, upgrade_ops, schemas):
         _compare_objects(conn_views, meta_views, 'VIEW', ...)
 
 @comparators_dispatch_for_starrocks("schema")
-def autogen_for_mvs(autogen_context, upgrade_ops, schemas):
+def _autogen_for_mvs(autogen_context, upgrade_ops, schemas):
     """Specifically handle MVs"""
     for schema in schemas:
         conn_mvs = {name: inspector.reflect_table(name, schema)
@@ -1230,7 +1230,7 @@ class CreateViewOp(ops.MigrateOperation):
 
 **1. AlterViewOp Column Support**
 
-`AlterViewOp` includes `columns` and `reverse_view_columns` parameters:
+`AlterViewOp` includes `columns` and `reverse_columns` parameters:
 
 - Columns can only change together with definition in StarRocks
 - Needed for rendering complete view information and supporting reverse operations
@@ -1426,7 +1426,7 @@ def combine_include_object(user_filter=None):
 
 # Custom comparators must call run_object_filters
 @comparators.dispatch_for("schema")
-def autogen_for_views(autogen_context, upgrade_ops, schemas):
+def _autogen_for_views(autogen_context, upgrade_ops, schemas):
     for schema_name in schemas:
         # Get Views from metadata
         for view in _get_views_from_metadata(autogen_context, schema_name):
@@ -1482,7 +1482,7 @@ The following attributes cannot be altered via `ALTER MATERIALIZED VIEW`:
 **Comparison Strategy**:
 
 ```python
-def compare_materialized_view(autogen_context, upgrade_ops, schema, mv_name, conn_mv, metadata_mv):
+def _compare_mv(autogen_context, upgrade_ops, schema, mv_name, conn_mv, metadata_mv):
     """
     Compare MV and generate operations.
 

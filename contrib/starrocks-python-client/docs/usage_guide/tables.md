@@ -405,25 +405,29 @@ class PageViewAggregates(Base):
 
 The `starrocks-sqlalchemy` dialect integrates with Alembic to support autogeneration of schema migrations. When you run `alembic revision --autogenerate`, it will compare both the table-level and column-level attributes (mainly for `starrocks_` prefixed attributes) against the database and generate the appropriate DDL.
 
-**To ensure Alembic correctly recognizes StarRocks column types during autogeneration, you need to configure your `env.py` file and model definitions as follows:**
+**To ensure Alembic correctly recognizes StarRocks column types and handles Views/Materialized Views during autogeneration, configure your `env.py` and model definitions as follows:**
 
 ### 1. Configure `env.py` for Column Type Rendering
 
-In your Alembic `env.py` file, within both the `run_migrations_offline` and `run_migrations_online` functions, you must add the `render_item=render.render_column_type` parameter to `context.configure()`. This enables Alembic to correctly interpret and generate DDL for StarRocks-specific column types.
+In your Alembic `env.py` file, within both the `run_migrations_offline` and `run_migrations_online` functions, add:
 
-First, ensure you have the necessary import:
+- `render_item=render_column_type` so Alembic correctly interprets StarRocks-specific column types
+- `include_object=include_object_for_view_mv` so autogenerate properly handles Views and Materialized Views
+
+Imports:
 
 ```python
-from starrocks.alembic import render
+from starrocks.alembic import render_column_type, include_object_for_view_mv
 ```
 
-Then, modify `context.configure()`:
+Then, modify `context.configure()` in both functions:
 
 ```python
 # In run_migrations_offline() and run_migrations_online()
 context.configure(
     # ... other parameters ...
-    render_item=render.render_column_type,
+    render_item=render_column_type,
+    include_object=include_object_for_view_mv,
 )
 ```
 
@@ -438,7 +442,7 @@ from starrocks import *
 Alternatively, you can import specific types as needed:
 
 ```python
-from starrocks.common.types import TINYINT, VARCHAR
+from starrocks import TINYINT, VARCHAR
 ```
 
 This ensures that your model definitions correctly map to StarRocks's native data types, allowing `alembic revision --autogenerate` to produce accurate migration scripts.
