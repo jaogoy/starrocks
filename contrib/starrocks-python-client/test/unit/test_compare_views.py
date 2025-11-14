@@ -25,7 +25,7 @@ from alembic.operations import ops
 from alembic.testing import eq_
 from sqlalchemy import Column, MetaData, Table
 
-from starrocks.alembic.compare import autogen_for_views, compare_view
+from starrocks.alembic.compare import _autogen_for_views, compare_view
 from starrocks.alembic.ops import AlterViewOp, CreateViewOp, DropViewOp
 from starrocks.common.params import TableKind, TableObjectInfoKey
 from starrocks.datatype import VARCHAR
@@ -62,7 +62,7 @@ class TestAutogenerateViews:
         m2 = MetaData()
         view = View('my_test_view', m2, definition='SELECT 1')
         self.mock_autogen_context.metadata = m2
-        autogen_for_views(self.mock_autogen_context, upgrade_ops, [None])
+        _autogen_for_views(self.mock_autogen_context, upgrade_ops, [None])
 
         eq_(len(upgrade_ops.ops), 1)
         op = upgrade_ops.ops[0]
@@ -77,7 +77,7 @@ class TestAutogenerateViews:
         m2 = MetaData()
         view = View('commented_view', m2, definition='SELECT 1', comment='This is a comment')
         self.mock_autogen_context.metadata = m2
-        autogen_for_views(self.mock_autogen_context, upgrade_ops, [None])
+        _autogen_for_views(self.mock_autogen_context, upgrade_ops, [None])
 
         eq_(len(upgrade_ops.ops), 1)
         op = upgrade_ops.ops[0]
@@ -92,7 +92,7 @@ class TestAutogenerateViews:
         m2 = MetaData()
         view = View('my_secure_view', m2, definition='SELECT 1', starrocks_security='INVOKER')
         self.mock_autogen_context.metadata = m2
-        autogen_for_views(self.mock_autogen_context, upgrade_ops, [None])
+        _autogen_for_views(self.mock_autogen_context, upgrade_ops, [None])
 
         eq_(len(upgrade_ops.ops), 1)
         op = upgrade_ops.ops[0]
@@ -113,7 +113,7 @@ class TestAutogenerateViews:
             definition='SELECT id, name FROM users'
         )
         self.mock_autogen_context.metadata = m2
-        autogen_for_views(self.mock_autogen_context, upgrade_ops, [None])
+        _autogen_for_views(self.mock_autogen_context, upgrade_ops, [None])
 
         eq_(len(upgrade_ops.ops), 1)
         op = upgrade_ops.ops[0]
@@ -141,7 +141,7 @@ class TestAutogenerateViews:
             starrocks_security='INVOKER'
         )
         self.mock_autogen_context.metadata = m2
-        autogen_for_views(self.mock_autogen_context, upgrade_ops, [None])
+        _autogen_for_views(self.mock_autogen_context, upgrade_ops, [None])
 
         eq_(len(upgrade_ops.ops), 1)
         op = upgrade_ops.ops[0]
@@ -162,7 +162,7 @@ class TestAutogenerateViews:
         self.mock_inspector.get_view_names.return_value = ['my_test_view']
         m2 = MetaData()
         self.mock_autogen_context.metadata = m2
-        autogen_for_views(self.mock_autogen_context, upgrade_ops, [None])
+        _autogen_for_views(self.mock_autogen_context, upgrade_ops, [None])
 
         eq_(len(upgrade_ops.ops), 1)
         op = upgrade_ops.ops[0]
@@ -269,7 +269,7 @@ class TestCompareView:
         eq_(op.definition, 'SELECT 2')
 
         # Validate reverse (existing/database) values for downgrade
-        eq_(op.reverse_definition, 'SELECT 1')
+        eq_(op.existing_definition, 'SELECT 1')
 
     # ========================================================================
     # ALTER VIEW - Comment (StarRocks limitation - not supported via ALTER)
@@ -315,9 +315,9 @@ class TestCompareView:
             eq_(op.security, None)  # Not changed
 
             # Validate reverse (existing/database) values for downgrade
-            eq_(op.reverse_comment, None)  # Changed (was None)
-            eq_(op.reverse_definition, None)  # Not changed
-            eq_(op.reverse_security, None)  # Not changed
+            eq_(op.existing_comment, None)  # Changed (was None)
+            eq_(op.existing_definition, None)  # Not changed
+            eq_(op.existing_security, None)  # Not changed
 
             # Should have warning about comment not supported
             assert len(w) == 1
@@ -360,9 +360,9 @@ class TestCompareView:
             eq_(op.security, None)  # Not changed
 
             # Validate reverse (existing/database) values for downgrade
-            eq_(op.reverse_definition, None)  # Not changed
-            eq_(op.reverse_comment, 'Old comment')  # Changed (was 'Old comment')
-            eq_(op.reverse_security, None)  # Not changed
+            eq_(op.existing_definition, None)  # Not changed
+            eq_(op.existing_comment, 'Old comment')  # Changed (was 'Old comment')
+            eq_(op.existing_security, None)  # Not changed
 
             assert len(w) == 1
             assert "does not support altering view comments" in str(w[0].message)
@@ -404,9 +404,9 @@ class TestCompareView:
             eq_(op.security, None)  # Not changed
 
             # Validate reverse (existing/database) values for downgrade
-            eq_(op.reverse_definition, None)  # Not changed
-            eq_(op.reverse_comment, 'Old comment')  # Changed
-            eq_(op.reverse_security, None)  # Not changed
+            eq_(op.existing_definition, None)  # Not changed
+            eq_(op.existing_comment, 'Old comment')  # Changed
+            eq_(op.existing_security, None)  # Not changed
 
             assert len(w) == 1
             assert "does not support altering view comments" in str(w[0].message)
@@ -472,9 +472,9 @@ class TestCompareView:
             eq_(op.comment, None)  # Not changed
 
             # Validate reverse (existing/database) values for downgrade
-            eq_(op.reverse_security, None)  # Changed (was None)
-            eq_(op.reverse_definition, None)  # Not changed
-            eq_(op.reverse_comment, None)  # Not changed
+            eq_(op.existing_security, None)  # Changed (was None)
+            eq_(op.existing_definition, None)  # Not changed
+            eq_(op.existing_comment, None)  # Not changed
 
             assert len(w) == 1
             assert "does not support altering view security" in str(w[0].message)
@@ -516,9 +516,9 @@ class TestCompareView:
             eq_(op.security, None)  # Changed (removed)
 
             # Validate reverse (existing/database) values for downgrade
-            eq_(op.reverse_definition, None)  # Not changed
-            eq_(op.reverse_comment, None)  # Not changed
-            eq_(op.reverse_security, 'INVOKER')  # Changed (was INVOKER)
+            eq_(op.existing_definition, None)  # Not changed
+            eq_(op.existing_comment, None)  # Not changed
+            eq_(op.existing_security, 'INVOKER')  # Changed (was INVOKER)
 
             assert len(w) == 1
             assert "does not support altering view security" in str(w[0].message)
@@ -561,9 +561,9 @@ class TestCompareView:
             eq_(op.security, 'NONE')  # Changed
 
             # Validate reverse (existing/database) values for downgrade
-            eq_(op.reverse_definition, None)  # Not changed
-            eq_(op.reverse_comment, None)  # Not changed
-            eq_(op.reverse_security, 'INVOKER')  # Changed (was INVOKER)
+            eq_(op.existing_definition, None)  # Not changed
+            eq_(op.existing_comment, None)  # Not changed
+            eq_(op.existing_security, 'INVOKER')  # Changed (was INVOKER)
 
             assert len(w) == 1
             assert "does not support altering view security" in str(w[0].message)

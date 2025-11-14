@@ -281,9 +281,9 @@ FROM users"""
             schema="s1",
             comment="New Comment",
             security="DEFINER",
-            reverse_definition="SELECT 1",
-            reverse_comment="Old Comment",
-            reverse_security="INVOKER",
+            existing_definition="SELECT 1",
+            existing_comment="Old Comment",
+            existing_security="INVOKER",
         )
         reverse_op = alter_op.reverse()
         assert isinstance(reverse_op, AlterViewOp)
@@ -294,9 +294,9 @@ FROM users"""
         assert reverse_op.comment == "Old Comment"
         assert reverse_op.security == "INVOKER"
         # And the reverse attributes of the reverse op should be the new attributes of the original op
-        assert reverse_op.reverse_definition == "SELECT 2"
-        assert reverse_op.reverse_comment == "New Comment"
-        assert reverse_op.reverse_security == "DEFINER"
+        assert reverse_op.existing_definition == "SELECT 2"
+        assert reverse_op.existing_comment == "New Comment"
+        assert reverse_op.existing_security == "DEFINER"
 
     def test_drop_view_reverse(self):
         """Reverse: DropViewOp reverses to CreateViewOp (with and without columns)."""
@@ -304,8 +304,8 @@ FROM users"""
         drop_op = DropViewOp(
             "v1",
             schema=None,
-            reverse_definition="SELECT 1",
-            reverse_comment="Test view",
+            existing_definition="SELECT 1",
+            existing_comment="Test view",
             starrocks_security="INVOKER"
         )
         reverse_op = drop_op.reverse()
@@ -319,10 +319,10 @@ FROM users"""
         drop_op_with_cols = DropViewOp(
             "v2",
             schema=None,
-            reverse_definition="SELECT id, name FROM users",
-            reverse_comment="User view",
+            existing_definition="SELECT id, name FROM users",
+            existing_comment="User view",
             starrocks_security="INVOKER",
-            reverse_columns=[
+            existing_columns=[
                 {'name': 'id', 'comment': None},
                 {'name': 'name', 'comment': 'User name'}
             ]

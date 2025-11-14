@@ -89,10 +89,10 @@ class AlterViewOp(ops.MigrateOperation):
         columns: Union[List[Dict], None] = None,
         comment: Optional[str] = None,
         security: Optional[str] = None,
-        reverse_definition: Optional[str] = None,
-        reverse_columns: Union[List[Dict], None] = None,
-        reverse_comment: Optional[str] = None,
-        reverse_security: Optional[str] = None,
+        existing_definition: Optional[str] = None,
+        existing_columns: Union[List[Dict], None] = None,
+        existing_comment: Optional[str] = None,
+        existing_security: Optional[str] = None,
     ):
         """
         Definition usually should not be None. But for future, we may want to support Alter View by only comment or security,
@@ -104,10 +104,10 @@ class AlterViewOp(ops.MigrateOperation):
         self.columns = columns
         self.comment = comment
         self.security = security
-        self.reverse_definition = reverse_definition
-        self.reverse_columns = reverse_columns
-        self.reverse_comment = reverse_comment
-        self.reverse_security = reverse_security
+        self.existing_definition = existing_definition
+        self.existing_columns = existing_columns
+        self.existing_comment = existing_comment
+        self.existing_security = existing_security
 
     def to_view(self, metadata: Optional[MetaData] = None) -> "View":
         return View(
@@ -130,10 +130,10 @@ class AlterViewOp(ops.MigrateOperation):
         columns: Union[List[Dict], None] = None,
         comment: Optional[str] = None,
         security: Optional[str] = None,
-        reverse_definition: Optional[str] = None,
-        reverse_columns: Union[List[Dict], None] = None,
-        reverse_comment: Optional[str] = None,
-        reverse_security: Optional[str] = None,
+        existing_definition: Optional[str] = None,
+        existing_columns: Union[List[Dict], None] = None,
+        existing_comment: Optional[str] = None,
+        existing_security: Optional[str] = None,
     ):
         """Invoke an ALTER VIEW operation."""
         op = cls(
@@ -143,10 +143,10 @@ class AlterViewOp(ops.MigrateOperation):
             columns=columns,
             comment=comment,
             security=security,
-            reverse_definition=reverse_definition,
-            reverse_columns=reverse_columns,
-            reverse_comment=reverse_comment,
-            reverse_security=reverse_security,
+            existing_definition=existing_definition,
+            existing_columns=existing_columns,
+            existing_comment=existing_comment,
+            existing_security=existing_security,
         )
         return operations.invoke(op)
 
@@ -156,15 +156,15 @@ class AlterViewOp(ops.MigrateOperation):
 
         return AlterViewOp(
             self.view_name,
-            definition=self.reverse_definition,
+            definition=self.existing_definition,
             schema=self.schema,
-            columns=self.reverse_columns,
-            comment=self.reverse_comment,
-            security=self.reverse_security,
-            reverse_definition=self.definition,
-            reverse_columns=self.columns,
-            reverse_comment=self.comment,
-            reverse_security=self.security,
+            columns=self.existing_columns,
+            comment=self.existing_comment,
+            security=self.existing_security,
+            existing_definition=self.definition,
+            existing_columns=self.columns,
+            existing_comment=self.comment,
+            existing_security=self.security,
         )
 
     def __str__(self) -> str:
@@ -173,10 +173,10 @@ class AlterViewOp(ops.MigrateOperation):
             f"AlterViewOp(view_name={self.view_name!r}, schema={self.schema!r}, "
             f"definition=({self.definition!r}), columns={self.columns!r}, comment={self.comment!r}, "
             f"security={self.security}, "
-            f"reverse_definition=({self.reverse_definition}), "
-            f"reverse_columns={self.reverse_columns!r}, "
-            f"reverse_comment={self.reverse_comment!r}, "
-            f"reverse_security={self.reverse_security})"
+            f"existing_definition=({self.existing_definition}), "
+            f"existing_columns={self.existing_columns!r}, "
+            f"existing_comment={self.existing_comment!r}, "
+            f"existing_security={self.existing_security})"
         )
 
 
@@ -275,17 +275,17 @@ class DropViewOp(ops.MigrateOperation):
         view_name: str,
         schema: Optional[str] = None,
         if_exists: bool = False,
-        reverse_definition: Optional[str] = None,
-        reverse_columns: Optional[List[Dict]] = None,
-        reverse_comment: Optional[str] = None,
+        existing_definition: Optional[str] = None,
+        existing_columns: Optional[List[Dict]] = None,
+        existing_comment: Optional[str] = None,
         **kwargs,
     ):
         self.view_name = view_name
         self.schema = schema
         self.if_exists = if_exists
-        self.reverse_definition = reverse_definition
-        self.reverse_columns = reverse_columns
-        self.reverse_comment = reverse_comment
+        self.existing_definition = existing_definition
+        self.existing_columns = existing_columns
+        self.existing_comment = existing_comment
         self.kwargs = _extract_starrocks_dialect_kwargs(kwargs)
 
     def to_view(self, metadata: Optional[MetaData] = None) -> "View":
@@ -308,9 +308,9 @@ class DropViewOp(ops.MigrateOperation):
         return cls(
             view.name,
             schema=view.schema,
-            reverse_definition=view.info.get(TableObjectInfoKey.DEFINITION),
-            reverse_columns=extract_view_columns(view),
-            reverse_comment=view.comment,
+            existing_definition=view.info.get(TableObjectInfoKey.DEFINITION),
+            existing_columns=extract_view_columns(view),
+            existing_comment=view.comment,
             **view.dialect_kwargs,
         )
 
@@ -327,14 +327,14 @@ class DropViewOp(ops.MigrateOperation):
         return operations.invoke(op)
 
     def reverse(self) -> "CreateViewOp":
-        if self.reverse_definition is None:
+        if self.existing_definition is None:
             raise NotImplementedError("Cannot reverse a DropViewOp without the view's definition.")
         op = CreateViewOp(
             self.view_name,
-            definition=self.reverse_definition,
+            definition=self.existing_definition,
             schema=self.schema,
-            columns=self.reverse_columns,
-            comment=self.reverse_comment,
+            columns=self.existing_columns,
+            comment=self.existing_comment,
             **self.kwargs,
         )
         # logger.debug("reverse DropViewOp for %s, with op: (%s)", self.view_name, op)
@@ -343,9 +343,9 @@ class DropViewOp(ops.MigrateOperation):
     def __str__(self) -> str:
         return (
             f"DropViewOp(view_name={self.view_name!r}, schema={self.schema!r}, "
-            f"if_exists={self.if_exists}, reverse_definition=({self.reverse_definition!r}), "
-            f"reverse_comment=({self.reverse_comment!r}), "
-            f"reverse_columns={self.reverse_columns!r}), "
+            f"if_exists={self.if_exists}, existing_definition=({self.existing_definition!r}), "
+            f"existing_comment=({self.existing_comment!r}), "
+            f"existing_columns={self.existing_columns!r}), "
             f"kwargs=({self.kwargs!r})"
         )
 
@@ -376,15 +376,15 @@ class AlterMaterializedViewOp(ops.MigrateOperation):
         refresh: Optional[str] = None,
         properties: Optional[Dict[str, str]] = None,
         # Reverse values for downgrade
-        reverse_refresh: Optional[str] = None,
-        reverse_properties: Optional[Dict[str, str]] = None,
+        existing_refresh: Optional[str] = None,
+        existing_properties: Optional[Dict[str, str]] = None,
     ) -> None:
         self.view_name = view_name
         self.schema = schema
         self.refresh = refresh
         self.properties = properties
-        self.reverse_refresh = reverse_refresh
-        self.reverse_properties = reverse_properties
+        self.existing_refresh = existing_refresh
+        self.existing_properties = existing_properties
 
     @classmethod
     def alter_materialized_view(
@@ -394,8 +394,8 @@ class AlterMaterializedViewOp(ops.MigrateOperation):
         schema: Optional[str] = None,
         refresh: Optional[str] = None,
         properties: Optional[Dict[str, str]] = None,
-        reverse_refresh: Optional[str] = None,
-        reverse_properties: Optional[Dict[str, str]] = None,
+        existing_refresh: Optional[str] = None,
+        existing_properties: Optional[Dict[str, str]] = None,
     ):
         """Invoke an ALTER MATERIALIZED VIEW operation."""
         op = cls(
@@ -403,8 +403,8 @@ class AlterMaterializedViewOp(ops.MigrateOperation):
             schema=schema,
             refresh=refresh,
             properties=properties,
-            reverse_refresh=reverse_refresh,
-            reverse_properties=reverse_properties,
+            existing_refresh=existing_refresh,
+            existing_properties=existing_properties,
         )
         return operations.invoke(op)
 
@@ -412,10 +412,10 @@ class AlterMaterializedViewOp(ops.MigrateOperation):
         return AlterMaterializedViewOp(
             self.view_name,
             schema=self.schema,
-            refresh=self.reverse_refresh,
-            properties=self.reverse_properties,
-            reverse_refresh=self.refresh,
-            reverse_properties=self.properties,
+            refresh=self.existing_refresh,
+            properties=self.existing_properties,
+            existing_refresh=self.refresh,
+            existing_properties=self.properties,
         )
 
     def __str__(self) -> str:
@@ -424,8 +424,8 @@ class AlterMaterializedViewOp(ops.MigrateOperation):
             f"AlterMaterializedViewOp(view_name={self.view_name!r}, schema={self.schema!r}, "
             f"refresh={self.refresh!r}, "
             f"properties={self.properties!r}, "
-            f"reverse_refresh={self.reverse_refresh!r}, "
-            f"reverse_properties={self.reverse_properties!r})"
+            f"existing_refresh={self.existing_refresh!r}, "
+            f"existing_properties={self.existing_properties!r})"
         )
 
 
@@ -551,9 +551,9 @@ class DropMaterializedViewOp(DropViewOp):
         view_name: str,
         schema: Optional[str] = None,
         if_exists: bool = False,
-        reverse_definition: Optional[str] = None,
-        reverse_columns: Optional[List[Dict]] = None,
-        reverse_comment: Optional[str] = None,
+        existing_definition: Optional[str] = None,
+        existing_columns: Optional[List[Dict]] = None,
+        existing_comment: Optional[str] = None,
         **kwargs,
     ) -> None:
         """
@@ -563,9 +563,9 @@ class DropMaterializedViewOp(DropViewOp):
             view_name,
             schema=schema,
             if_exists=if_exists,
-            reverse_definition=reverse_definition,
-            reverse_columns=reverse_columns,
-            reverse_comment=reverse_comment,
+            existing_definition=existing_definition,
+            existing_columns=existing_columns,
+            existing_comment=existing_comment,
             **kwargs,
         )
 
@@ -575,9 +575,9 @@ class DropMaterializedViewOp(DropViewOp):
         return cls(
             mv.name,
             schema=mv.schema,
-            reverse_definition=mv.info.get(TableObjectInfoKey.DEFINITION),
-            reverse_columns=extract_view_columns(mv),
-            reverse_comment=mv.comment,
+            existing_definition=mv.info.get(TableObjectInfoKey.DEFINITION),
+            existing_columns=extract_view_columns(mv),
+            existing_comment=mv.comment,
             **mv.dialect_kwargs,
         )
 
@@ -599,14 +599,14 @@ class DropMaterializedViewOp(DropViewOp):
         return operations.invoke(op)
 
     def reverse(self) -> "CreateMaterializedViewOp":
-        if self.reverse_definition is None:
+        if self.existing_definition is None:
             raise NotImplementedError("Cannot reverse a DropMaterializedViewOp without the view's definition.")
         return CreateMaterializedViewOp(
             self.view_name,
-            definition=self.reverse_definition,
+            definition=self.existing_definition,
             schema=self.schema,
-            comment=self.reverse_comment,
-            columns=self.reverse_columns,
+            comment=self.existing_comment,
+            columns=self.existing_columns,
             **self.kwargs,
         )
 
@@ -614,7 +614,7 @@ class DropMaterializedViewOp(DropViewOp):
         """String representation for debugging."""
         return (
             f"DropMaterializedViewOp(view_name={self.view_name!r}, schema={self.schema!r}, "
-            f"if_exists={self.if_exists}, reverse_definition={self.reverse_definition!r}, "
+            f"if_exists={self.if_exists}, existing_definition={self.existing_definition!r}, "
             f"kwargs={self.kwargs!r})"
         )
 
@@ -630,11 +630,11 @@ class AlterTableEngineOp(ops.AlterTableOp):
         table_name: str,
         engine: str,
         schema: Optional[str] = None,
-        reverse_engine: Optional[str] = None,
+        existing_engine: Optional[str] = None,
     ):
         super().__init__(table_name, schema=schema)
         self.engine = engine
-        self.reverse_engine = reverse_engine
+        self.existing_engine = existing_engine
 
     @classmethod
     def alter_table_engine(
@@ -643,26 +643,26 @@ class AlterTableEngineOp(ops.AlterTableOp):
         table_name: str,
         engine: str,
         schema: Optional[str] = None,
-        reverse_engine: Optional[str] = None,
+        existing_engine: Optional[str] = None,
     ):
         """Invoke an ALTER TABLE ENGINE operation for StarRocks."""
-        op = cls(table_name, engine, schema=schema, reverse_engine=reverse_engine)
+        op = cls(table_name, engine, schema=schema, existing_engine=existing_engine)
         return operations.invoke(op)
 
     def reverse(self) -> AlterTableEngineOp:
-        if self.reverse_engine is None:
-            raise NotImplementedError("Cannot reverse AlterTableEngineOp without reverse_engine")
+        if self.existing_engine is None:
+            raise NotImplementedError("Cannot reverse AlterTableEngineOp without existing_engine")
         return AlterTableEngineOp(
             table_name=self.table_name,
-            engine=self.reverse_engine,
+            engine=self.existing_engine,
             schema=self.schema,
-            reverse_engine=self.engine,
+            existing_engine=self.engine,
         )
 
     def __str__(self) -> str:
         return (f"AlterTableEngineOp(table_name={self.table_name!r}, "
                f"engine={self.engine!r}, schema={self.schema!r}, "
-               f"reverse_engine={self.reverse_engine!r})")
+               f"existing_engine={self.existing_engine!r})")
 
 @Operations.register_operation("alter_table_key")
 class AlterTableKeyOp(ops.AlterTableOp):
@@ -674,14 +674,14 @@ class AlterTableKeyOp(ops.AlterTableOp):
         key_type: str,
         key_columns: str,
         schema: Optional[str] = None,
-        reverse_key_type: Optional[str] = None,
-        reverse_key_columns: Optional[str] = None,
+        existing_key_type: Optional[str] = None,
+        existing_key_columns: Optional[str] = None,
     ):
         super().__init__(table_name, schema=schema)
         self.key_type = key_type
         self.key_columns = key_columns
-        self.reverse_key_type = reverse_key_type
-        self.reverse_key_columns = reverse_key_columns
+        self.existing_key_type = existing_key_type
+        self.existing_key_columns = existing_key_columns
 
     @classmethod
     def alter_table_key(
@@ -691,8 +691,8 @@ class AlterTableKeyOp(ops.AlterTableOp):
         key_type: str,
         key_columns: str,
         schema: Optional[str] = None,
-        reverse_key_type: Optional[str] = None,
-        reverse_key_columns: Optional[str] = None,
+        existing_key_type: Optional[str] = None,
+        existing_key_columns: Optional[str] = None,
     ):
         """Invoke an ALTER TABLE KEY operation for StarRocks."""
         op = cls(
@@ -700,28 +700,28 @@ class AlterTableKeyOp(ops.AlterTableOp):
             key_type,
             key_columns,
             schema=schema,
-            reverse_key_type=reverse_key_type,
-            reverse_key_columns=reverse_key_columns,
+            existing_key_type=existing_key_type,
+            existing_key_columns=existing_key_columns,
         )
         return operations.invoke(op)
 
     def reverse(self) -> "AlterTableKeyOp":
-        if self.reverse_key_type is None or self.reverse_key_columns is None:
-            raise NotImplementedError("Cannot reverse AlterTableKeyOp without reverse_key_type and reverse_key_columns")
+        if self.existing_key_type is None or self.existing_key_columns is None:
+            raise NotImplementedError("Cannot reverse AlterTableKeyOp without existing_key_type and existing_key_columns")
         return AlterTableKeyOp(
             table_name=self.table_name,
-            key_type=self.reverse_key_type,
-            key_columns=self.reverse_key_columns,
+            key_type=self.existing_key_type,
+            key_columns=self.existing_key_columns,
             schema=self.schema,
-            reverse_key_type=self.key_type,
-            reverse_key_columns=self.key_columns,
+            existing_key_type=self.key_type,
+            existing_key_columns=self.key_columns,
         )
 
     def __str__(self) -> str:
         return (f"AlterTableKeyOp(table_name={self.table_name!r}, "
                f"key_type={self.key_type!r}, key_columns={self.key_columns!r}, "
-               f"schema={self.schema!r}, reverse_key_type={self.reverse_key_type!r}, "
-               f"reverse_key_columns={self.reverse_key_columns!r})")
+               f"schema={self.schema!r}, existing_key_type={self.existing_key_type!r}, "
+               f"existing_key_columns={self.existing_key_columns!r})")
 
 @Operations.register_operation("alter_table_partition")
 class AlterTablePartitionOp(ops.AlterTableOp):
@@ -732,7 +732,7 @@ class AlterTablePartitionOp(ops.AlterTableOp):
         table_name: str,
         partition_method: str,
         schema: Optional[str] = None,
-        reverse_partition_method: Optional[str] = None,
+        existing_partition_method: Optional[str] = None,
     ):
         """
         Invoke an ALTER TABLE PARTITION BY operation for StarRocks.
@@ -743,7 +743,7 @@ class AlterTablePartitionOp(ops.AlterTableOp):
         """
         super().__init__(table_name, schema=schema)
         self.partition_method = partition_method
-        self.reverse_partition_method = reverse_partition_method
+        self.existing_partition_method = existing_partition_method
 
     @property
     def partition_by(self) -> str:
@@ -761,29 +761,29 @@ class AlterTablePartitionOp(ops.AlterTableOp):
         table_name: str,
         partition_method: str,
         schema: Optional[str] = None,
-        reverse_partition_method: Optional[str] = None,
+        existing_partition_method: Optional[str] = None,
     ):
         """
         Invoke an ALTER TABLE PARTITION BY operation for StarRocks.
         The same as __init__ method.
         """
-        op = cls(table_name, partition_method, schema=schema, reverse_partition_method=reverse_partition_method)
+        op = cls(table_name, partition_method, schema=schema, existing_partition_method=existing_partition_method)
         return operations.invoke(op)
 
     def reverse(self) -> "AlterTablePartitionOp":
-        if self.reverse_partition_method is None:
-            raise NotImplementedError("Cannot reverse AlterTablePartitionOp without reverse_partition_method")
+        if self.existing_partition_method is None:
+            raise NotImplementedError("Cannot reverse AlterTablePartitionOp without existing_partition_method")
         return AlterTablePartitionOp(
             table_name=self.table_name,
-            partition_method=self.reverse_partition_method,
+            partition_method=self.existing_partition_method,
             schema=self.schema,
-            reverse_partition_method=self.partition_method,
+            existing_partition_method=self.partition_method,
         )
 
     def __str__(self) -> str:
         return (f"AlterTablePartitionOp(table_name={self.table_name!r}, "
                f"partition_method={self.partition_method!r}, schema={self.schema!r}, "
-               f"reverse_partition_method={self.reverse_partition_method!r})")
+               f"existing_partition_method={self.existing_partition_method!r})")
 
 @Operations.register_operation("alter_table_distribution")
 class AlterTableDistributionOp(ops.AlterTableOp):
@@ -795,8 +795,8 @@ class AlterTableDistributionOp(ops.AlterTableOp):
         distribution_method: str,
         buckets: Optional[int] = None,
         schema: Optional[str] = None,
-        reverse_distribution_method: Optional[str] = None,
-        reverse_buckets: Optional[int] = None,
+        existing_distribution_method: Optional[str] = None,
+        existing_buckets: Optional[int] = None,
     ):
         """Invoke an ALTER TABLE DISTRIBUTED BY operation for StarRocks.
         Args:
@@ -808,8 +808,8 @@ class AlterTableDistributionOp(ops.AlterTableOp):
         super().__init__(table_name, schema=schema)
         self.distribution_method = distribution_method
         self.buckets = buckets
-        self.reverse_distribution_method = reverse_distribution_method
-        self.reverse_buckets = reverse_buckets
+        self.existing_distribution_method = existing_distribution_method
+        self.existing_buckets = existing_buckets
 
     @property
     def distributed_by(self) -> str:
@@ -826,8 +826,8 @@ class AlterTableDistributionOp(ops.AlterTableOp):
         distribution_method: str,
         buckets: Optional[int] = None,
         schema: Optional[str] = None,
-        reverse_distribution_method: Optional[str] = None,
-        reverse_buckets: Optional[int] = None,
+        existing_distribution_method: Optional[str] = None,
+        existing_buckets: Optional[int] = None,
     ):
         """Invoke an ALTER TABLE DISTRIBUTED BY operation for StarRocks.
         The same as __init__ method.
@@ -837,28 +837,28 @@ class AlterTableDistributionOp(ops.AlterTableOp):
             distribution_method,
             buckets,
             schema=schema,
-            reverse_distribution_method=reverse_distribution_method,
-            reverse_buckets=reverse_buckets,
+            existing_distribution_method=existing_distribution_method,
+            existing_buckets=existing_buckets,
         )
         return operations.invoke(op)
 
     def reverse(self) -> "AlterTableDistributionOp":
-        if self.reverse_distribution_method is None:
-            raise NotImplementedError("Cannot reverse AlterTableDistributionOp without reverse_distribution_method")
+        if self.existing_distribution_method is None:
+            raise NotImplementedError("Cannot reverse AlterTableDistributionOp without existing_distribution_method")
         return AlterTableDistributionOp(
             table_name=self.table_name,
-            distribution_method=self.reverse_distribution_method,
-            buckets=self.reverse_buckets,
+            distribution_method=self.existing_distribution_method,
+            buckets=self.existing_buckets,
             schema=self.schema,
-            reverse_distribution_method=self.distribution_method,
-            reverse_buckets=self.buckets,
+            existing_distribution_method=self.distribution_method,
+            existing_buckets=self.buckets,
         )
 
     def __str__(self) -> str:
         return (f"AlterTableDistributionOp(table_name={self.table_name!r}, "
                f"distribution_method={self.distribution_method!r}, buckets={self.buckets!r}, "
-               f"schema={self.schema!r}, reverse_distribution_method={self.reverse_distribution_method!r}, "
-               f"reverse_buckets={self.reverse_buckets!r})")
+               f"schema={self.schema!r}, existing_distribution_method={self.existing_distribution_method!r}, "
+               f"existing_buckets={self.existing_buckets!r})")
 
 
 @Operations.register_operation("alter_table_order")
@@ -870,11 +870,11 @@ class AlterTableOrderOp(ops.AlterTableOp):
         table_name: str,
         order_by: Union[str, List[str]],
         schema: Optional[str] = None,
-        reverse_order_by: Optional[str] = None,
+        existing_order_by: Optional[str] = None,
     ):
         super().__init__(table_name, schema=schema)
         self.order_by = order_by
-        self.reverse_order_by = reverse_order_by
+        self.existing_order_by = existing_order_by
 
     @classmethod
     def alter_table_order(
@@ -883,26 +883,26 @@ class AlterTableOrderOp(ops.AlterTableOp):
         table_name: str,
         order_by: str,
         schema: Optional[str] = None,
-        reverse_order_by: Optional[str] = None,
+        existing_order_by: Optional[str] = None,
     ):
         """Invoke an ALTER TABLE ORDER BY operation for StarRocks."""
-        op = cls(table_name, order_by, schema=schema, reverse_order_by=reverse_order_by)
+        op = cls(table_name, order_by, schema=schema, existing_order_by=existing_order_by)
         return operations.invoke(op)
 
     def reverse(self) -> "AlterTableOrderOp":
-        if self.reverse_order_by is None:
-            raise NotImplementedError("Cannot reverse AlterTableOrderOp without reverse_order_by")
+        if self.existing_order_by is None:
+            raise NotImplementedError("Cannot reverse AlterTableOrderOp without existing_order_by")
         return AlterTableOrderOp(
             table_name=self.table_name,
-            order_by=self.reverse_order_by,
+            order_by=self.existing_order_by,
             schema=self.schema,
-            reverse_order_by=self.order_by,
+            existing_order_by=self.order_by,
         )
 
     def __str__(self) -> str:
         return (f"AlterTableOrderOp(table_name={self.table_name!r}, "
                f"order_by={self.order_by!r}, schema={self.schema!r}, "
-               f"reverse_order_by={self.reverse_order_by!r})")
+               f"existing_order_by={self.existing_order_by!r})")
 
 
 @Operations.register_operation("alter_table_properties")
@@ -914,11 +914,11 @@ class AlterTablePropertiesOp(ops.AlterTableOp):
         table_name: str,
         properties: Dict[str, str],
         schema: Optional[str] = None,
-        reverse_properties: Optional[Dict[str, str]] = None,
+        existing_properties: Optional[Dict[str, str]] = None,
     ):
         super().__init__(table_name, schema=schema)
         self.properties = properties
-        self.reverse_properties = reverse_properties
+        self.existing_properties = existing_properties
 
     @classmethod
     def alter_table_properties(
@@ -927,23 +927,23 @@ class AlterTablePropertiesOp(ops.AlterTableOp):
         table_name: str,
         properties: dict,
         schema: Optional[str] = None,
-        reverse_properties: Optional[Dict[str, str]] = None,
+        existing_properties: Optional[Dict[str, str]] = None,
     ):
         """Invoke an ALTER TABLE SET (...) operation for StarRocks properties."""
-        op = cls(table_name, properties, schema=schema, reverse_properties=reverse_properties)
+        op = cls(table_name, properties, schema=schema, existing_properties=existing_properties)
         return operations.invoke(op)
 
     def reverse(self) -> "AlterTablePropertiesOp":
-        if self.reverse_properties is None:
-            raise NotImplementedError("Cannot reverse AlterTablePropertiesOp without reverse_properties")
+        if self.existing_properties is None:
+            raise NotImplementedError("Cannot reverse AlterTablePropertiesOp without existing_properties")
         return AlterTablePropertiesOp(
             table_name=self.table_name,
-            properties=self.reverse_properties,
+            properties=self.existing_properties,
             schema=self.schema,
-            reverse_properties=self.properties,
+            existing_properties=self.properties,
         )
 
     def __str__(self) -> str:
         return (f"AlterTablePropertiesOp(table_name={self.table_name!r}, "
                f"properties={self.properties!r}, schema={self.schema!r}, "
-               f"reverse_properties={self.reverse_properties!r})")
+               f"existing_properties={self.existing_properties!r})")

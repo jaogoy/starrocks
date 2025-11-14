@@ -596,8 +596,8 @@ def _compare_view_definition_and_columns(
     if definition_changed:
         alter_view_op.definition = meta_definition
         alter_view_op.columns = extract_view_columns(metadata_view)
-        alter_view_op.reverse_definition = conn_definition
-        alter_view_op.reverse_columns = extract_view_columns(conn_view)
+        alter_view_op.existing_definition = conn_definition
+        alter_view_op.existing_columns = extract_view_columns(conn_view)
         logger.info(f"Detected DEFINITION change on view {view_fqn!r}, "
                     f"from '{conn_def_norm}' (in database, normalized) to '{meta_def_norm}' (in metadata, normalized).")
         check_similar_string_and_warn(
@@ -662,7 +662,7 @@ def _compare_view_comment(
 
         # Set comment in AlterViewOp for future compatibility
         alter_view_op.comment = metadata_view.comment
-        alter_view_op.reverse_comment = conn_view.comment
+        alter_view_op.existing_comment = conn_view.comment
 
     return comment_changed
 
@@ -723,7 +723,7 @@ def _compare_view_security(
 
         # Set security in AlterViewOp for future compatibility
         alter_view_op.security = meta_view_attributes.get(TableInfoKey.SECURITY)
-        alter_view_op.reverse_security = conn_view_attributes.get(TableInfoKey.SECURITY)
+        alter_view_op.existing_security = conn_view_attributes.get(TableInfoKey.SECURITY)
 
     return security_changed
 
@@ -1062,8 +1062,8 @@ def _compare_mv_refresh(
                 schema=schema,
                 refresh=str(meta_refresh_raw),
                 properties=None,
-                reverse_refresh=str(conn_refresh_raw),
-                reverse_properties=None,
+                existing_refresh=str(conn_refresh_raw),
+                existing_properties=None,
             )
         )
         logger.info(f"Detected REFRESH change on materialized view {qualified_mv_name!r}, "
@@ -1098,8 +1098,8 @@ def _compare_mv_properties(
                 schema=schema,
                 refresh=None,
                 properties=properties_to_set,
-                reverse_refresh=None,
-                reverse_properties=properties_for_reverse if properties_for_reverse else None,
+                existing_refresh=None,
+                existing_properties=properties_for_reverse if properties_for_reverse else None,
             )
         )
         logger.debug("Detected PROPERTIES change on materialized view %r.", qualified_mv_name)
@@ -1674,8 +1674,8 @@ def _compare_table_distribution(
                 meta_distribution.distribution_method,
                 meta_distribution.buckets,
                 schema=schema,
-                reverse_distribution_method=conn_distribution.distribution_method if conn_distribution else None,
-                reverse_buckets=conn_distribution.buckets if conn_distribution else None,
+                existing_distribution_method=conn_distribution.distribution_method if conn_distribution else None,
+                existing_buckets=conn_distribution.buckets if conn_distribution else None,
             )
         )
         logger.info(f"Detected DISTRIBUTION change on {object_label.lower()} {table_name!r}, "
@@ -1725,7 +1725,7 @@ def _compare_table_order_by(
                 table_name,
                 meta_order,  # Use original format
                 schema=schema,
-                reverse_order_by=conn_order if conn_order else None,
+                existing_order_by=conn_order if conn_order else None,
             )
         )
         logger.info(f"Detected ORDER BY change on {object_label.lower()} {table_name!r}, "
@@ -1858,7 +1858,7 @@ def _compare_table_properties(
                 table_name,
                 properties_to_set,
                 schema=schema,
-                reverse_properties=properties_for_reverse,
+                existing_properties=properties_for_reverse,
             )
         )
         logger.debug(f"Detected PROPERTIES change on table {table_fqn!r}.")

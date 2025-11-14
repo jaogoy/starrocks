@@ -92,10 +92,10 @@ class TestCompareMaterializedView:
         assert isinstance(op, AlterMaterializedViewOp)
         eq_(op.view_name, "my_mv")
         eq_(op.refresh, "MANUAL")
-        eq_(op.reverse_refresh, "ASYNC")
+        eq_(op.existing_refresh, "ASYNC")
         # Other attributes should be None as they are not changed
         assert op.properties is None
-        assert op.reverse_properties is None
+        assert op.existing_properties is None
 
     def test_alter_mv_properties_changed(self):
         """ALTER: Properties changed (generates AlterMaterializedViewOp)."""
@@ -113,7 +113,7 @@ class TestCompareMaterializedView:
         op = upgrade_ops.ops[0]
         assert isinstance(op, AlterMaterializedViewOp)
         eq_(op.properties, {"replication_num": "3"})
-        eq_(op.reverse_properties, {"replication_num": "1"})
+        eq_(op.existing_properties, {"replication_num": "1"})
         assert op.refresh is None
 
     # ========================================================================

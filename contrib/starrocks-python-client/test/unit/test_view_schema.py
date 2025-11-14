@@ -195,8 +195,8 @@ class TestViewOpsWithColumns:
         drop_op = DropViewOp.from_view(view)
 
         assert drop_op.view_name == 'v4'
-        assert drop_op.reverse_columns is not None
-        assert len(drop_op.reverse_columns) == 2
+        assert drop_op.existing_columns is not None
+        assert len(drop_op.existing_columns) == 2
 
         # Test reverse
         create_op = drop_op.reverse()
@@ -267,11 +267,11 @@ class TestAlterViewOpsWithColumns:
                 {'name': 'name', 'comment': 'New comment'}
             ],
             comment='New view',
-            reverse_definition='SELECT id FROM users',
-            reverse_columns=[
+            existing_definition='SELECT id FROM users',
+            existing_columns=[
                 {'name': 'id', 'comment': None}
             ],
-            reverse_comment='Old view'
+            existing_comment='Old view'
         )
 
         # Test forward operation
@@ -335,8 +335,8 @@ class TestAlterViewOpsWithColumns:
                 {'name': 'name', 'comment': 'User name'},
                 {'name': 'id'}
             ],
-            reverse_definition='SELECT id, name FROM users',
-            reverse_columns=[
+            existing_definition='SELECT id, name FROM users',
+            existing_columns=[
                 {'name': 'id'},
                 {'name': 'name', 'comment': 'User name'}
             ]
@@ -361,8 +361,8 @@ class TestAlterViewOpsWithColumns:
                 {'name': 'name', 'comment': 'User name'},
                 {'name': 'email', 'comment': 'New column'}
             ],
-            reverse_definition='SELECT id, name FROM users',
-            reverse_columns=[
+            existing_definition='SELECT id, name FROM users',
+            existing_columns=[
                 {'name': 'id'},
                 {'name': 'name', 'comment': 'User name'}
             ]
@@ -385,8 +385,8 @@ class TestAlterViewOpsWithColumns:
             columns=[
                 {'name': 'id'}
             ],
-            reverse_definition='SELECT id, name FROM users',
-            reverse_columns=[
+            existing_definition='SELECT id, name FROM users',
+            existing_columns=[
                 {'name': 'id'},
                 {'name': 'name', 'comment': 'User name'}
             ]
@@ -411,8 +411,8 @@ class TestAlterViewOpsWithColumns:
                 {'name': 'id'},
                 {'name': 'name', 'comment': 'Updated comment'}
             ],
-            reverse_definition='SELECT id, name FROM users',
-            reverse_columns=[
+            existing_definition='SELECT id, name FROM users',
+            existing_columns=[
                 {'name': 'id'},
                 {'name': 'name', 'comment': 'Original comment'}
             ]

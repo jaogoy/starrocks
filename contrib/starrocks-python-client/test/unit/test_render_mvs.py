@@ -163,8 +163,8 @@ class TestMaterializedViewRendering:
             schema="s1",
             refresh="MANUAL",
             properties={"k2": "v2"},
-            reverse_refresh="ASYNC",
-            reverse_properties={"k1": "v1"},
+            existing_refresh="ASYNC",
+            existing_properties={"k1": "v1"},
         )
         reverse_op = alter_op.reverse()
         assert isinstance(reverse_op, AlterMaterializedViewOp)
@@ -172,15 +172,15 @@ class TestMaterializedViewRendering:
         assert reverse_op.schema == "s1"
         assert reverse_op.refresh == "ASYNC"
         assert reverse_op.properties == {"k1": "v1"}
-        assert reverse_op.reverse_refresh == "MANUAL"
-        assert reverse_op.reverse_properties == {"k2": "v2"}
+        assert reverse_op.existing_refresh == "MANUAL"
+        assert reverse_op.existing_properties == {"k2": "v2"}
 
     def test_drop_mv_reverse(self):
         drop_op = DropMaterializedViewOp(
             "mv1",
             schema="s1",
-            reverse_definition="SELECT 1",
-            reverse_comment="Test MV",
+            existing_definition="SELECT 1",
+            existing_comment="Test MV",
             starrocks_partition_by="id",
             starrocks_distributed_by="HASH(id)",
             starrocks_order_by="name",

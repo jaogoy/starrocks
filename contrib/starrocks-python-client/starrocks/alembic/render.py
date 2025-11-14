@@ -136,20 +136,20 @@ def _alter_view(autogen_context: AutogenContext, op: AlterViewOp) -> str:
     if op.columns:
         # Render columns as a list of dicts
         args.append(f"columns={op.columns!r}")
-    if op.comment or op.reverse_comment:
+    if op.comment or op.existing_comment:
         args.append(f"comment={op.comment!r}")
-    if op.security or op.reverse_security:
+    if op.security or op.existing_security:
         args.append(f"security={op.security!r}")
 
     # render reverse values for downgrade if present
-    if op.reverse_definition:
-        args.append(f"reverse_definition={op.reverse_definition!r}")
-    if op.reverse_columns:
-        args.append(f"reverse_columns={op.reverse_columns!r}")
-    if op.reverse_comment or op.comment:
-        args.append(f"reverse_comment={op.reverse_comment!r}")
-    if op.reverse_security or op.security:
-        args.append(f"reverse_security={op.reverse_security!r}")
+    if op.existing_definition:
+        args.append(f"existing_definition={op.existing_definition!r}")
+    if op.existing_columns:
+        args.append(f"existing_columns={op.existing_columns!r}")
+    if op.existing_comment or op.comment:
+        args.append(f"existing_comment={op.existing_comment!r}")
+    if op.existing_security or op.security:
+        args.append(f"existing_security={op.existing_security!r}")
 
     call = _render_op_call(autogen_context, "alter_view", args)
     logger.debug("render alter_view: %s", call)
@@ -235,16 +235,16 @@ def _alter_materialized_view(autogen_context: AutogenContext, op: AlterMateriali
     if op.schema:
         args.append(f"schema={op.schema!r}")
 
-    if op.refresh or op.reverse_refresh:
+    if op.refresh or op.existing_refresh:
         args.append(f"refresh={op.refresh!r}")
-    if op.properties or op.reverse_properties:
+    if op.properties or op.existing_properties:
         args.append(f"properties={op.properties!r}")
 
     # Render reverse values for downgrade if present
-    if op.reverse_refresh or op.refresh:
-        args.append(f"reverse_refresh={op.reverse_refresh!r}")
-    if op.reverse_properties or op.properties:
-        args.append(f"reverse_properties={op.reverse_properties!r}")
+    if op.existing_refresh or op.refresh:
+        args.append(f"existing_refresh={op.existing_refresh!r}")
+    if op.existing_properties or op.properties:
+        args.append(f"existing_properties={op.existing_properties!r}")
 
     call = _render_op_call(autogen_context, "alter_materialized_view", args)
     logger.debug("render alter_materialized_view: %s", call)

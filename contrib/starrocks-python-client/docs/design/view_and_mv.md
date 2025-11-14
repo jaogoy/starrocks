@@ -1109,12 +1109,12 @@ def include_object_for_view_mv(object, name, type_, reflected, compare_to):
     """
     Filter objects for autogenerate - exclude View/MV from table comparisons.
 
-    View/MV are handled by their own comparators (autogen_for_views/mvs).
+    View/MV are handled by their own comparators (_autogen_for_views/mvs).
     """
     if type_ == "table" and compare_to is not None:
         table_kind = compare_to.info.get('table_kind', 'TABLE')
         if table_kind in ('VIEW', 'MATERIALIZED_VIEW'):
-            return False  # Let autogen_for_views/mvs handle them
+            return False  # Let _autogen_for_views/mvs handle them
     return True
 
 # Export in __init__.py for easy access
@@ -1230,7 +1230,7 @@ class CreateViewOp(ops.MigrateOperation):
 
 **1. AlterViewOp Column Support**
 
-`AlterViewOp` includes `columns` and `reverse_columns` parameters:
+`AlterViewOp` includes `columns` and `existing_columns` parameters:
 
 - Columns can only change together with definition in StarRocks
 - Needed for rendering complete view information and supporting reverse operations
@@ -1509,7 +1509,7 @@ def _compare_mv(autogen_context, upgrade_ops, schema, mv_name, conn_mv, metadata
     if refresh_changed:
         alter_op = alter_op or AlterMaterializedViewOp(mv_name, schema)
         alter_op.refresh = meta_refresh
-        alter_op.reverse_refresh = conn_refresh
+        alter_op.existing_refresh = conn_refresh
 
     # Properties (can ALTER)
     ...
@@ -1543,24 +1543,24 @@ class AlterMaterializedViewOp(ops.MigrateOperation):
         refresh: Optional[str] = None,
         properties: Optional[Dict[str, str]] = None,
         # Reverse values for downgrade
-        reverse_refresh: Optional[str] = None,
-        reverse_properties: Optional[Dict[str, str]] = None,
+        existing_refresh: Optional[str] = None,
+        existing_properties: Optional[Dict[str, str]] = None,
     ):
         self.view_name = view_name
         self.schema = schema
         self.refresh = refresh
         self.properties = properties
-        self.reverse_refresh = reverse_refresh
-        self.reverse_properties = reverse_properties
+        self.existing_refresh = existing_refresh
+        self.existing_properties = existing_properties
 
     def reverse(self) -> "AlterMaterializedViewOp":
         return AlterMaterializedViewOp(
             self.view_name,
             self.schema,
-            refresh=self.reverse_refresh,
-            properties=self.reverse_properties,
-            reverse_refresh=self.refresh,
-            reverse_properties=self.properties,
+            refresh=self.existing_refresh,
+            properties=self.existing_properties,
+            existing_refresh=self.refresh,
+            existing_properties=self.properties,
         )
 ```
 
@@ -1607,9 +1607,9 @@ class AlterMaterializedViewOp(ops.MigrateOperation):
    - `include_object_for_view_mv`: Filter View/MV from table comparisons
    - `combine_include_object`: Helper to combine with user's custom filter
 2. **Update README.md** to guide users to configure it in `env.py`.
-3. Modify `autogen_for_views` to use Table objects:
+3. Modify `_autogen_for_views` to use Table objects:
    - **Critical**: Call `autogen_context.run_object_filters()` for each View
-4. Modify `autogen_for_mvs` to use Table objects:
+4. Modify `_autogen_for_mvs` to use Table objects:
    - **Critical**: Call `autogen_context.run_object_filters()` for each MV
 5. Implement `_compare_objects` unified logic.
 6. Test: autogenerate detects changes and respects user's custom filters.
