@@ -116,7 +116,7 @@ class TestViewColumnDefinitions:
     def test_view_columns_with_invalid_dict(self):
         """Test that invalid dict column definition raises error."""
         metadata = MetaData()
-        with pytest.raises(ValueError, match="Column dict must have 'name' key"):
+        with pytest.raises(ValueError, match="Invalid column definition"):
             View(
                 'v_invalid',
                 metadata,
@@ -127,7 +127,7 @@ class TestViewColumnDefinitions:
     def test_view_columns_with_invalid_type(self):
         """Test that invalid column type raises error."""
         metadata = MetaData()
-        with pytest.raises(TypeError, match="Invalid column definition"):
+        with pytest.raises(ValueError, match="Invalid column definitions"):
             View(
                 'v_invalid',
                 metadata,

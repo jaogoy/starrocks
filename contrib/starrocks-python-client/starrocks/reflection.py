@@ -23,10 +23,12 @@ from typing import Any, Collection, Dict, List, Optional, Set, Union
 from sqlalchemy import log, types as sqltypes, util
 from sqlalchemy.dialects.mysql.base import _DecodingRow
 from sqlalchemy.dialects.mysql.reflection import _re_compile
+from sqlalchemy.engine import reflection
 from sqlalchemy.engine.reflection import Inspector
 from sqlalchemy.schema import Table
 
 from starrocks.common.consts import TableConfigKey
+from starrocks.common.defaults import ReflectionViewDefaults
 from starrocks.common.params import (
     ColumnAggInfoKeyWithPrefix,
     SRKwargsPrefix,
@@ -118,6 +120,8 @@ class StarRocksInspector(Inspector):
         # 2. Call parent class (will call get_pk_constraints, etc., which will use cached parsed_state)
         #    And, it will set all dialect options from parsed_state, including for a View or a Mv or a Table.
         super().reflect_table(table, include_columns, exclude_columns, resolve_fks, _extend_on, _reflect_info)
+        # comment is already set to Table.comment, the starrocks_comment is not used again.
+        self._delete_comment_from_dialect_options(table)
 
         # 3. Set info['table_kind']
         table.info[TableObjectInfoKey.TABLE_KIND] = table_kind
@@ -127,6 +131,13 @@ class StarRocksInspector(Inspector):
             self._reflect_view_attributes(table, parsed_state)
         elif table_kind == TableKind.MATERIALIZED_VIEW:
             self._reflect_mv_attributes(table, parsed_state)
+
+    @staticmethod
+    def _delete_comment_from_dialect_options(table: Table):
+        try:
+            del table.dialect_kwargs[TableInfoKeyWithPrefix.COMMENT]
+        except KeyError:
+            pass
 
     def _reflect_view_attributes(self, table: Table, view_state: ReflectedViewState) -> None:
         """Set View specific attributes from ReflectedViewState.
@@ -556,8 +567,7 @@ class StarRocksTableDefinitionParser(object):
         # table_options[TableInfoKeyWithPrefix.SECURITY] = view_row.SECURITY_TYPE.upper()
         # Parse SECURITY from SHOW CREATE VIEW output
         # Note: information_schema.views.SECURITY_TYPE is always empty in StarRocks (v3.5)
-        security = self._parse_sql_security_from_create_view(create_view_sql)
-        if security:
+        if security := self._parse_sql_security_from_create_view(create_view_sql):
             table_options[TableInfoKeyWithPrefix.SECURITY] = security
 
         state.table_options = table_options

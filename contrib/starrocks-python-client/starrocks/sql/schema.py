@@ -14,8 +14,9 @@
 
 import logging
 from typing import Any, Dict, List, Optional, Union
+import warnings
 
-from sqlalchemy import Column, Table
+from sqlalchemy import ClauseElement, Column, Table, event
 from sqlalchemy.schema import MetaData
 from sqlalchemy.sql.selectable import Selectable
 
@@ -97,6 +98,8 @@ class View(Table):
                    to define the view's schema explicitly. This is useful for
                    Alembic autogenerate to compare column changes.
             definition: SQL string or SQLAlchemy Selectable object defining the view query (required)
+                Even for reflection, it should be explicitly set to a placeholder value, such as '<placeholder_definition>'.
+                Otherwise, it will raise Exception.
             schema: Schema name (optional)
             comment: View comment (optional)
             columns: List of column definitions (optional). Can be:
@@ -150,6 +153,9 @@ class View(Table):
                  keep_existing=True)
 
         Notes:
+            - It must not raise error if `definition` is not valid when checking, because it will cause RecursionError.
+              use `after_parent_attach` event to validate definition.
+              The same to other attributes, such as `columns`
             - StarRocks VIEW columns only support name and comment (not type/nullable)
             - Column types are automatically inferred from the SELECT statement, but useless now
             - Type parameter in Column() is a placeholder for SQLAlchemy compatibility
@@ -161,22 +167,19 @@ class View(Table):
         if _no_init:
             return
 
-        # Validate definition is provided
-        if definition is None:
-            raise ValueError("View definition is required. Use definition='SELECT ...' parameter.")
-
         # Prepare view-specific info
         view_info = {TableObjectInfoKey.TABLE_KIND: TableKind.VIEW}
         # Process definition (handles both str and Selectable)
         view_info.update(self._process_definition(definition))
 
         # Prepare view info for Table.__init__
-        kwargs.setdefault("info", {}).update(view_info)
+        object_info = kwargs.setdefault("info", {})
+        object_info.update(view_info)
 
         # Convert simplified column definitions to Column objects
         normalized_columns = []
         if columns:
-            normalized_columns.extend(self._normalize_columns(columns))
+            normalized_columns.extend(self._normalize_columns(columns, object_info))
         # Merge with *args columns
         args = list(args) + normalized_columns
 
@@ -200,20 +203,20 @@ class View(Table):
         columns = kwargs.pop('columns', None)
 
         # Update view definition if provided
-        if definition is not None:
-            view_info = self._process_definition(definition)
-            self.info.update(view_info)
+        # if definition is not None:
+        view_info = self._process_definition(definition)
+        self.info.update(view_info)
 
         # Handle columns parameter (View-specific simplified syntax)
         # Convert to Column objects and prepend to args so Table._init_existing can process them
         if columns:
-            normalized_columns = self._normalize_columns(columns)
+            normalized_columns = self._normalize_columns(columns, self.info)
             args = args + tuple(normalized_columns)
 
         super()._init_existing(*args, **kwargs)
 
     @staticmethod
-    def _process_definition(definition: DefinitionType) -> Dict[str, Any]:
+    def _process_definition(definition: Optional[DefinitionType]) -> Dict[str, Any]:
         """
         Process view definition and return view_info dict.
 
@@ -241,17 +244,20 @@ class View(Table):
                 view_info[TableObjectInfoKey.DEFINITION] = str(compiled)
                 view_info[TableObjectInfoKey.SELECTABLE] = definition
             else:
-                raise TypeError(f"definition must be str or Selectable, got {type(definition)}")
+                # raise TypeError(f"definition must be str or Selectable, got {type(definition)}")
+                view_info[TableObjectInfoKey.DEFINITION] = definition
+        logger.debug("View._process_definition: view_info=%r", view_info)
 
         return view_info
 
     @staticmethod
-    def _normalize_columns(columns: List[ColumnDefinition]) -> List[Column]:
+    def _normalize_columns(columns: List[ColumnDefinition], info: Dict[str, Any]) -> List[Column]:
         """
         Convert simplified column definitions to Column objects.
 
         Args:
             columns: List of column definitions (Column, str, or dict)
+            info: Keyword arguments passed to View constructor
 
         Returns:
             List of Column objects
@@ -270,17 +276,21 @@ class View(Table):
             elif isinstance(col_def, dict):
                 # Dict: name + optional comment
                 if 'name' not in col_def:
-                    raise ValueError(f"Column dict must have 'name' key: {col_def}")
-                result.append(Column(
-                    col_def['name'],
-                    STRING(),
-                    comment=col_def.get('comment')
-                ))
+                    info.setdefault('invalid_columns', []).append(col_def)
+                    # raise ValueError(f"Column dict must have 'name' key: {col_def}")
+                else:
+                    result.append(Column(
+                        col_def['name'],
+                        STRING(),
+                        comment=col_def.get('comment')
+                    ))
             else:
-                raise TypeError(
-                    f"Invalid column definition: {col_def}. "
-                    f"Expected Column object, str, or dict with 'name' key."
-                )
+                info.setdefault('invalid_columns', []).append(col_def)
+                # raise TypeError(
+                #     f"Invalid column definition: {col_def}. "
+                #     f"Expected Column object, str, or dict with 'name' key."
+                # )
+                # It must not raise error in View constructor, because it will cause RecursionError.
         return result
 
     @property
@@ -296,6 +306,17 @@ class View(Table):
     def security(self) -> Optional[str]:
         from starrocks.common.params import DialectName, TableInfoKey
         return self.dialect_options.get(DialectName, {}).get(TableInfoKey.SECURITY)
+
+
+@event.listens_for(View, "after_parent_attach")
+def validate_definition(view: View, connection):
+    if not view.definition:
+        raise ValueError("View/MV definition is required. Use definition='SELECT ...' parameter.")
+    if not isinstance(view.definition, (str, ClauseElement)):
+        raise TypeError("View/MV definition must be a string or a Selectable object")
+    if 'invalid_columns' in view.info:
+        raise ValueError(f"Invalid column definitions: {view.info['invalid_columns']!r}. "
+                         f"Each Column should be an object, str, or dict with 'name' key.")
 
 
 class MaterializedView(View):

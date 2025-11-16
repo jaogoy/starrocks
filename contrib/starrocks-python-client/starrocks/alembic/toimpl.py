@@ -105,7 +105,7 @@ def drop_materialized_view(operations: Operations, op: DropMaterializedViewOp) -
     mv = MaterializedView(
         op.view_name,
         MetaData(),
-        definition='',  # Empty definition for DROP
+        definition='<placeholder_definition>',  # Empty definition for DROP
         schema=op.schema,
     )
     operations.execute(DropMaterializedView(mv, if_exists=op.if_exists))

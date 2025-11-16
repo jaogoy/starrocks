@@ -271,12 +271,13 @@ def check_similar_string_and_warn(
         object_label: str = "Table"
     ) -> None:
     if TableAttributeNormalizer.simply_normalize_quotes(str(conn_str)) == TableAttributeNormalizer.simply_normalize_quotes(str(meta_str)):
-            logger.warning(
-                f"Although detected changed {attribute_name} on {object_label.lower()} '{schema}.{table_name}', "
-                f"they are only different in quote style, so it may be not a real modification. "
-                f"You need to check it and change the quote style in the metadata according to the database "
-                f"if you are sure they are the same (you don't want to make a ALTER operation)."
-            )
+        table_fqn = utils.gen_simple_qualified_name(table_name, schema)
+        logger.warning(
+            f"Although detected changed {attribute_name} on {object_label.lower()} {table_fqn!r}, "
+            f"they are only different in quote style, so it may be not a real modification. "
+            f"You need to check it and change the quote style in the metadata according to the database "
+            f"if you are sure they are the same (you don't want to make a ALTER operation)."
+        )
 
 
 @comparators_dispatch_for_starrocks("schema")
@@ -374,11 +375,11 @@ def _compare_views(
     added_views = metadata_view_names.difference(conn_view_names)
     logger.debug("Added views (in metadata but not in DB): %s", added_views)
     for s, vname in added_views:
-        qualified_view_name = "%s.%s" % (s, vname) if s else vname
+        view_fqn = "%s.%s" % (s, vname) if s else vname
         metadata_view = view_name_to_table[(s, vname)]
         if autogen_context.run_object_filters(metadata_view, vname, "view", False, None):
             upgrade_ops.ops.append(CreateViewOp.from_view(metadata_view))
-            logger.info(f"Detected added view {qualified_view_name!r}")
+            logger.info(f"Detected added view {view_fqn!r}")
 
     # Dropped views (in database but not in metadata)
     # Use a separate MetaData to avoid polluting the user's metadata
@@ -392,7 +393,7 @@ def _compare_views(
         exists = name in removal_metadata.tables
         # Create a View object (not Table) since we know it's a view
         # Use empty definition (a placeholder only) - it will be populated by reflect_table
-        t = View(vname, removal_metadata, definition='', schema=s)
+        t = View(vname, removal_metadata, definition='<not_used_definition>', schema=s)
 
         if not exists:
             # Reflect the view using StarRocks' custom reflection logic
@@ -415,7 +416,7 @@ def _compare_views(
         exists = name in existing_metadata.tables
         # Create a View object (not Table) since we know it's a view
         # Use empty definition - it will be populated by reflect_table
-        t = View(vname, existing_metadata, definition='', schema=s)
+        t = View(vname, existing_metadata, definition='<placeholder_definition>', schema=s)
 
         if not exists:
             # Reflect the view using StarRocks' custom reflection logic
@@ -480,7 +481,7 @@ def compare_view(
         schema=schema,
     )
 
-    view_fqn = f"{schema or autogen_context.dialect.default_schema_name}.{view_name}"
+    view_fqn = utils.gen_simple_qualified_name(view_name, schema)
 
     # Compare each view attribute using dedicated functions
     # Order: definition+columns -> comment -> security
@@ -586,7 +587,7 @@ def _compare_view_definition_and_columns(
     # StarRocks limitation: Columns can only be changed together with definition
     if columns_changed and not definition_changed:
         raise NotImplementedError(
-            f"Detected COLUMN change on view {view_fqn}, while definition is unchanged. "
+            f"Detected COLUMN change on view {view_fqn!r}, while definition is unchanged. "
             f"But StarRocks does not support altering view columns independently. "
             f"You must change the definition (SELECT statement) together with columns, "
             f"or use DROP + CREATE to apply this change.",
@@ -654,7 +655,7 @@ def _compare_view_comment(
 
         # Warn about comment changes (not supported via ALTER VIEW)
         warnings.warn(
-            f"Detected COMMENT change on view {view_fqn}, from '{conn_comment}' (in database) to '{meta_comment}' (in metadata). "
+            f"Detected COMMENT change on view {view_fqn!r}, from '{conn_comment}' (in database) to '{meta_comment}' (in metadata). "
             f"But StarRocks does not support altering view comments via ALTER VIEW. "
             f"Consider using DROP + CREATE to apply this change if you want to change the comment.",
             UserWarning,
@@ -715,15 +716,15 @@ def _compare_view_security(
 
         # Warn about security changes (not supported via ALTER VIEW)
         warnings.warn(
-            f"Detected SECURITY change on view {view_fqn}, from '{conn_security}' (in database) to '{meta_security}' (in metadata).     "
+            f"Detected SECURITY change on view {view_fqn!r}, from '{conn_security}' (in database) to '{meta_security}' (in metadata).     "
             f"But StarRocks does not support altering view security via ALTER VIEW. "
             f"Consider using DROP + CREATE to apply this change if you want to change the security.",
             UserWarning,
         )
 
         # Set security in AlterViewOp for future compatibility
-        alter_view_op.security = meta_view_attributes.get(TableInfoKey.SECURITY)
-        alter_view_op.existing_security = conn_view_attributes.get(TableInfoKey.SECURITY)
+        alter_view_op.security = meta_security
+        alter_view_op.existing_security = conn_security
 
     return security_changed
 
@@ -889,13 +890,13 @@ def _compare_mvs(
     logger.debug("Added MVs (in metadata but not in DB): %s", added_mvs)
     for s, mvname in added_mvs:
         logger.debug("Processing added MV: schema=%s, name=%s", s, mvname)
-        qualified_mv_name = utils.gen_simple_qualified_name(mvname, s)
+        mv_fqn = utils.gen_simple_qualified_name(mvname, s)
         metadata_mv = mv_name_to_table[(s, mvname)]
         if autogen_context.run_object_filters(
             metadata_mv, mvname, "materialized_view", False, None
         ):
             upgrade_ops.ops.append(CreateMaterializedViewOp.from_materialized_view(metadata_mv))
-            logger.info(f"Detected added materialized view {qualified_mv_name!r}")
+            logger.info(f"Detected added materialized view {mv_fqn!r}")
 
     # Dropped MVs (in database but not in metadata)
     # Use a separate MetaData to avoid polluting the user's metadata
@@ -909,7 +910,7 @@ def _compare_mvs(
         exists = name in removal_metadata.tables
         # Create a MaterializedView object (not Table) since we know it's a materialized view
         # Use empty definition - it will be populated by reflect_table
-        t = MaterializedView(mvname, removal_metadata, definition='', schema=s)
+        t = MaterializedView(mvname, removal_metadata, definition='<placeholder_definition>', schema=s)
 
         if not exists:
             # Reflect the MV using StarRocks' custom reflection logic
@@ -932,7 +933,7 @@ def _compare_mvs(
         exists = name in existing_metadata.tables
         # Create a MaterializedView object (not Table) since we know it's a materialized view
         # Use empty definition - it will be populated by reflect_table
-        t = MaterializedView(mvname, existing_metadata, definition='', schema=s)
+        t = MaterializedView(mvname, existing_metadata, definition='<placeholder_definition>', schema=s)
 
         if not exists:
             # Reflect the MV using StarRocks' custom reflection logic
@@ -992,9 +993,9 @@ def _compare_mv_definition(
             schema=schema,
             object_label="Materialized view",
         )
-        qualified_mv_name = utils.gen_simple_qualified_name(mv_name, schema)
+        mv_fqn = utils.gen_simple_qualified_name(mv_name, schema)
         raise NotImplementedError(
-            f"Detected DEFINITION change on materialized view {qualified_mv_name!r}, "
+            f"Detected DEFINITION change on materialized view {mv_fqn!r}, "
             f"from {conn_def_norm!r} (in database, normalized) to {meta_def_norm!r} (in metadata, normalized). "
             f"StarRocks does not support altering MV definition. "
             f"You need to manually DROP and CREATE the materialized view."
@@ -1019,9 +1020,9 @@ def _compare_mv_comment(
     logger.debug("Compare mv comment: conn_comment=%r, meta_comment=%r", conn_comment, meta_comment)
 
     if conn_comment != meta_comment:
-        qualified_mv_name = utils.gen_simple_qualified_name(mv_name, schema)
+        mv_fqn = utils.gen_simple_qualified_name(mv_name, schema)
         raise NotImplementedError(
-            f"Detected COMMENT change on materialized view {qualified_mv_name!r}, "
+            f"Detected COMMENT change on materialized view {mv_fqn!r}, "
             f"from {conn_comment!r} to {meta_comment!r}. "
             f"StarRocks does not support altering MV comment. "
             f"You need to manually DROP and CREATE the materialized view."
@@ -1055,7 +1056,7 @@ def _compare_mv_refresh(
 
     if conn_refresh != meta_refresh:
 
-        qualified_mv_name = utils.gen_simple_qualified_name(mv_name, schema)
+        mv_fqn = utils.gen_simple_qualified_name(mv_name, schema)
         ops_list.append(
             AlterMaterializedViewOp(
                 view_name=mv_name,
@@ -1066,7 +1067,7 @@ def _compare_mv_refresh(
                 existing_properties=None,
             )
         )
-        logger.info(f"Detected REFRESH change on materialized view {qualified_mv_name!r}, "
+        logger.info(f"Detected REFRESH change on materialized view {mv_fqn!r}, "
                     f"from {str(conn_refresh_raw)!r} to {str(meta_refresh_raw)!r}.")
         check_similar_string_and_warn(
             table_name=mv_name, attribute_name="REFRESH",
@@ -1091,7 +1092,7 @@ def _compare_mv_properties(
         schema, mv_name, conn_mv_attributes, meta_mv_attributes, run_mode,
         default_cls=ReflectionMVDefaults, object_label="Materialized view", add_default_prefix=False)
     if properties_to_set:
-        qualified_mv_name = utils.gen_simple_qualified_name(mv_name, schema)
+        mv_fqn = utils.gen_simple_qualified_name(mv_name, schema)
         ops_list.append(
             AlterMaterializedViewOp(
                 view_name=mv_name,
@@ -1102,7 +1103,7 @@ def _compare_mv_properties(
                 existing_properties=properties_for_reverse if properties_for_reverse else None,
             )
         )
-        logger.debug("Detected PROPERTIES change on materialized view %r.", qualified_mv_name)
+        logger.debug("Detected PROPERTIES change on materialized view %r.", mv_fqn)
 
 
 @comparators_dispatch_for_starrocks("materialized_view")
@@ -1199,9 +1200,9 @@ def _compare_mv(
     # Log summary if any operations were generated
     ops_after = len(upgrade_ops.ops)
     if ops_after > ops_before:
-        qualified_mv_name = utils.gen_simple_qualified_name(mv_name, schema)
+        mv_fqn = utils.gen_simple_qualified_name(mv_name, schema)
         num_changes = ops_after - ops_before
-        logger.debug("Materialized view %r comparison complete: %d ALTER operation(s) generated", qualified_mv_name, num_changes)
+        logger.debug("Materialized view %r comparison complete: %d ALTER operation(s) generated", mv_fqn, num_changes)
 
 @comparators_dispatch_for_starrocks("table")
 def check_table_kind_for_view_mv(
@@ -1605,7 +1606,8 @@ def _compare_table_partition(
                 schema=schema,
             )
         )
-        logger.info(f"Detected PARTITON change on {object_label.lower()} {table_name!r}, "
+        table_fqn = utils.gen_simple_qualified_name(table_name, schema)
+        logger.info(f"Detected PARTITON change on {object_label.lower()} {table_fqn!r}, "
                     f"from {conn_partition!r} to {meta_partition!r}")
 
 
@@ -1678,7 +1680,8 @@ def _compare_table_distribution(
                 existing_buckets=conn_distribution.buckets if conn_distribution else None,
             )
         )
-        logger.info(f"Detected DISTRIBUTION change on {object_label.lower()} {table_name!r}, "
+        table_fqn = utils.gen_simple_qualified_name(table_name, schema)
+        logger.info(f"Detected DISTRIBUTION change on {object_label.lower()} {table_fqn!r}, "
                     f"from {conn_distribution!r} to {meta_distribution!r}")
 
 
@@ -1728,7 +1731,8 @@ def _compare_table_order_by(
                 existing_order_by=conn_order if conn_order else None,
             )
         )
-        logger.info(f"Detected ORDER BY change on {object_label.lower()} {table_name!r}, "
+        table_fqn = utils.gen_simple_qualified_name(table_name, schema)
+        logger.info(f"Detected ORDER BY change on {object_label.lower()} {table_fqn!r}, "
                     f"from {conn_order!r} to {meta_order!r}")
 
 def _compare_table_properties_impl(

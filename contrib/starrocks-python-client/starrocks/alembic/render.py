@@ -271,7 +271,7 @@ def _render_alter_table_distribution(autogen_context: AutogenContext, op: AlterT
         f"{op.table_name!r}",
         f"{op.distribution_method!r}",
     ]
-    if op.buckets:
+    if op.buckets is not None:
         args.append(f"buckets={op.buckets}")
     if op.schema:
         args.append(f"schema={op.schema!r}")

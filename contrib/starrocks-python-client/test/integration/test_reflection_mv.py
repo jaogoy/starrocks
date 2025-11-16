@@ -640,7 +640,7 @@ class TestReflectionMaterializedViewsIntegration:
 
                 mv_state = inspector.get_materialized_view(mv_name)
                 assert mv_state is not None
-                assert expected_partition_str in str(mv_state.partition_info)
+                assert TableAttributeNormalizer.remove_outer_parentheses(expected_partition_str) in str(mv_state.partition_info)
 
             finally:
                 connection.execute(text(f"DROP MATERIALIZED VIEW IF EXISTS {mv_name}"))

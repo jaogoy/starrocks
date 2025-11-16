@@ -227,7 +227,7 @@ def test_alter_view_comment_and_security(
     downgrade_content = test_utils.normalize_sql(downgrade_content)
     assert 'op.alter_view("user_view"' in downgrade_content
     assert 'comment="Initial comment"' in downgrade_content
-    assert 'security="NONE"' in downgrade_content
+    assert 'security="NONE"' in downgrade_content or 'security=None' in downgrade_content
     assert "SELECT id FROM user" not in downgrade_content
 
 

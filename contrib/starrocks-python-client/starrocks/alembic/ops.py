@@ -113,7 +113,7 @@ class AlterViewOp(ops.MigrateOperation):
         return View(
             self.view_name,
             MetaData(),
-            definition=self.definition or '',
+            definition=self.definition or '<not_used_definition>',
             schema=self.schema,
             columns=self.columns,
             comment=self.comment,
@@ -297,7 +297,7 @@ class DropViewOp(ops.MigrateOperation):
         return View(
             self.view_name,
             MetaData(),
-            definition='',  # Empty definition for DROP VIEW
+            definition='<not_used_definition>',  # Empty definition for DROP VIEW
             schema=self.schema,
             **self.kwargs,
         )
