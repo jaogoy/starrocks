@@ -204,5 +204,5 @@ def database(sr_root_engine: Engine) -> Generator[str, None, None]:
     yield db_name
 
     with sr_root_engine.connect() as conn:
-        # conn.execute(text(f"DROP DATABASE {db_name} FORCE"))
+        conn.execute(text(f"DROP DATABASE {db_name} FORCE"))
         conn.commit()

@@ -37,7 +37,7 @@ Set your `sqlalchemy.url` to point to your StarRocks database.
 ```ini
 [alembic]
 # ... other configs
-sqlalchemy.url = starrocks://myname:pswd1234@localhost:9030/mydatabase
+sqlalchemy.url = starrocks://root@localhost:9030/mydatabase
 ```
 
 **In `alembic/env.py`:**
@@ -182,7 +182,7 @@ def my_custom_filter(object, name, type_, reflected, compare_to):
 
     # Skip objects in 'test' schema (if your database has schemas)
     if type_ == "table" and compare_to is not None:
-        if getattr(compare_to, 'schema', None) == 'test':
+        if getattr(compare_to, 'schema', None) == 'test_sqla':
             return False
 
     # Include everything else
@@ -240,7 +240,7 @@ Examples:
 ```bash
 # Or via the generic --options mechanism
 sqlacodegen --schemas mydb1,mydb2 --options keep-dialect-types \
-  starrocks://myname:pswd1234@localhost:9030 > models_all.py
+  starrocks://root@localhost:9030 > models_all.py
 ```
 
 Notes:

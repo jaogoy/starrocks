@@ -1688,7 +1688,7 @@ my_view = View(
     'user_view',
     'SELECT id, name FROM users WHERE active = 1',
     metadata=metadata,
-    schema='test',
+    schema='test_sqla',
     comment='Active users',
     starrocks_security='DEFINER'
 )
@@ -1698,7 +1698,7 @@ my_mv = MaterializedView(
     'user_stats_mv',
     'SELECT date, COUNT(*) FROM logs GROUP BY date',
     metadata=metadata,
-    schema='test',
+    schema='test_sqla',
     comment='Daily stats',
     starrocks_partition_by='RANGE(date)',
     starrocks_distributed_by='HASH(date) BUCKETS 8',
@@ -1748,7 +1748,7 @@ metadata = MetaData()
 my_view = Table(
     'user_view',
     metadata,
-    schema='test',
+    schema='test_sqla',
     info={
         'object_kind': 'VIEW',
         'definition': 'SELECT id, name FROM users'
@@ -1801,7 +1801,7 @@ engine = create_engine('starrocks://...')
 metadata = MetaData()
 
 # Autoload - Automatically recognize object type
-my_table = Table('my_view', metadata, autoload_with=engine, schema='test')
+my_table = Table('my_view', metadata, autoload_with=engine, schema='test_sqla')
 print(my_table.info['table_kind'])  # 'VIEW'
 print(my_table.info['definition'])    # 'SELECT ...'
 print(my_table.dialect_options['starrocks']['security'])  # 'DEFINER'
@@ -1816,7 +1816,7 @@ def upgrade():
     op.create_view(
         'user_view',
         'SELECT id, name FROM users WHERE active = 1',
-        schema='test',
+        schema='test_sqla',
         comment='Active users',
         starrocks_security='DEFINER'
     )
@@ -1824,7 +1824,7 @@ def upgrade():
     op.create_materialized_view(
         'user_stats_mv',
         'SELECT date, COUNT(*) FROM logs GROUP BY date',
-        schema='test',
+        schema='test_sqla',
         comment='Daily stats',
         starrocks_partition_by='RANGE(date)',
         starrocks_distributed_by='HASH(date) BUCKETS 8',

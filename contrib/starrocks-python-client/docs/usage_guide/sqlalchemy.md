@@ -10,7 +10,7 @@ You can connect to StarRocks using a standard SQLAlchemy connection string.
 from sqlalchemy import create_engine, text
 
 # Format: starrocks://<User>:<Password>@<Host>:<Port>/<Database>
-engine = create_engine('starrocks://myname:pswd1234@localhost:9030/mydatabase')
+engine = create_engine('starrocks://root@localhost:9030/mydatabase')
 
 with engine.connect() as connection:
     rows = connection.execute(text("SELECT 1")).fetchall()
@@ -83,7 +83,7 @@ class PageViewAggregates(Base):
 # --- Data Insertion and Query Examples ---
 
 # Assuming `engine` is already created as shown in "Basic Operations"
-engine = create_engine('starrocks://myname:pswd1234@localhost:9030/mydatabase')
+engine = create_engine('starrocks://root@localhost:9030/mydatabase')
 
 Base.metadata.create_all(engine) # Create the table in the database
 

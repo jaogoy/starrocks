@@ -553,8 +553,8 @@ class StarRocksDDLCompiler(MySQLDDLCompiler):
                 raise exc.CompileError(
                     f"Unsupported type for PROPERTIES: {type(properties)}"
                 )
-        if self.dialect.test_replication_num and "replication_num" not in props_dict:
-            props_dict.setdefault("replication_num", str(self.dialect.test_replication_num))
+        # if self.dialect.test_replication_num and "replication_num" not in props_dict:
+        #     props_dict.setdefault("replication_num", str(self.dialect.test_replication_num))
         if props_dict:
             props = ",\n".join([f'{self.indent}"{k}"="{v}"' for k, v in props_dict.items()])
             table_opts.append(f"PROPERTIES(\n{props}\n)")
@@ -1165,7 +1165,7 @@ class StarRocksDialect(MySQLDialect_pymysql):
         self.preparer = self.preparer(self)
 
         # some test parameters
-        self.test_replication_num: Optional[int] = None
+        # self.test_replication_num: Optional[int] = None
 
     def create_connect_args(self, url):
         # Allow the superclass to create the base connect arguments
@@ -1173,11 +1173,11 @@ class StarRocksDialect(MySQLDialect_pymysql):
         logger.debug("connect_args: %s", connect_args)
 
         # Handle the test-specific replication_num parameter
-        self.test_replication_num = connect_args.pop("test_replication_num", None)
-        if self.test_replication_num is not None:
-            logger.info(
-                f"set replication_num={self.test_replication_num} for small test environment"
-            )
+        # self.test_replication_num = connect_args.pop("test_replication_num", None)
+        # if self.test_replication_num is not None:
+        #     logger.info(
+        #         f"set replication_num={self.test_replication_num} for small test environment"
+        #     )
 
         return [], connect_args
 

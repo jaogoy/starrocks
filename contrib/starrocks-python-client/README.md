@@ -63,7 +63,7 @@ Connect to your database and do a query.
 ```python
 from sqlalchemy import create_engine, text
 
-engine = create_engine('starrocks://myname:pswd1234@localhost:9030/mydatabase')
+engine = create_engine('starrocks://root@localhost:9030/mydatabase')
 
 # make sure you have create a table `mytable` in `mydatabase`.
 
@@ -178,7 +178,7 @@ If you already have tables/views/materialized views in your StarRocks database, 
 
 ```bash
 sqlacodegen --options keep-dialect-types \
-  starrocks://myname:pswd1234@localhost:9030 > models.py
+  starrocks://root@localhost:9030 > models.py
 ```
 
 Refer to [generating models](./docs/usage_guide/alembic.md#Generating-models-from-an-existing-database-using-sqlacodegen) and [`sqlacodegen`](https://github.com/agronholm/sqlacodegen) for more options and features.
@@ -196,7 +196,7 @@ In `alembic.ini`, set the `sqlalchemy.url` to your StarRocks connection string.
 
 ```ini
 # alembic.ini
-sqlalchemy.url = starrocks://myname:pswd1234@localhost:9030/mydatabase
+sqlalchemy.url = starrocks://root@localhost:9030/mydatabase
 ```
 
 It's better to print the log from this `starrocks-sqlalchemy` when runing alembic command. You can add following logging configration in the `alembic.ini` file.
@@ -293,10 +293,10 @@ log_cli_format = %(levelname)-5.5s [%(name)s] %(message)s
 To run the integration and system tests, you must have a running StarRocks cluster. The tests require a connection URL to be provided via the `STARROCKS_URL` environment variable.
 
 1. **Set up your StarRocks database:**
-   Ensure your StarRocks instance is running and you have a database available for testing (e.g., `test`).
+   Ensure your StarRocks instance is running and you have a database available for testing (e.g., `test_sqla`).
 
    ```SQL
-   CREATE DATABASE IF NOT EXISTS test;
+   CREATE DATABASE IF NOT EXISTS test_sqla;
 
    -- set it if you're testing cases on small shared-nothing clusters
    ADMIN SET FRONTEND CONFIG ("default_replication_num" = "1");
@@ -312,7 +312,7 @@ To run the integration and system tests, you must have a running StarRocks clust
    For example (the default url will be this if you don't set it):
 
    ```bash
-   export STARROCKS_URL="starrocks://myname:pswd1234@127.0.0.1:9030/test"
+   export STARROCKS_URL="starrocks://root@127.0.0.1:9030/test_sqla"
    ```
 
 3. **Run the tests:**
