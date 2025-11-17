@@ -9,11 +9,30 @@ To define a materialized view, you use the `starrocks.schema.MaterializedView` o
 ### Syntax
 
 ```python
-from sqlalchemy import MetaData, select, Table, Column
+from sqlalchemy import func, select, Table, Column
+from sqlalchemy.orm import declarative_base
+from starrocks import INTEGER, BIGINT, DATE, DECIMAL, DATETIME, VARCHAR
 from starrocks.schema import MaterializedView
-from starrocks.datatype import VARCHAR, BIGINT
 
-metadata = MetaData()
+Base = declarative_base()
+metadata = Base.metadata
+
+orders = Table('orders', metadata,
+    Column('user_id', BIGINT),
+    Column('order_id', BIGINT),
+    Column('order_date', DATE),
+    Column('created_at', DATETIME),
+    Column('amount', INTEGER),
+    Column('price', DECIMAL(10, 2)),
+    starrocks_partition_by="date_trunc('day', order_date)",
+    starrocks_properties={"replication_num": "1"},
+)
+
+users = Table('users', metadata,
+    Column('user_id', BIGINT),
+    Column('user_name', VARCHAR(50)),
+    starrocks_properties={"replication_num": "1"},
+)
 
 # Basic materialized view
 daily_sales_mv = MaterializedView(
@@ -23,8 +42,8 @@ daily_sales_mv = MaterializedView(
     schema="analytics",
     starrocks_partition_by="order_date",
     starrocks_distributed_by="HASH(order_date) BUCKETS 8",
-    starrocks_refresh="ASYNC START('2025-01-01 00:00:00') EVERY(INTERVAL 1 DAY)",
-    starrocks_properties={"replication_num": "3"}
+    starrocks_refresh='ASYNC START("2025-01-01 00:00:00") EVERY(INTERVAL 1 DAY)',
+    starrocks_properties={"replication_num": "1"}
 )
 
 # Materialized view with all options
@@ -33,34 +52,35 @@ comprehensive_mv = MaterializedView(
     metadata,
     definition="""
         SELECT
-            user_id,
+            o.user_id,
+            u.user_name,
+            o.order_date,
             COUNT(*) as order_count,
-            SUM(amount) as total_amount
-        FROM orders
-        GROUP BY user_id
+            SUM(o.amount) as total_amount
+        FROM orders as o
+        inner JOIN users as u ON o.user_id = u.user_id
+        GROUP BY o.user_id, u.user_name, o.order_date
     """,
     schema="analytics",
-    starrocks_partition_by="date_trunc('day', created_at)",
+    starrocks_partition_by="date_trunc('day', order_date)",
     starrocks_distributed_by="HASH(user_id) BUCKETS 10",
-    starrocks_refresh="ASYNC START('2025-01-01 00:00:00') EVERY(INTERVAL 1 DAY)",
-    starrocks_properties={"replication_num": "3"},
+    starrocks_refresh='ASYNC START("2025-01-01 00:00:00") EVERY(INTERVAL 1 DAY)',
+    starrocks_properties={"replication_num": "1"},
     comment="User order statistics"
 )
 
 # Materialized view from SQLAlchemy Selectable
-orders = Table('orders', metadata,
-               Column('user_id', BIGINT),
-               Column('amount', BIGINT))
-stmt = select(
+stmt_for_mv = select(
     orders.c.user_id,
-    func.count().label('order_count')
+    func.count(orders.c.order_id).label('order_count')
 ).group_by(orders.c.user_id)
 
 mv_from_stmt = MaterializedView(
     "user_order_counts",
     metadata,
     definition=stmt,
-    starrocks_refresh="MANUAL"
+    starrocks_refresh="MANUAL",
+    starrocks_properties={"replication_num": "1"},
 )
 ```
 

@@ -9,41 +9,69 @@ To define a view, you use the `starrocks.schema.View` object. This object captur
 ### Syntax
 
 ```python
-from sqlalchemy import MetaData, Column, select
+from sqlalchemy import Column, select, Table
+from sqlalchemy.orm import declarative_base
 from starrocks.schema import View
 from starrocks.datatype import INTEGER, VARCHAR
 
-metadata = MetaData()
+Base = declarative_base()
+metadata = Base.metadata
+
+# Base tables (all views must be based on these tables and select only their columns)
+employees = Table(
+    'employees',
+    metadata,
+    Column('id', INTEGER),
+    Column('name', VARCHAR(50)),
+    Column('salary', INTEGER),
+    Column('department', VARCHAR(50)),
+    starrocks_properties={"replication_num": "1"},
+)
+
+sales = Table(
+    'sales',
+    metadata,
+    Column('product', VARCHAR(100)),
+    Column('amount', INTEGER),
+    Column('date', VARCHAR(50)),
+    starrocks_properties={"replication_num": "1"},
+)
 
 # Basic view
 basic_view = View(
     "basic_view",
     metadata,
     definition="SELECT id, name, salary FROM employees WHERE department = 'Sales'",
-    schema="my_schema",
-    comment="A view for sales employees"
+    schema="analytics",
+    comment="A view for sales employees",
+    starrocks_properties={"replication_num": "1"},
 )
 
 # View with column definitions (SQLAlchemy style)
-detailed_view = View(
-    "detailed_view",
+comprehensive_view = View(
+    "comprehensive_view",
     metadata,
+    Column('emp_id', INTEGER),
+    Column('emp_name', VARCHAR(50)),
     Column('product', VARCHAR(100)),
     Column('amount', INTEGER),
     Column('date', VARCHAR(50)),
-    definition="SELECT product, SUM(amount), date FROM sales GROUP BY product, date",
-    schema="my_schema",
-    comment="A view to aggregate sales data by product.",
+    definition="SELECT e.id AS emp_id, e.name AS emp_name, s.product, s.amount, s.date "
+               "FROM employees as e INNER JOIN sales as s ON e.name = s.product",
+    schema="analytics",
+    comment="A comprehensive two-table join view.",
     starrocks_security="INVOKER",
+    starrocks_properties={"replication_num": "1"},
 )
 
 # View with column aliases (simplified styles)
 # Style 1: List of column name strings
-simple_view = View(
-    "simple_view",
+simple_view_with_col_names = View(
+    "simple_view_with_col_names",
     metadata,
+    columns=["employee_id", "employee_name"],  # Just column names
     definition="SELECT id, name FROM employees",
-    columns=["employee_id", "employee_name"]  # Just column names
+    starrocks_properties={"replication_num": "1"},
 )
 
 # Style 2: List of dicts with name and optional comment
@@ -52,26 +80,19 @@ detailed_alias_view = View(
     metadata,
     definition="SELECT id, name FROM employees",
     columns=[
-        {"name": "employee_id", "comment": "Employee ID"},
-        {"name": "employee_name", "comment": "Employee full name"}
-    ]
-)
-
-# View with security context
-secure_view = View(
-    "secure_view",
-    metadata,
-    definition="SELECT * FROM sensitive_data",
-    starrocks_security="INVOKER"
+        {"name": "id", "comment": "Employee ID"},
+        {"name": "name", "comment": "Employee full name"}
+    ],
+    starrocks_properties={"replication_num": "1"},
 )
 
 # View from SQLAlchemy Selectable
-users = Table('users', metadata, Column('id', INTEGER), Column('name', VARCHAR(50)))
-stmt = select(users.c.id, users.c.name).where(users.c.id > 100)
-active_users_view = View(
-    "active_users",
+stmt_for_view = select(employees.c.id, employees.c.name).where(employees.c.id > 100)
+active_employees_view = View(
+    "active_employees",
     metadata,
-    definition=stmt
+    definition=stmt,
+    starrocks_properties={"replication_num": "1"},
 )
 ```
 

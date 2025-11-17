@@ -260,7 +260,7 @@ Use uppercase types (such as `INTEGER` instead of `Integer`) from `starrocks` an
 # models.py
 from sqlalchemy.orm import declarative_base
 from sqlalchemy import Column
-from starrocks import INTEGER, VARCHAR, DATETIME
+from starrocks import INTEGER, VARCHAR
 
 Base = declarative_base()
 
@@ -274,13 +274,12 @@ class MyTable(Base):
 
         'starrocks_PRIMARY_KEY': 'id',
         'starrocks_ENGINE': 'OLAP',
-        'starrocks_DISTRIBUTED_BY': 'HASH(id) BUCKETS 10',
         'starrocks_PARTITION_BY': """RANGE (id) (
                 PARTITION p1 VALUES LESS THAN ('100')
             )""",
+        'starrocks_DISTRIBUTED_BY': 'HASH(id) BUCKETS 10',
         'starrocks_PROPERTIES': {
             'storage_medium': 'SSD',
-            'storage_cooldown_time': '2025-06-04 00:00:00',
             'replication_num': '1'
         }
     }
@@ -413,7 +412,7 @@ Base = declarative_base()
 class MyTable(Base):
     __tablename__ = 'my_table'
     id = Column(INTEGER, primary_key=True)
-    name = Column(VARCHAR(50))
+    name = Column(VARCHAR(100))
     new_column = Column(DATETIME, nullable=True) # Newly added column
 
     __table_args__ = {
