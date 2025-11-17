@@ -228,6 +228,30 @@ You define your schema in your Python models file (e.g., `models.py`) using SQLA
 
 > You can put `models.py` into a directory `myapps` under your alembic project. such as `my_sr_alembic_project/myapps/models.py`.
 
+### Generating models from an existing database using sqlacodegen
+
+If your StarRocks database already contains tables, views, or materialized views, you can bootstrap your models by generating them with `sqlacodegen`. This is particularly useful when introducing Alembic to an existing system.
+
+- Choose one or more schemas (StarRocks “databases”) to include using `--schemas` (comma-separated).
+- Preserve StarRocks-specific types with `--options keep-dialect-types`, so generated code imports and uses the StarRocks types instead of generic SQLAlchemy types.
+
+Examples:
+
+```bash
+# Or via the generic --options mechanism
+sqlacodegen --schemas mydb1,mydb2 --options keep-dialect-types \
+  starrocks://myname:pswd1234@localhost:9030 > models_all.py
+```
+
+Notes:
+
+- The generated models will include StarRocks-specific dialect options and the `info` mapping when present, so objects like Views/MVs and table properties can be round-tripped more reliably.
+- You can split the generated file into multiple modules (e.g., `models.py`, `models_view.py`, `models_mv.py`) as needed.
+- Review/clean the generated code to align naming, comments, and any project conventions. Especially the `info` and StarRocks-specific parameters as `starrocks_xxx`.
+  - For `info`: the `definition` of views and materialized views will be stored here, check the `definition` here whether it's what you defined.
+
+See the full [`sqlacodegen`](https://github.com/agronholm/sqlacodegen) feature set and flags.
+
 ### Defining Tables with StarRocks Attributes and Types
 
 Use uppercase types (such as `INTEGER` instead of `Integer`) from `starrocks` and specify StarRocks attributes via `__table_args__` (in ORM style).

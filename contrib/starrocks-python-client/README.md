@@ -172,6 +172,17 @@ You can refer to **[Views Definition Reference](./docs/usage_guide/views.md)** a
 
 This dialect integrates with Alembic to support automated schema migrations. Here’s a quick-start guide to get you up and running.
 
+#### Generate models from an existing database (Optional)
+
+If you already have tables/views/materialized views in your StarRocks database, you can generate `models.py` (or a consolidated models file) using `sqlacodegen`.
+
+```bash
+sqlacodegen --options keep-dialect-types \
+  starrocks://myname:pswd1234@localhost:9030 > models.py
+```
+
+Refer to [generating models](./docs/usage_guide/alembic.md#Generating-models-from-an-existing-database-using-sqlacodegen) and [`sqlacodegen`](https://github.com/agronholm/sqlacodegen) for more options and features.
+
 #### 1. Install and Initialize Alembic
 
 ```bash
