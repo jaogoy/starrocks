@@ -1,3 +1,9 @@
+---
+displayed_sidebar: docs
+description: Schema management and migration
+sidebar_label: Schema Migration
+---
+
 # Schema Management and Migration with SQLAlchemy and Alembic
 
 This guide introduces how to manage StarRocks schemas using the Python ecosystem — including SQLAlchemy, Alembic, and sqlacodegen — through the **`starrocks` SQLAlchemy** dialect.
@@ -56,7 +62,7 @@ Minimum required versions:
 starrocks://<user>:<password>@<host>:<port>/[<catalog>.]<database>
 ```
 
-### Quick smoke test
+### Quick test
 
 After installation, you can quickly validate connectivity:
 
@@ -103,12 +109,14 @@ StarRocks table options can be specified in both ORM (via `__table_args__`) and 
 #### ORM (Declarative) style
 
 ```python
-from sqlalchemy import Column
+from sqlalchemy import create_engine
 from sqlalchemy.orm import Mapped, declarative_base, mapped_column
 from starrocks import INTEGER, STRING
 
-Base = declarative_base()
+# with the same engine as the quick test
+engine = create_engine("starrocks://root@localhost:9030/mydatabase")
 
+Base = declarative_base()
 
 class MyTable(Base):
     __tablename__ = 'my_orm_table'
@@ -118,9 +126,9 @@ class MyTable(Base):
     __table_args__ = {
         'comment': 'table comment',
 
-        'starrocks_PRIMARY_KEY': 'id',
-        'starrocks_DISTRIBUTED_BY': 'HASH(id) BUCKETS 10',
-        'starrocks_PROPERTIES': {'replication_num': '1'}
+        'starrocks_primary_key': 'id',
+        'starrocks_distributed_by': 'HASH(id) BUCKETS 10',
+        'starrocks_properties': {'replication_num': '1'}
     }
 
 # Create the table in the database
@@ -130,8 +138,11 @@ Base.metadata.create_all(engine)
 #### Core style
 
 ```python
-from sqlalchemy import Column, MetaData, Table
+from sqlalchemy import Column, MetaData, Table, create_engine
 from starrocks import INTEGER, VARCHAR
+
+# with the same engine as the quick test
+engine = create_engine("starrocks://root@localhost:9030/mydatabase")
 
 metadata = MetaData()
 
@@ -142,9 +153,9 @@ my_core_table = Table(
     Column('name', VARCHAR(50)),
 
     # StarRocks-specific arguments
-    starrocks_PRIMARY_KEY='id',
-    starrocks_DISTRIBUTED_BY='HASH(id) BUCKETS 10',
-    starrocks_PROPERTIES={"replication_num": "1"}
+    starrocks_primary_key='id',
+    starrocks_distributed_by='HASH(id) BUCKETS 10',
+    starrocks_properties={"replication_num": "1"}
 )
 
 # Create the table in the database
@@ -222,6 +233,10 @@ Configure your database URL in `alembic.ini`:
 sqlalchemy.url = starrocks://root@localhost:9030/mydatabase
 ```
 
+Enable StarRocks dialect logging (optional):
+
+To see some useful logging, such as the detected changes of a table, you can enable the `starrocks` logger in `alembic.ini`. For details, see the “Debugging and Logging” section in **`alembic.md`**.
+
 Edit `env.py` (configure both offline and online paths):
 
 ```python
@@ -291,7 +306,7 @@ Some StarRocks DDL changes are not reversible or not alterable (must drop/recrea
 
 ## 7. End-to-End Example (Recommended Reading for Beginners)
 
-This section shows a runnable end-to-end workflow (similar to `alembic.md`), including where to stop and review generated files.
+This section shows a runnable end-to-end workflow (similar to `alembic.md`), including where to pause and review generated files.
 
 ### Step 1 — Create a project directory and initialize Alembic
 
@@ -346,9 +361,9 @@ class MyOrmTable(Base):
 
     __table_args__ = {
         "comment": "table comment",
-        "starrocks_PRIMARY_KEY": "id",
-        "starrocks_DISTRIBUTED_BY": "HASH(id) BUCKETS 10",
-        "starrocks_PROPERTIES": {"replication_num": "1"},
+        "starrocks_primary_key": "id",
+        "starrocks_distributed_by": "HASH(id) BUCKETS 10",
+        "starrocks_properties": {"replication_num": "1"},
     }
 
 
@@ -358,9 +373,10 @@ my_core_table = Table(
     Base.metadata,
     Column("id", INTEGER, primary_key=True),
     Column("name", VARCHAR(50)),
-    starrocks_PRIMARY_KEY="id",
-    starrocks_DISTRIBUTED_BY="HASH(id) BUCKETS 10",
-    starrocks_PROPERTIES={"replication_num": "1"},
+    comment="core table comment",
+    starrocks_primary_key="id",
+    starrocks_distributed_by="HASH(id) BUCKETS 10",
+    starrocks_properties={"replication_num": "1"},
 )
 
 
@@ -389,6 +405,11 @@ user_stats_mv = MaterializedView(
 ### Step 4 — Configure `env.py` for autogenerate
 
 Edit `alembic/env.py`:
+
+1. Import `myapp.models` to set the `target_metadata`.
+2. Import `render_column_type`, and `include_object_for_view_mv` to set them in both `run_migrations_offline()` and `run_migrations_online()` to properly handle views and MVs, and to properly render StarRocks column types.
+
+> Note: You need to add/modify these lines into `env.py`, rather than replace the generated `env.py` file.
 
 ```python
 from alembic import context
@@ -447,7 +468,7 @@ Preview SQL:
 alembic upgrade head --sql
 ```
 
-Stop and review:
+Pause and review:
 
 - Confirm the DDL is in the order you expect.
 - Identify any potentially heavy operations and consider splitting migrations if needed.
@@ -462,30 +483,51 @@ alembic upgrade head
 
 ### Step 7 — Make a change (add a new table) and autogenerate again
 
-Update `myapp/models.py` by adding a new table (example):
+Update `myapp/models.py`:
+
+- **Modify an existing table** (`my_core_table`): add a column, or update the table comment, and change one table property.
+- **Add a new table** (`my_new_table`).
+
+> **Note (schema change job limits)**: Adding a column can be a time-consuming schema change. StarRocks allows only **one running schema change job per table** at a time. In practice, it is recommended to keep “add/drop/modify columns” changes separate from other heavy changes (for example, additional add/drop columns or mass property changes), and split them into multiple Alembic revisions if needed.
 
 ```python
 from sqlalchemy import Column, Table
 from starrocks import INTEGER, VARCHAR
+
+# Modify an existing table (add a column)
+# (Update the existing my_core_table definition in-place.)
+my_core_table = Table(
+    "my_core_table",
+    Base.metadata,
+    Column("id", INTEGER, primary_key=True),
+    Column("name", VARCHAR(50)),
+    Column("age", INTEGER),  # added column only
+
+    starrocks_primary_key='id',
+    starrocks_distributed_by='HASH(id) BUCKETS 10',
+    starrocks_properties={"replication_num": "1"},
+)
 
 my_new_table = Table(
     "my_new_table",
     Base.metadata,
     Column("id", INTEGER, primary_key=True),
     Column("name", VARCHAR(50)),
-    starrocks_PRIMARY_KEY="id",
-    starrocks_DISTRIBUTED_BY="HASH(id) BUCKETS 10",
-    starrocks_PROPERTIES={"replication_num": "1"},
+    starrocks_primary_key="id",
+    starrocks_distributed_by="HASH(id) BUCKETS 10",
+    starrocks_properties={"replication_num": "1"},
 )
 ```
 
 ```bash
-alembic revision --autogenerate -m "add a new table"
+alembic revision --autogenerate -m "add a new table, change a old table"
 ```
 
-Stop and review:
+Pause and review:
 
-- Check the new migration contains a `create_table(...)` for the new table.
+- Check the new migration contains:
+  - a `create_table(...)` for `my_new_table`, and
+  - expected operations for the `my_core_table` changes (for example, add column / set comment / set properties).
 
 Preview SQL and apply:
 
