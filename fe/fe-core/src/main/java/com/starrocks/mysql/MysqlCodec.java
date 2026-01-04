@@ -241,7 +241,9 @@ public class MysqlCodec {
         // Character set: two byte integer
         writeInt2(out, type.getMysqlResultSetFieldCharsetIndex());
         // Column length: four byte integer
-        writeInt4(out, type.getMysqlResultSetFieldLength());
+        int len = type.getMysqlResultSetFieldLength();
+        System.out.println("colName: " + colName + ", len: " + len);
+        writeInt4(out, len);
         // Column type: one byte integer
         writeInt1(out, type.getMysqlResultType().getCode());
         // Flags: two byte integer

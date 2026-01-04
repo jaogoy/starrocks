@@ -1667,10 +1667,10 @@ public abstract class Type implements Cloneable {
                 ScalarType charType = ((ScalarType) this);
                 int charLength = charType.getLength();
                 if (charLength == -1) {
-                    charLength = 64;
+                    charLength = 300;
                 }
                 // utf8 charset
-                return charLength * 3;
+                return charLength * 3 + 400;
             default:
                 // Treat ARRAY/MAP/STRUCT as VARCHAR(-1)
                 return 60;
